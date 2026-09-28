@@ -62,6 +62,8 @@ data class ItemDetailUiState(
     val isLoadingSelectedEpisodeDetail: Boolean = false,
     /** Parent-series portrait art used when an episode's own artwork is a wide still. */
     val episodeSeriesPosterUrl: String? = null,
+    /** Parent series title on a standalone episode page, for download grouping. */
+    val episodeSeriesTitle: String? = null,
     val episodeSeriesPosterThumbhash: String? = null,
     /**
      * Route-scoped episode lists keyed by season. Unlike the repository's
@@ -296,11 +298,14 @@ class ItemDetailViewModel(
                 fileId = version.fileId,
                 // Never the episode's own title: the Downloads tab groups
                 // episodes under this name.
-                seriesTitle = item.seriesTitle?.takeIf { it.isNotBlank() } ?: seriesPage?.title ?: "Series",
+                seriesTitle = item.seriesTitle?.takeIf { it.isNotBlank() }
+                    ?: seriesPage?.title
+                    ?: _uiState.value.episodeSeriesTitle?.takeIf { it.isNotBlank() }
+                    ?: "Series",
                 seasonNumber = item.seasonNumber,
                 episodeNumber = item.episodeNumber,
                 episodeTitle = item.title,
-                posterUrl = pageDetail?.posterUrl,
+                posterUrl = seriesPage?.posterUrl ?: _uiState.value.episodeSeriesPosterUrl ?: pageDetail?.posterUrl,
                 downloadQualityOverride = downloadQuality,
             )
             // The server rejects an episode sent without its series.
@@ -652,6 +657,7 @@ class ItemDetailViewModel(
                         it.copy(
                             episodeSeriesPosterUrl = result.data.posterUrl,
                             episodeSeriesPosterThumbhash = result.data.posterThumbhash,
+                            episodeSeriesTitle = result.data.title,
                         )
                     }
                 }
