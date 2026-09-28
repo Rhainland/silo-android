@@ -531,7 +531,7 @@ private fun BadgePill(text: String) {
  * playback and downloads use. While the quality pref is still loading, only
  * the pref-independent lastFileId is shown, otherwise -1 (the bare "Auto"
  * placeholder), so the page never names a version the arriving pref
- * contradicts. [fallbackIndex] covers an empty list or an unmatched pick.
+ * contradicts. [fallbackIndex] covers an empty list or an unmatched version.
  */
 internal fun detailDisplayVersionIndex(
     versions: List<FileVersion>,
@@ -540,8 +540,8 @@ internal fun detailDisplayVersionIndex(
     preferredQuality: String?,
     fallbackIndex: Int,
 ): Int {
-    if (explicitIndex != null) return explicitIndex
     if (versions.isEmpty()) return fallbackIndex
+    if (explicitIndex != null) return explicitIndex.coerceIn(0, versions.lastIndex)
     if (preferredQuality == null) {
         return lastFileId
             ?.let { id -> versions.indexOfFirst { it.fileId == id }.takeIf { it >= 0 } }

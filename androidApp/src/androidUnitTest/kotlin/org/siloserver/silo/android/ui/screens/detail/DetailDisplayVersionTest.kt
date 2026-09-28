@@ -50,4 +50,17 @@ class DetailDisplayVersionTest {
 
         assertEquals(-1, index)
     }
+
+    @Test
+    fun `an explicit pick with no versions loaded yields the fallback`() {
+        val index = detailDisplayVersionIndex(
+            versions = emptyList(),
+            explicitIndex = 1,
+            lastFileId = null,
+            preferredQuality = "auto",
+            fallbackIndex = 0,
+        )
+
+        assertEquals(0, index)
+    }
 }
