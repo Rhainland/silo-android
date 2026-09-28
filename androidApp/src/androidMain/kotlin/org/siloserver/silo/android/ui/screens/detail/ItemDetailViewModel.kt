@@ -299,10 +299,11 @@ class ItemDetailViewModel(
                     ?: seriesPage?.title
                     ?: _uiState.value.episodeSeriesTitle?.takeIf { it.isNotBlank() }
                 val knownPoster = seriesPage?.posterUrl ?: _uiState.value.episodeSeriesPosterUrl
-                // The page's parent load may not have finished (or may not run
-                // at all); the title and poster are stored with the download,
-                // so fetch the parent now when either is missing.
-                val parent = if (knownTitle == null || knownPoster == null) {
+                // On an episode page the parent load may not have finished (or
+                // may not run at all); the title and poster are stored with the
+                // download, so fetch the parent now when either is missing. A
+                // series page already is the parent, so it never refetches.
+                val parent = if (seriesPage == null && (knownTitle == null || knownPoster == null)) {
                     (catalogRepository.getItemDetailForPrefetch(seriesId, libraryId = libraryId) as? ApiResult.Success)?.data
                 } else {
                     null
