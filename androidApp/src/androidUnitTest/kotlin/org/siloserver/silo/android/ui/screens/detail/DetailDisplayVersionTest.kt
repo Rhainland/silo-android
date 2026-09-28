@@ -63,4 +63,17 @@ class DetailDisplayVersionTest {
 
         assertEquals(0, index)
     }
+
+    @Test
+    fun `a stale explicit pick names no version instead of another one`() {
+        val index = detailDisplayVersionIndex(
+            versions = versions,
+            explicitIndex = 5,
+            lastFileId = 720,
+            preferredQuality = "auto",
+            fallbackIndex = 0,
+        )
+
+        assertEquals(-1, index)
+    }
 }

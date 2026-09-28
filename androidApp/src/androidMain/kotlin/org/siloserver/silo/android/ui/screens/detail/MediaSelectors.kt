@@ -541,7 +541,9 @@ internal fun detailDisplayVersionIndex(
     fallbackIndex: Int,
 ): Int {
     if (versions.isEmpty()) return fallbackIndex
-    if (explicitIndex != null) return explicitIndex.coerceIn(0, versions.lastIndex)
+    // A stale pick (the list shrank after a refresh) names no version rather
+    // than a different one, since playback would not use a clamped file.
+    if (explicitIndex != null) return explicitIndex.takeIf { it in versions.indices } ?: -1
     if (preferredQuality == null) {
         return lastFileId
             ?.let { id -> versions.indexOfFirst { it.fileId == id }.takeIf { it >= 0 } }
