@@ -292,26 +292,33 @@ class ItemDetailViewModel(
         // wifiOnly read from per-profile PlayerSettingsStore inside
         // DownloadEnqueuer; default true.
         val result = when {
-            item?.type == "episode" && seriesId != null -> downloadEnqueuer.startEpisode(
-                seriesContentId = seriesId,
-                episodeContentId = item.contentId,
-                fileId = version.fileId,
-                // Never the episode's own title: the Downloads tab groups
-                // episodes under this name.
-                seriesTitle = item.seriesTitle?.takeIf { it.isNotBlank() }
+            item?.type == "episode" && seriesId != null -> {
+                // Never the episode's own title or art: the Downloads tab
+                // groups episodes under the series' name and poster.
+                val knownTitle = item.seriesTitle?.takeIf { it.isNotBlank() }
                     ?: seriesPage?.title
                     ?: _uiState.value.episodeSeriesTitle?.takeIf { it.isNotBlank() }
-                    // The page's parent load may not have finished yet; the
-                    // title is stored with the download, so fetch it now.
-                    ?: (catalogRepository.getItemDetailForPrefetch(seriesId, libraryId = libraryId) as? ApiResult.Success)
-                        ?.data?.title?.takeIf { it.isNotBlank() }
-                    ?: "Series",
-                seasonNumber = item.seasonNumber,
-                episodeNumber = item.episodeNumber,
-                episodeTitle = item.title,
-                posterUrl = seriesPage?.posterUrl ?: _uiState.value.episodeSeriesPosterUrl ?: pageDetail?.posterUrl,
-                downloadQualityOverride = downloadQuality,
-            )
+                val knownPoster = seriesPage?.posterUrl ?: _uiState.value.episodeSeriesPosterUrl
+                // The page's parent load may not have finished (or may not run
+                // at all); the title and poster are stored with the download,
+                // so fetch the parent now when either is missing.
+                val parent = if (knownTitle == null || knownPoster == null) {
+                    (catalogRepository.getItemDetailForPrefetch(seriesId, libraryId = libraryId) as? ApiResult.Success)?.data
+                } else {
+                    null
+                }
+                downloadEnqueuer.startEpisode(
+                    seriesContentId = seriesId,
+                    episodeContentId = item.contentId,
+                    fileId = version.fileId,
+                    seriesTitle = knownTitle ?: parent?.title?.takeIf { it.isNotBlank() } ?: "Series",
+                    seasonNumber = item.seasonNumber,
+                    episodeNumber = item.episodeNumber,
+                    episodeTitle = item.title,
+                    posterUrl = knownPoster ?: parent?.posterUrl ?: pageDetail?.posterUrl,
+                    downloadQualityOverride = downloadQuality,
+                )
+            }
             // The server rejects an episode sent without its series.
             item?.type == "episode" -> ApiResult.Error(0, "missing_series", "This episode isn't linked to a series.")
             else -> downloadEnqueuer.start(
