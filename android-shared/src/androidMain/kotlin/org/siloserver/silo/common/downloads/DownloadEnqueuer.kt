@@ -86,8 +86,9 @@ class DownloadEnqueuer(
 
     /**
      * Single-episode download. Resolves the episode's catalog row for rich
-     * sidecar metadata (series title, S/E numbers, still image). The
-     * `seriesContentId` is what gets associated on the server side; the
+     * sidecar metadata (series title, S/E numbers, still image). The server
+     * registers the entry under `seriesContentId` with `episodeContentId` as
+     * its episode, and rejects an episode sent as the content id; the
      * `fileId` chosen here is the user-preferred quality.
      */
     suspend fun startEpisode(
@@ -112,7 +113,8 @@ class DownloadEnqueuer(
             (episodeTitle?.takeIf { it.isNotBlank() }?.let { " · $it" } ?: "")
         val record = when (val r = repository.create(
             downloadRequest(
-                contentId = episodeContentId,
+                contentId = seriesContentId,
+                episodeId = episodeContentId,
                 fileId = fileId,
                 downloadQualityOverride = downloadQualityOverride,
             ),

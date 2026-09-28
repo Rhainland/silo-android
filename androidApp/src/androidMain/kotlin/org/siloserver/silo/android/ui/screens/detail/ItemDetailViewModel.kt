@@ -235,7 +235,7 @@ class ItemDetailViewModel(
         displayTitle: String,
         forceRedownloadMissingLocal: Boolean = false,
         downloadQuality: DownloadQuality? = null,
-        downloadContentId: String = contentId,
+        episode: ItemDetail? = null,
     ) {
         val existing = downloadRecordFor(version)
         when (
@@ -257,11 +257,11 @@ class ItemDetailViewModel(
             DetailDownloadTapAction.ReplaceAndStart -> viewModelScope.launch {
                 val staleRecord = existing
                 if (staleRecord == null || downloadsRepository.delete(staleRecord.id) is ApiResult.Success) {
-                    startDownload(version, displayTitle, downloadQuality, downloadContentId)
+                    startDownload(version, displayTitle, downloadQuality, episode)
                 }
             }
             DetailDownloadTapAction.Start -> viewModelScope.launch {
-                startDownload(version, displayTitle, downloadQuality, downloadContentId)
+                startDownload(version, displayTitle, downloadQuality, episode)
             }
         }
     }
@@ -275,16 +275,35 @@ class ItemDetailViewModel(
         version: FileVersion,
         displayTitle: String,
         downloadQuality: DownloadQuality?,
-        downloadContentId: String,
+        episode: ItemDetail?,
     ) {
+        // The series page names its selected episode; an episode page is
+        // itself the episode. Episodes register under their series, which the
+        // server requires, so they go through startEpisode.
+        val item = episode ?: _uiState.value.detail
+        val seriesId = item?.seriesId?.takeIf { item.type == "episode" && it.isNotBlank() }
         // wifiOnly read from per-profile PlayerSettingsStore inside
-        // DownloadEnqueuer.start; default true.
-        val result = downloadEnqueuer.start(
-            contentId = downloadContentId,
-            fileId = version.fileId,
-            displayTitle = displayTitle,
-            downloadQualityOverride = downloadQuality,
-        )
+        // DownloadEnqueuer; default true.
+        val result = if (item != null && seriesId != null) {
+            downloadEnqueuer.startEpisode(
+                seriesContentId = seriesId,
+                episodeContentId = item.contentId,
+                fileId = version.fileId,
+                seriesTitle = item.seriesTitle ?: _uiState.value.detail?.title ?: displayTitle,
+                seasonNumber = item.seasonNumber ?: 0,
+                episodeNumber = item.episodeNumber ?: 0,
+                episodeTitle = item.title,
+                posterUrl = _uiState.value.detail?.posterUrl,
+                downloadQualityOverride = downloadQuality,
+            )
+        } else {
+            downloadEnqueuer.start(
+                contentId = item?.contentId ?: contentId,
+                fileId = version.fileId,
+                displayTitle = displayTitle,
+                downloadQualityOverride = downloadQuality,
+            )
+        }
         _downloadStartEvents.emit(result is ApiResult.Success)
     }
 
