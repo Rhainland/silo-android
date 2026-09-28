@@ -301,6 +301,10 @@ class ItemDetailViewModel(
                 seriesTitle = item.seriesTitle?.takeIf { it.isNotBlank() }
                     ?: seriesPage?.title
                     ?: _uiState.value.episodeSeriesTitle?.takeIf { it.isNotBlank() }
+                    // The page's parent load may not have finished yet; the
+                    // title is stored with the download, so fetch it now.
+                    ?: (catalogRepository.getItemDetailForPrefetch(seriesId, libraryId = libraryId) as? ApiResult.Success)
+                        ?.data?.title?.takeIf { it.isNotBlank() }
                     ?: "Series",
                 seasonNumber = item.seasonNumber,
                 episodeNumber = item.episodeNumber,
