@@ -280,24 +280,32 @@ class ItemDetailViewModel(
         // The series page names its selected episode; an episode page is
         // itself the episode. Episodes register under their series, which the
         // server requires, so they go through startEpisode.
-        val item = episode ?: _uiState.value.detail
-        val seriesId = item?.seriesId?.takeIf { item.type == "episode" && it.isNotBlank() }
+        val pageDetail = _uiState.value.detail
+        val item = episode ?: pageDetail
+        val seriesPage = pageDetail?.takeIf { it.type == "series" }
+        // On the series page the page itself is the parent when the episode
+        // row omits its series id.
+        val seriesId = item?.seriesId?.takeIf { it.isNotBlank() }
+            ?: seriesPage?.takeIf { episode != null }?.contentId
         // wifiOnly read from per-profile PlayerSettingsStore inside
         // DownloadEnqueuer; default true.
-        val result = if (item != null && seriesId != null) {
-            downloadEnqueuer.startEpisode(
+        val result = when {
+            item?.type == "episode" && seriesId != null -> downloadEnqueuer.startEpisode(
                 seriesContentId = seriesId,
                 episodeContentId = item.contentId,
                 fileId = version.fileId,
-                seriesTitle = item.seriesTitle ?: _uiState.value.detail?.title ?: displayTitle,
-                seasonNumber = item.seasonNumber ?: 0,
-                episodeNumber = item.episodeNumber ?: 0,
+                // Never the episode's own title: the Downloads tab groups
+                // episodes under this name.
+                seriesTitle = item.seriesTitle?.takeIf { it.isNotBlank() } ?: seriesPage?.title ?: "Series",
+                seasonNumber = item.seasonNumber,
+                episodeNumber = item.episodeNumber,
                 episodeTitle = item.title,
-                posterUrl = _uiState.value.detail?.posterUrl,
+                posterUrl = pageDetail?.posterUrl,
                 downloadQualityOverride = downloadQuality,
             )
-        } else {
-            downloadEnqueuer.start(
+            // The server rejects an episode sent without its series.
+            item?.type == "episode" -> ApiResult.Error(0, "missing_series", "This episode isn't linked to a series.")
+            else -> downloadEnqueuer.start(
                 contentId = item?.contentId ?: contentId,
                 fileId = version.fileId,
                 displayTitle = displayTitle,
