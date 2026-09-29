@@ -136,7 +136,6 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeoutOrNull
 import org.siloserver.silo.playback.orNullIfBlank
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -4877,9 +4876,9 @@ class PlayerViewModel(
     /**
      * Subtitle preferences for offline playback, resolved the way the online
      * starter does: the server's effective values for this item when the
-     * detail could be read, then the active profile, then the defaults. The
-     * cached profile is preferred; the server read is bounded so an
-     * unreachable server cannot stall playback.
+     * detail could be read, then the cached active profile, then the
+     * defaults. Nothing here waits on the server, so an unreachable one cannot
+     * delay the local file.
      */
     private suspend fun offlineSubtitlePreferences(
         watchDetail: org.siloserver.silo.model.catalog.WatchDetail?,
@@ -4888,16 +4887,8 @@ class PlayerViewModel(
         val mode = watchDetail?.effectiveSubtitleMode.orNullIfBlank()
         val forced = watchDetail?.effectiveShowForcedSubtitles
         val profile = if (language == null || mode == null || forced == null) {
-            try {
-                val activeId = profileRepository.getActiveProfileId()
-                activeProfileStore?.activeProfile?.value?.takeIf { it.id == activeId }
-                    ?: withTimeoutOrNull(OFFLINE_PROFILE_READ_TIMEOUT_MS) { profileRepository.getActiveProfile() }
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                Log.w(TAG, "Could not read the active profile for offline subtitle preferences: ${e.javaClass.simpleName}")
-                null
-            }
+            val activeId = profileRepository.getActiveProfileId()
+            activeProfileStore?.activeProfile?.value?.takeIf { it.id == activeId }
         } else {
             null
         }
@@ -4924,9 +4915,6 @@ private const val PLAYBACK_PAUSE_GRACE_MS = 1_500L
 
 /** Snapshots to let a local audio switch take before asking the server. */
 private const val MAX_LOCAL_AUDIO_ATTEMPTS = 3
-
-/** Upper bound on the profile read that feeds offline subtitle preferences. */
-private const val OFFLINE_PROFILE_READ_TIMEOUT_MS = 2_000L
 
 /**
  * A downloaded file mounted by the offline-first path: a local URI with no
