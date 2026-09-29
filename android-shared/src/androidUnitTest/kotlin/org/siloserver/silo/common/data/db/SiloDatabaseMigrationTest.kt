@@ -100,6 +100,26 @@ class SiloDatabaseMigrationTest {
         }
     }
 
+    @Test
+    fun migration11To12KeepsDownloadsWithAnUnknownRevision() {
+        val name = "migration-11-to-12"
+        migrationHelper.createDatabase(name, 11).use { database ->
+            database.execSQL(
+                "INSERT INTO downloads (serverId, profileId, mediaFileId, recordId, contentId, title, mediaType, status, kind, " +
+                    "fileSize, bytesSent, createdAt, updatedAtMs) VALUES ('s', 'p', 42, 'row', 'movie', 'Movie', 'movie', " +
+                    "'completed', 'queued', 1024, 1024, '2026-09-29T00:00:00Z', 123)",
+            )
+        }
+        migrationHelper.runMigrationsAndValidate(name, 12, true).use { database ->
+            database.query("SELECT recordId, status, revision FROM downloads").use { cursor ->
+                assertEquals(true, cursor.moveToFirst())
+                assertEquals("row", cursor.getString(0)); assertEquals("completed", cursor.getString(1))
+                assertEquals(true, cursor.isNull(2))
+                assertEquals(false, cursor.moveToNext())
+            }
+        }
+    }
+
     private companion object {
         const val DATABASE_NAME = "migration-7-to-8"
     }

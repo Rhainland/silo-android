@@ -79,4 +79,7 @@ data class DownloadEntity(
     /** Quality the server actually delivered after any compatibility fallback;
      *  may differ from [quality]. Same offline-fallback reason as above. */
     val effectiveQuality: String? = null,
+    /** Registry revision whose bytes this row describes. A local completion
+     *  only speaks for this revision; null on rows written before v12. */
+    val revision: Int? = null,
 )

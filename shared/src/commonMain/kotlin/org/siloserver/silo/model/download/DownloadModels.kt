@@ -126,6 +126,17 @@ enum class DownloadStatus(val wire: String) {
 }
 
 /**
+ * One local status report for one registry revision (`PATCH /api/v2/downloads/{id}`).
+ * [status] is `downloading` or `completed`; [updatedAt] is the RFC 3339 time the
+ * local state changed, not the send time. A retry must resend all three values.
+ */
+data class DownloadStatusEvent(
+    val status: String,
+    val updatedAt: String,
+    val revision: Int,
+)
+
+/**
  * `direct` = browser one-shot serve (no persistent server record).
  * `queued` = tracked record visible in the user's downloads list.
  */

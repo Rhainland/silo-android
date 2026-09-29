@@ -422,6 +422,7 @@ class DownloadEnqueuer(
             deviceId = deviceId,
             loginId = authority?.loginId,
             origin = authority?.scope?.serverUrl,
+            revision = record.revision,
         )
         }
         if (authority == null) persistAndEnqueue()

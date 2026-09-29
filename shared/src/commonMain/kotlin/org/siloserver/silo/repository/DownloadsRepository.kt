@@ -3,6 +3,9 @@ package org.siloserver.silo.repository
 import org.siloserver.silo.model.download.DownloadCapability
 import org.siloserver.silo.model.download.DownloadRecord
 import org.siloserver.silo.model.download.DownloadRequest
+import org.siloserver.silo.model.download.DownloadStatus
+import org.siloserver.silo.model.download.DownloadStatusEvent
+import org.siloserver.silo.model.download.statusEnum
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.api.DownloadsApi
 import org.siloserver.silo.repository.port.DownloadDeletionPort
@@ -21,9 +24,11 @@ import kotlinx.coroutines.flow.update
  * **Disk-as-truth (v1.1).** The Android side seeds this cache from the
  * on-disk sidecar files at startup via [seedFromSidecars]. [refresh] then
  * *merges* the server view into that cache instead of overwriting it —
- * server-known records win on conflict (fresher status), but records that
- * only exist on disk (server cleaned them up while we were offline, or we
- * marked them [pendingDelete] but haven't synced yet) stay visible.
+ * server-known records win on conflict (fresher status), except that a
+ * locally completed download is never downgraded to the server's `ready` /
+ * `downloading` before its completion report lands ([keepLocalCompletion]).
+ * Records that only exist on disk (server cleaned them up while we were
+ * offline, or we marked them [pendingDelete] but haven't synced yet) stay visible.
  *
  * **Two-phase delete.** The server has a quirky DELETE: for active records
  * (queued / downloading) it only flips status to cancelled rather than
@@ -137,7 +142,11 @@ class DownloadsRepository(
                 if (!localWrite(authority) {
                     val hidden = pendingDelete + durable
                     val serverList = result.data.downloads.filterNot { it.id in hidden }
-                    _records.update { current -> serverList + current.filter { it.id !in serverIds && it.id !in hidden && it.id in keepIdsAbsentFromServer } }
+                    _records.update { current ->
+                        val local = current.associateBy { it.id }
+                        serverList.map { keepLocalCompletion(it, local[it.id]) } +
+                            current.filter { it.id !in serverIds && it.id !in hidden && it.id in keepIdsAbsentFromServer }
+                    }
                 }) return changed()
                 if (serverId != null && profileId != null) {
                     val deviceId = devices?.current()?.id
@@ -172,6 +181,37 @@ class DownloadsRepository(
             is ApiResult.NetworkError -> ApiResult.NetworkError(r.exception)
         }
 
+    }
+
+    /**
+     * Reports one local status event under [expectedAuthority] (the owner the
+     * download ran for) and records the server's acknowledgement in the cache.
+     * The result is returned as-is so the caller can tell a moved revision (409)
+     * from a transient failure.
+     */
+    suspend fun reportStatus(
+        id: String,
+        event: DownloadStatusEvent,
+        expectedAuthority: org.siloserver.silo.network.DurableLoginAuthority? = null,
+    ): ApiResult<DownloadRecord> {
+        val authority = expectedAuthority ?: authorities?.snapshotDurableLoginAuthority()
+        if (!current(authority)) return changed()
+        val result = api.reportStatus(id, event, authority?.scope)
+        if (result is ApiResult.Success && !localWrite(authority) {
+                // The worker publishes local status itself, and an answer can land
+                // after the transfer moved on (completed, or failed and cleaned up),
+                // or after a refresh installed a replacement revision. Only the
+                // acknowledgement is taken from it, and only for the same revision.
+                val row = result.data
+                _records.update { list ->
+                    list.map {
+                        if (it.id != id || (it.revision != null && it.revision != row.revision)) it
+                        else it.copy(completedAt = row.completedAt ?: it.completedAt, revision = row.revision,
+                            statusEventAt = latestInstant(it.statusEventAt, row.statusEventAt))
+                    }
+                }
+            }) return changed()
+        return result
     }
 
     /**
@@ -296,6 +336,27 @@ class DownloadsRepository(
             if (replaced.any { it.id == record.id }) replaced else replaced + record
         }
     }
+
+    /**
+     * A download this device finished stays completed while the server still
+     * reports it as `ready`/`downloading`: the completion report may not have
+     * reached it yet (offline, or still queued). The completion only speaks for
+     * the bytes it fetched, so the server row must be the same revision. Local
+     * rows saved before the revision was stored fall back to the same file and
+     * quality; any replacement of the target makes the server row win.
+     */
+    internal fun keepLocalCompletion(server: DownloadRecord, local: DownloadRecord?): DownloadRecord {
+        if (local == null || local.statusEnum() != DownloadStatus.Completed) return server
+        if (server.statusEnum() != DownloadStatus.Ready && server.statusEnum() != DownloadStatus.Downloading) return server
+        val sameBytes = if (local.revision != null) local.revision == server.revision
+            else local.mediaFileId == server.mediaFileId && local.quality == server.quality &&
+                local.effectiveQuality == server.effectiveQuality
+        if (!sameBytes) return server
+        return server.copy(status = local.status, bytesSent = local.bytesSent, completedAt = server.completedAt ?: local.completedAt)
+    }
+
+    /** The later of two v2 instants (fixed-width UTC, so text order is time order). */
+    private fun latestInstant(a: String?, b: String?): String? = if (a == null || (b != null && b > a)) b else a
 
     /** Lookup helper for callers (item detail) that key off `FileVersion.fileId`. */
     fun recordForFile(fileId: Int): DownloadRecord? =

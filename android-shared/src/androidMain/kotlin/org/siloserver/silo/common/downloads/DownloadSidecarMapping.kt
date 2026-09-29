@@ -51,6 +51,7 @@ fun DownloadSidecar.toEntity(serverId: String, profileId: String): DownloadEntit
         updatedAtMs = updatedAtMs,
         quality = record.quality,
         effectiveQuality = record.effectiveQuality,
+        revision = record.revision,
     )
 
 fun DownloadEntity.toSidecar(): DownloadSidecar =
@@ -69,6 +70,7 @@ fun DownloadEntity.toSidecar(): DownloadSidecar =
             completedAt = completedAt,
             quality = quality,
             effectiveQuality = effectiveQuality,
+            revision = revision,
         ),
         title = title,
         subtitle = subtitle,

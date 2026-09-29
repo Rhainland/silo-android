@@ -334,6 +334,15 @@ val androidModule = module {
         )
     }
     worker {
+        org.siloserver.silo.common.downloads.DownloadStatusWorker(
+            appContext = androidContext(),
+            params = get(),
+            repository = get(),
+            authorities = get(),
+            devices = get(),
+        )
+    }
+    worker {
         DownloadSubscriptionWorker(
             appContext = androidContext(),
             params = get(),

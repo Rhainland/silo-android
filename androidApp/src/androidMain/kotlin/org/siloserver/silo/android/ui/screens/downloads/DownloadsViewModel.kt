@@ -328,10 +328,20 @@ class DownloadsViewModel(
                 // contentId + MOVIES + "missing file" whenever the join missed).
                 // Live byte-progress/status is overlaid from the in-memory server
                 // records for in-flight items. Reload sidecars when a record the
-                // map doesn't know about appears (newly enqueued).
+                // map doesn't know about appears (newly enqueued), or when a
+                // download finished: the worker writes the completed sidecar
+                // (status + final file URI) before publishing the record, and
+                // the local completion is what the row's Ready/Play state reads.
                 val (sections, bytesUsed) = withContext(Dispatchers.IO) {
-                    if (records.any { it.id !in metadataByRecordId }) {
+                    val unseenCompletions = records.filter { sidecarMissesCompletion(it) }.map { it.id }
+                    if (unseenCompletions.isNotEmpty() || records.any { it.id !in metadataByRecordId }) {
                         reloadSidecarMetadata()
+                        // Reload once per disagreement: a row the server holds as
+                        // completed while it downloads again locally must not
+                        // re-read Room on every progress tick.
+                        completionReloadIds = (completionReloadIds + unseenCompletions).filterTo(mutableSetOf()) {
+                            metadataByRecordId[it]?.record?.statusEnum() != DownloadStatus.Completed
+                        }
                     }
                     val sects = buildSections(records.associateBy { it.id })
                     sects to sects.sumOf { it.totalBytesUsed }
@@ -634,6 +644,13 @@ class DownloadsViewModel(
             sidecar.record.mediaFileId to (serverId to profileId)
         }
     }
+
+    /** Completed records whose sidecar still disagreed after a reload. */
+    private var completionReloadIds: Set<String> = emptySet()
+
+    private fun sidecarMissesCompletion(record: DownloadRecord): Boolean =
+        record.statusEnum() == DownloadStatus.Completed && record.id !in completionReloadIds &&
+            metadataByRecordId[record.id]?.record?.statusEnum()?.let { it != DownloadStatus.Completed } == true
 
     private suspend fun activeDownloadScope(): Pair<String, String> {
         val serverId = serverRegistry.activeServerId.value ?: DownloadEnqueuer.DEFAULT_SERVER_ID
