@@ -557,6 +557,11 @@ class SettingsViewModel(
         }
     }
 
+    // The subtitle setters below also store each write's confirmed value in
+    // the cached profile, which offline playback reads for its subtitle
+    // preferences. A write that a newer edit of the same field superseded
+    // leaves the cache to that newer write.
+
     /** [language] is a BCP 47 tag, or "" for off. */
     fun setSubtitleLanguage(language: String) {
         val previous = _uiState.value.subtitleLanguage
@@ -568,7 +573,12 @@ class SettingsViewModel(
                     if (it.subtitleLanguage == language) it.copy(subtitleLanguage = previous) else it
                 }
             } else {
+                val current = _uiState.value.subtitleLanguage == language
                 applyResolved(result.snapshot, edited = language) { it.subtitleLanguage }
+                if (current) {
+                    val confirmed = result.snapshot?.subtitleLanguage ?: language
+                    activeProfileStore.update { it.copy(subtitleLanguage = confirmed) }
+                }
             }
         }
     }
@@ -583,7 +593,12 @@ class SettingsViewModel(
                     if (it.subtitleMode == mode) it.copy(subtitleMode = previous) else it
                 }
             } else {
+                val current = _uiState.value.subtitleMode == mode
                 applyResolved(result.snapshot, edited = mode.wire) { it.subtitleMode }
+                if (current) {
+                    val confirmed = result.snapshot?.subtitleMode ?: mode.wire
+                    activeProfileStore.update { it.copy(subtitleMode = confirmed) }
+                }
             }
         }
     }
@@ -598,8 +613,13 @@ class SettingsViewModel(
                     if (it.showForcedSubtitles == enabled) it.copy(showForcedSubtitles = previous) else it
                 }
             } else {
+                val current = _uiState.value.showForcedSubtitles == enabled
                 applyResolved(result.snapshot, edited = enabled.toString()) {
                     it.showForcedSubtitles.toString()
+                }
+                if (current) {
+                    val confirmed = result.snapshot?.showForcedSubtitles ?: enabled
+                    activeProfileStore.update { it.copy(showForcedSubtitles = confirmed) }
                 }
             }
         }
@@ -621,25 +641,7 @@ class SettingsViewModel(
         edited: String,
         fieldOf: (ProfileSettingsController.Snapshot) -> String,
     ) {
-        if (snapshot != null) applySnapshot(snapshot, edited, fieldOf)
-        // Offline subtitle preferences read the cached profile. Mirror what
-        // this screen now shows: the guards above already settled which
-        // response wins, and a write with no re-read keeps its own value.
-        val shown = _uiState.value
-        activeProfileStore.update {
-            it.copy(
-                subtitleLanguage = shown.subtitleLanguage,
-                subtitleMode = shown.subtitleMode.wire,
-                showForcedSubtitles = shown.showForcedSubtitles,
-            )
-        }
-    }
-
-    private fun applySnapshot(
-        snapshot: ProfileSettingsController.Snapshot,
-        edited: String,
-        fieldOf: (ProfileSettingsController.Snapshot) -> String,
-    ) {
+        if (snapshot == null) return
         if (fieldOf(snapshot) == edited) {
             _uiState.update {
                 it.copy(
