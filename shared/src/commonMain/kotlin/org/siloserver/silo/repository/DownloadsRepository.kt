@@ -26,7 +26,8 @@ import kotlinx.coroutines.flow.update
  * *merges* the server view into that cache instead of overwriting it —
  * server-known records win on conflict (fresher status), except that a
  * locally completed download is never downgraded to the server's `ready` /
- * `downloading` before its completion report lands ([keepLocalCompletion]).
+ * `downloading` for the same revision before its completion report lands
+ * ([keepLocalCompletion]).
  * Records that only exist on disk (server cleaned them up while we were
  * offline, or we marked them [pendingDelete] but haven't synced yet) stay visible.
  *
@@ -341,17 +342,14 @@ class DownloadsRepository(
      * A download this device finished stays completed while the server still
      * reports it as `ready`/`downloading`: the completion report may not have
      * reached it yet (offline, or still queued). The completion only speaks for
-     * the bytes it fetched, so the server row must be the same revision. Local
-     * rows saved before the revision was stored fall back to the same file and
-     * quality; any replacement of the target makes the server row win.
+     * the bytes it fetched, so the server row must be the same revision. A local
+     * row without a stored revision (saved before it was kept) proves nothing,
+     * and a replaced revision makes the server row win.
      */
     internal fun keepLocalCompletion(server: DownloadRecord, local: DownloadRecord?): DownloadRecord {
         if (local == null || local.statusEnum() != DownloadStatus.Completed) return server
         if (server.statusEnum() != DownloadStatus.Ready && server.statusEnum() != DownloadStatus.Downloading) return server
-        val sameBytes = if (local.revision != null) local.revision == server.revision
-            else local.mediaFileId == server.mediaFileId && local.quality == server.quality &&
-                local.effectiveQuality == server.effectiveQuality
-        if (!sameBytes) return server
+        if (local.revision == null || local.revision != server.revision) return server
         return server.copy(status = local.status, bytesSent = local.bytesSent, completedAt = server.completedAt ?: local.completedAt)
     }
 

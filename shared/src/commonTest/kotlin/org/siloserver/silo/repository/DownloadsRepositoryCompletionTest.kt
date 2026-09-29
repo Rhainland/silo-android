@@ -67,10 +67,10 @@ class DownloadsRepositoryCompletionTest {
     }
 
     @Test
-    fun `refresh keeps a completion seeded from local metadata without a revision`() = runTest {
+    fun `refresh keeps a completion seeded from local metadata with the same revision`() = runTest {
         val api = RegistryFake().apply { server = listOf(entry("downloading")) }
         val repo = DownloadsRepository(api)
-        repo.seedFromSidecars(listOf(entry("completed", revision = null, bytes = 1000)))
+        repo.seedFromSidecars(listOf(entry("completed", bytes = 1000)))
 
         repo.refresh()
 
@@ -91,8 +91,9 @@ class DownloadsRepositoryCompletionTest {
     }
 
     @Test
-    fun `a completion saved without a revision does not cover a replaced target`() = runTest {
-        val api = RegistryFake().apply { server = listOf(entry("ready", revision = 2, quality = "2mbps")) }
+    fun `a completion saved without a revision does not cover any server revision`() = runTest {
+        // Same file and quality: a failed row re-created at revision 2 keeps its target.
+        val api = RegistryFake().apply { server = listOf(entry("ready", revision = 2)) }
         val repo = DownloadsRepository(api)
         repo.seedFromSidecars(listOf(entry("completed", revision = null, bytes = 1000)))
 
