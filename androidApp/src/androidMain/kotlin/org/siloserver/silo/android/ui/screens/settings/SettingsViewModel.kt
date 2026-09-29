@@ -621,16 +621,25 @@ class SettingsViewModel(
         edited: String,
         fieldOf: (ProfileSettingsController.Snapshot) -> String,
     ) {
-        if (snapshot == null) return
-        // Offline subtitle preferences read the cached profile; keep it on
-        // what the server now resolves.
+        if (snapshot != null) applySnapshot(snapshot, edited, fieldOf)
+        // Offline subtitle preferences read the cached profile. Mirror what
+        // this screen now shows: the guards above already settled which
+        // response wins, and a write with no re-read keeps its own value.
+        val shown = _uiState.value
         activeProfileStore.update {
             it.copy(
-                subtitleLanguage = snapshot.subtitleLanguage,
-                subtitleMode = snapshot.subtitleMode,
-                showForcedSubtitles = snapshot.showForcedSubtitles,
+                subtitleLanguage = shown.subtitleLanguage,
+                subtitleMode = shown.subtitleMode.wire,
+                showForcedSubtitles = shown.showForcedSubtitles,
             )
         }
+    }
+
+    private fun applySnapshot(
+        snapshot: ProfileSettingsController.Snapshot,
+        edited: String,
+        fieldOf: (ProfileSettingsController.Snapshot) -> String,
+    ) {
         if (fieldOf(snapshot) == edited) {
             _uiState.update {
                 it.copy(
