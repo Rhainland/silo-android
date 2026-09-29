@@ -3630,6 +3630,9 @@ class PlayerViewModel(
 
     private fun persistDesiredAudio(catalogOrdinal: Int) {
         val state = _uiState.value
+        // A prepared download's rows describe its own re-encoded tracks, whose
+        // fingerprints would not match the source's tracks online.
+        if (state.offlineAudioByPosition) return
         val context = mobileSubtitleContext(state)
         val scope = finalPositionScope ?: return
         viewModelScope.launch {

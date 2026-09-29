@@ -621,6 +621,9 @@ class SettingsViewModel(
         edited: String,
         fieldOf: (ProfileSettingsController.Snapshot) -> String,
     ) {
+        // The cached profile feeds offline subtitle preferences; keep it on
+        // the row just written.
+        viewModelScope.launch { activeProfileStore.refresh(force = true) }
         if (snapshot == null) return
         if (fieldOf(snapshot) == edited) {
             _uiState.update {
