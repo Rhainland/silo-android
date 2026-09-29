@@ -4,6 +4,7 @@ import org.siloserver.silo.common.data.db.entity.DownloadEntity
 import org.siloserver.silo.model.catalog.VersionChapter
 import org.siloserver.silo.model.download.DownloadRecord
 import org.siloserver.silo.model.download.DownloadSidecar
+import org.siloserver.silo.model.download.OfflineTrackInfo
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 
@@ -58,6 +59,7 @@ fun DownloadSidecar.toEntity(serverId: String, profileId: String): DownloadEntit
         quality = record.quality,
         effectiveQuality = record.effectiveQuality,
         revision = record.revision,
+        offlineTracksJson = offlineTracks?.let { mappingJson.encodeToString(it) },
     )
 
 fun DownloadEntity.toSidecar(): DownloadSidecar =
@@ -97,5 +99,8 @@ fun DownloadEntity.toSidecar(): DownloadSidecar =
         durationSeconds = durationSeconds,
         chapters = chaptersJson?.let { runCatching { mappingJson.decodeFromString<List<VersionChapter>>(it) }.getOrNull() },
         resumeValidator = resumeValidator,
+        offlineTracks = offlineTracksJson?.let {
+            runCatching { mappingJson.decodeFromString<OfflineTrackInfo>(it) }.getOrNull()
+        },
         updatedAtMs = updatedAtMs,
     )

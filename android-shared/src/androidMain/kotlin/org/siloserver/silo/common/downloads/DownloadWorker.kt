@@ -92,6 +92,7 @@ class DownloadWorker(
 ) : CoroutineWorker(appContext, params) {
 
     private var transferAuthority: DurableLoginAuthority? = null
+    private val offlineTrackFetcher = OfflineTrackAssetFetcher(httpClient, storage)
     private suspend fun requireOwner() {
         if (authorities != null && (transferAuthority == null || transferAuthority != authorities.snapshotDurableLoginAuthority() || inputData.getString(KEY_DEVICE_ID) != devices?.current()?.id)) throw DownloadOwnerChanged()
     }
@@ -144,8 +145,24 @@ class DownloadWorker(
         }.onFailure { Log.w(TAG, "setForeground initial failed", it) }
 
         var activeUri: String? = null
+        // Capture can outlive media publication. A stop then preserves the
+        // completed file and its queued completion report.
+        var mediaPublished = false
+
         try {
             var existing = runCatching { metadataStore.readSidecar(serverId, profileId, fileId) }.getOrNull()
+            // A stopped capture resumes from the completed local file, including
+            // legacy rows whose original transfer revision is unknown.
+            if (existing != null && existing.record.id == downloadId &&
+                existing.record.statusEnum() == DownloadStatus.Completed &&
+                storage.locateLocalMedia(serverId, profileId, fileId) != null
+            ) {
+                mediaPublished = true
+                if (existing.offlineTracks == null) {
+                    captureOfflineTracks(downloadId, serverId, profileId, fileId, mediaType)
+                }
+                return@withContext Result.success()
+            }
             // Old WorkManager jobs have no revision input. Resolve it as their owner
             // and save it in Room so another attempt does not depend on a UI cache.
             val revision = inputData.getInt(KEY_REVISION, 0).takeIf { it > 0 }
@@ -335,6 +352,7 @@ class DownloadWorker(
                 )
                 true
             }
+            mediaPublished = true
             Log.i(TAG, "doWork success id=$downloadId bytes=$finalBytes")
             DiagnosticsDownloadLogger.event("download completed")
             // Strictly after the `downloading` event: the server ignores an event
@@ -355,6 +373,7 @@ class DownloadWorker(
             }
             // The v2 file route never marks the entry completed; this report does.
             reportStatus(downloadId, DownloadStatus.Completed, completedAtMs, revision, serverId, profileId)
+            captureOfflineTracks(downloadId, serverId, profileId, fileId, mediaType)
             Result.success(workDataOf(KEY_BYTES_WRITTEN to finalBytes, KEY_TOTAL_BYTES to finalBytes))
         } catch (e: DownloadOwnerChanged) {
             // Preserve the original owner's partial; a new login cannot resume it.
@@ -371,7 +390,7 @@ class DownloadWorker(
             // downloads with a red badge and delete-then-fail them.
             Log.i(TAG, "doWork cancelled id=$downloadId")
             DiagnosticsDownloadLogger.event("download cancelled")
-            withContext(NonCancellable) {
+            if (!mediaPublished) withContext(NonCancellable) {
                 // WorkManager's notification action cancels this transfer directly.
                 // Its separate status job must stop before we remove the bytes.
                 runCatching { DownloadStatusWorker.cancel(appContext, downloadId) }
@@ -448,6 +467,43 @@ class DownloadWorker(
                 origin = inputData.getString(KEY_ORIGIN),
             )
         }.onFailure { Log.w(TAG, "status report enqueue failed id=$downloadId status=${status.wire}", it) }
+    }
+
+    /**
+     * Fetches the offline manifest's audio tracks and subtitle sidecars for a
+     * published video download and stores them on its metadata row. Best
+     * effort: every failure leaves the download playable the legacy way.
+     */
+    private suspend fun captureOfflineTracks(
+        downloadId: String,
+        serverId: String,
+        profileId: String,
+        fileId: Int,
+        mediaType: String?,
+    ) {
+        if (!OfflineTrackAssetFetcher.appliesTo(mediaType)) return
+        try {
+            requireOwner()
+            val tracks = offlineTrackFetcher.fetch(downloadId, serverId, profileId, fileId) {
+                transferAuthority?.let { managedDownloadAuth(it.scope) }
+            } ?: return
+            ownedWrite {
+                val existing = metadataStore.readSidecar(serverId, profileId, fileId)
+                    ?.takeIf { it.record.id == downloadId }
+                if (existing != null) {
+                    metadataStore.writeSidecar(
+                        serverId, profileId,
+                        existing.copy(offlineTracks = tracks, updatedAtMs = System.currentTimeMillis()),
+                    )
+                }
+                true
+            }
+            Log.i(TAG, "offline tracks captured id=$downloadId audio=${tracks.audioTracks.size} subtitles=${tracks.subtitles.size}")
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.w(TAG, "offline track capture skipped id=$downloadId", e)
+        }
     }
 
     /** Permanent failure — clean up local file and let the user retry manually. */

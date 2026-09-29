@@ -82,4 +82,8 @@ data class DownloadEntity(
     /** Registry revision whose bytes this row describes. A local completion
      *  only speaks for this revision; null on rows written before v12. */
     val revision: Int? = null,
+    /** Serialized [org.siloserver.silo.model.download.OfflineTrackInfo]: the
+     *  downloaded file's audio tracks and the local subtitle sidecars. Null for
+     *  downloads completed before offline track data was captured. */
+    val offlineTracksJson: String? = null,
 )

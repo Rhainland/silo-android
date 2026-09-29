@@ -56,7 +56,7 @@ import org.siloserver.silo.common.data.db.entity.UserItemStateEntity
         MembershipProjectionEntity::class,
         LegacyMembershipQuarantineEntity::class,
     ],
-    version = 12,
+    version = 13,
     exportSchema = true,
     autoMigrations = [
         AutoMigration(from = 1, to = 2),
@@ -69,6 +69,7 @@ import org.siloserver.silo.common.data.db.entity.UserItemStateEntity
         AutoMigration(from = 8, to = 9),
         AutoMigration(from = 10, to = 11),
         AutoMigration(from = 11, to = 12),
+        AutoMigration(from = 12, to = 13),
     ],
 )
 abstract class SiloDatabase : RoomDatabase() {

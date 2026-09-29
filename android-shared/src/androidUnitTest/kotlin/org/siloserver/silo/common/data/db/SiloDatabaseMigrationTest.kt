@@ -120,6 +120,30 @@ class SiloDatabaseMigrationTest {
         }
     }
 
+    @Test
+    fun migration12To13KeepsDownloadRevisionsAndAddsNullableOfflineTracks() {
+        val name = "migration-12-to-13"
+        migrationHelper.createDatabase(name, 12).use { database ->
+            database.execSQL(
+                "INSERT INTO downloads (serverId, profileId, mediaFileId, recordId, contentId, title, mediaType, " +
+                    "status, kind, fileSize, bytesSent, createdAt, updatedAtMs, revision) VALUES " +
+                    "('s', 'p', 42, 'dl_1', 'mv_1', 'Example', 'movie', 'completed', 'queued', 1024, 1024, " +
+                    "'2026-09-29T00:00:00Z', 123, 7)",
+            )
+        }
+        migrationHelper.runMigrationsAndValidate(name, 13, true).use { database ->
+            database.query("SELECT recordId, status, bytesSent, revision, offlineTracksJson FROM downloads").use { cursor ->
+                assertEquals(true, cursor.moveToFirst())
+                assertEquals("dl_1", cursor.getString(0))
+                assertEquals("completed", cursor.getString(1))
+                assertEquals(1024L, cursor.getLong(2))
+                assertEquals(7, cursor.getInt(3))
+                assertNull(cursor.getString(4))
+                assertEquals(false, cursor.moveToNext())
+            }
+        }
+    }
+
     private companion object {
         const val DATABASE_NAME = "migration-7-to-8"
     }
