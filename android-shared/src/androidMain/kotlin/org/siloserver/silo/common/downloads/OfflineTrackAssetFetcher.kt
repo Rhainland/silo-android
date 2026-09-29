@@ -13,7 +13,9 @@ import io.ktor.http.HttpStatusCode
 import io.ktor.http.encodeURLPathPart
 import io.ktor.utils.io.jvm.javaio.toInputStream
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.delay
 import org.siloserver.silo.model.download.DownloadMediaType
+import org.siloserver.silo.model.download.OfflineManifestTracks
 import org.siloserver.silo.model.download.OfflineManifestSubtitle
 import org.siloserver.silo.model.download.OfflineSubtitleFile
 import org.siloserver.silo.model.download.OfflineTrackInfo
@@ -38,6 +40,7 @@ import java.io.IOException
 internal class OfflineTrackAssetFetcher(
     private val httpClient: HttpClient,
     private val storage: DownloadStorage,
+    private val manifestRetryDelayMs: Long = 2_000,
 ) {
     suspend fun fetch(
         downloadId: String,
@@ -46,21 +49,7 @@ internal class OfflineTrackAssetFetcher(
         fileId: Int,
         configure: HttpRequestBuilder.() -> Unit,
     ): OfflineTrackInfo? {
-        val manifest = try {
-            val response = httpClient.get("/api/v2/downloads/${downloadId.encodeURLPathPart()}/manifest") {
-                configure()
-            }
-            if (response.status != HttpStatusCode.OK) {
-                Log.i(TAG, "manifest unavailable id=$downloadId status=${response.status.value}")
-                return null
-            }
-            decodeOfflineManifestTracks(response.bodyAsText())
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            Log.w(TAG, "manifest fetch failed id=$downloadId", e)
-            return null
-        } ?: return null
+        val manifest = fetchManifest(downloadId, configure) ?: return null
 
         val directory = storage.offlineSubtitleDirectory(serverId, profileId, fileId)
         // A replaced download (new revision) must not keep the previous
@@ -74,6 +63,34 @@ internal class OfflineTrackAssetFetcher(
             }
         }
         return manifest.toOfflineTrackInfo(saved)
+    }
+
+    /**
+     * The capture runs once, right after the download completes, so a network
+     * blip or a transient server error is retried briefly here; a missing
+     * manifest (older server) is not.
+     */
+    private suspend fun fetchManifest(
+        downloadId: String,
+        configure: HttpRequestBuilder.() -> Unit,
+    ): OfflineManifestTracks? {
+        repeat(MANIFEST_ATTEMPTS) { attempt ->
+            if (attempt > 0) delay(manifestRetryDelayMs * attempt)
+            try {
+                val response = httpClient.get("/api/v2/downloads/${downloadId.encodeURLPathPart()}/manifest") {
+                    configure()
+                }
+                val status = response.status
+                if (status == HttpStatusCode.OK) return decodeOfflineManifestTracks(response.bodyAsText())
+                Log.i(TAG, "manifest unavailable id=$downloadId status=${status.value}")
+                if (status.value < 500 && status != HttpStatusCode.TooManyRequests) return null
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.w(TAG, "manifest fetch failed id=$downloadId attempt=${attempt + 1}", e)
+            }
+        }
+        return null
     }
 
     private suspend fun fetchSubtitle(
@@ -142,6 +159,7 @@ internal class OfflineTrackAssetFetcher(
 
     companion object {
         private const val TAG = "OfflineTrackAssets"
+        private const val MANIFEST_ATTEMPTS = 3
         private const val BUFFER_BYTES = 64 * 1024
         private const val SUBTITLE_IDLE_TIMEOUT_MS = 120_000L
 

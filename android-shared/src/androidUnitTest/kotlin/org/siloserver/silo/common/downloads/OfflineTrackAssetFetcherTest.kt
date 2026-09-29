@@ -42,11 +42,16 @@ class OfflineTrackAssetFetcherTest {
 
     private val requested = mutableListOf<String>()
 
-    private fun client(manifestStatus: HttpStatusCode = HttpStatusCode.OK) = HttpClient(
+    private fun client(
+        manifestStatus: HttpStatusCode = HttpStatusCode.OK,
+        transientManifestFailures: Int = 0,
+    ) = HttpClient(
         MockEngine { request ->
             val path = request.url.encodedPath
             requested += path
             when {
+                path.endsWith("/manifest") && requested.count { it.endsWith("/manifest") } <= transientManifestFailures ->
+                    respond("", HttpStatusCode.ServiceUnavailable)
                 path.endsWith("/manifest") -> respond(manifest, manifestStatus)
                 path.endsWith("/subtitles/embedded:2") -> respond("[Script Info]\nTitle: x\n")
                 // The server failed to read the external sidecar.
@@ -103,6 +108,19 @@ class OfflineTrackAssetFetcherTest {
             OfflineTrackAssetFetcher(client(HttpStatusCode.NotFound), storage).fetch("dl_1", "srv", "prof", 42) {},
         )
         assertEquals(listOf("/api/v2/downloads/dl_1/manifest"), requested)
+    }
+
+    @Test
+    fun aTransientManifestFailureIsRetried() = runBlocking {
+        val storage = DownloadStorage(tmp.newFolder("filesDir"))
+
+        val info = assertNotNull(
+            OfflineTrackAssetFetcher(client(transientManifestFailures = 2), storage, manifestRetryDelayMs = 0)
+                .fetch("dl_1", "srv", "prof", 42) {},
+        )
+
+        assertEquals(3, requested.count { it.endsWith("/manifest") })
+        assertEquals(2, info.audioTracks.size)
     }
 
     @Test
