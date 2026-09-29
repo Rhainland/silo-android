@@ -4876,7 +4876,7 @@ class PlayerViewModel(
             -> null
         } ?: return
         if (identity == published.committedSubtitleIdentity) return
-        Log.i(TAG, "local subtitle auto-selection: $identity")
+        Log.i(TAG, "local subtitle auto-selection applied")
         mobileSubtitleTransactions.updatePlaybackContext(mobileSubtitleContext(published))
         mobileSubtitleTransactions.select(identity)
     }
