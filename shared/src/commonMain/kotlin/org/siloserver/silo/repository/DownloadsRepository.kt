@@ -10,6 +10,7 @@ import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.api.DownloadsApi
 import org.siloserver.silo.repository.port.DownloadDeletionPort
 import org.siloserver.silo.repository.port.NoOpDownloadDeletionPort
+import org.siloserver.silo.util.parseRfc3339ToEpochMillis
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -376,8 +377,16 @@ class DownloadsRepository(
         return server.copy(status = local.status, bytesSent = local.bytesSent, completedAt = server.completedAt ?: local.completedAt)
     }
 
-    /** The later of two v2 instants (fixed-width UTC, so text order is time order). */
-    private fun latestInstant(a: String?, b: String?): String? = if (a == null || (b != null && b > a)) b else a
+    /** Compare event times at the client's millisecond precision, regardless of timestamp shape. */
+    private fun latestInstant(a: String?, b: String?): String? {
+        val aMillis = a?.let(::parseRfc3339ToEpochMillis)
+        val bMillis = b?.let(::parseRfc3339ToEpochMillis)
+        return when {
+            bMillis == null -> a
+            aMillis == null || bMillis > aMillis -> b
+            else -> a
+        }
+    }
 
     /** Lookup helper for callers (item detail) that key off `FileVersion.fileId`. */
     fun recordForFile(fileId: Int): DownloadRecord? =

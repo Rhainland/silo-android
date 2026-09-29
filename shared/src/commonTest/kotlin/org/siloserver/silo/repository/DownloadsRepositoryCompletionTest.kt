@@ -226,6 +226,53 @@ class DownloadsRepositoryCompletionTest {
     }
 
     @Test
+    fun `acknowledgements compare whole and fractional seconds chronologically`() = runTest {
+        val whole = "2026-09-29T00:01:00Z"
+        val fractional = "2026-09-29T00:01:00.500Z"
+        for ((cached, acknowledged) in listOf(whole to fractional, fractional to whole)) {
+            val api = RegistryFake()
+            val repo = DownloadsRepository(api)
+            repo.upsertLocal(entry("completed", bytes = 1000).copy(statusEventAt = cached))
+            api.reportAnswer = { ApiResult.Success(entry("completed").copy(statusEventAt = acknowledged)) }
+
+            repo.reportStatus("dl", DownloadStatusEvent("completed", acknowledged, 1))
+
+            assertEquals(fractional, repo.records.value.single().statusEventAt)
+        }
+    }
+
+    @Test
+    fun `acknowledgements compare instants across numeric offsets`() = runTest {
+        val older = "2026-09-29T01:01:00+01:00"
+        val newer = "2026-09-29T00:01:00.500Z"
+        for ((cached, acknowledged) in listOf(older to newer, newer to older)) {
+            val api = RegistryFake()
+            val repo = DownloadsRepository(api)
+            repo.upsertLocal(entry("completed", bytes = 1000).copy(statusEventAt = cached))
+            api.reportAnswer = { ApiResult.Success(entry("completed").copy(statusEventAt = acknowledged)) }
+
+            repo.reportStatus("dl", DownloadStatusEvent("completed", acknowledged, 1))
+
+            assertEquals(newer, repo.records.value.single().statusEventAt)
+        }
+    }
+
+    @Test
+    fun `an invalid timestamp cannot replace a valid acknowledgement`() = runTest {
+        val valid = "2026-09-29T00:01:00.500Z"
+        for ((cached, acknowledged) in listOf("invalid" to valid, valid to "invalid")) {
+            val api = RegistryFake()
+            val repo = DownloadsRepository(api)
+            repo.upsertLocal(entry("completed", bytes = 1000).copy(statusEventAt = cached))
+            api.reportAnswer = { ApiResult.Success(entry("completed").copy(statusEventAt = acknowledged)) }
+
+            repo.reportStatus("dl", DownloadStatusEvent("completed", valid, 1))
+
+            assertEquals(valid, repo.records.value.single().statusEventAt)
+        }
+    }
+
+    @Test
     fun `a failed report leaves the cache untouched`() = runTest {
         val api = RegistryFake()
         val repo = DownloadsRepository(api)
