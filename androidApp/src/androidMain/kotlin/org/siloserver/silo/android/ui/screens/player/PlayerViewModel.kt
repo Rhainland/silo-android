@@ -232,8 +232,12 @@ internal fun PlayerViewModel.PlayerUiState.withPlaybackClock(clock: PlaybackCloc
 internal fun mobileAudioTrackPersistenceUpdate(
     committedAudioTrackIndex: Int?,
     audioTracks: List<AudioTrack>,
+    originalDownload: Boolean = false,
 ): TrackSelectionFingerprintUpdate = committedAudioTrackIndex
     ?.let(audioTracks::getOrNull)
+    // Offline manifests number audio rows by position. The online catalog
+    // omits this field, so its source-track fingerprints use the default 0.
+    ?.let { if (originalDownload) it.copy(index = 0) else it }
     ?.let(::audioTrackFingerprint)
     ?.let(TrackSelectionFingerprintUpdate::Set)
     ?: TrackSelectionFingerprintUpdate.Preserve
@@ -3644,6 +3648,7 @@ class PlayerViewModel(
                     audioUpdate = mobileAudioTrackPersistenceUpdate(
                         committedAudioTrackIndex = catalogOrdinal,
                         audioTracks = context.audioTracks,
+                        originalDownload = state.isLocalFilePlayback(),
                     ),
                     // Untouched: this path changed audio only.
                     subtitleUpdate = TrackSelectionFingerprintUpdate.Preserve,

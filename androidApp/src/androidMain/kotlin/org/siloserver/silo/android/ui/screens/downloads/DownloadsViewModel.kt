@@ -526,10 +526,9 @@ class DownloadsViewModel(
             // write a DURABLE tombstone (so the record can't resurrect as a ghost on
             // the next online refresh — written BEFORE byte deletion so a crash can't
             // lose the server-delete intent), then drop the bytes + metadata.
-            val status = record?.statusEnum() ?: sidecar?.record?.statusEnum()
-            if (status == DownloadStatus.Queued || status == DownloadStatus.Downloading) {
-                downloadEnqueuer.cancel(id)
-            }
+            // Completed media can still be capturing subtitle sidecars. Wait
+            // for that worker too, before removing files or its metadata row.
+            downloadEnqueuer.cancel(id)
             // Drop the in-memory sidecar maps BEFORE the tombstone: enqueueDurableDelete
             // emits on repository.records and the collector rebuilds sections from
             // metadataByRecordId — if the entry were still present the deleted row would
