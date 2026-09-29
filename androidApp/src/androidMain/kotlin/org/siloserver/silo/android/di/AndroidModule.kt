@@ -386,6 +386,7 @@ val androidModule = module {
             sectionRepository = get(),
             castPlaybackPreparer = get(),
             seekIntervalStore = get(),
+            activeProfileStore = get(),
         )
     }
     viewModel { HomeViewModel(get(), get(), get(), get(), getOrNull(), get(), get()) }

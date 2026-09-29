@@ -291,6 +291,9 @@ class PlayerViewModel(
     // Profile-wide seek intervals (settings revision 9). Optional so unit
     // tests that construct the VM directly keep the legacy fixed intervals.
     private val seekIntervalStore: org.siloserver.silo.common.settings.SeekIntervalStore? = null,
+    // Cached active profile; offline playback reads subtitle preferences from
+    // it instead of waiting on the server. Optional for the same reason.
+    private val activeProfileStore: org.siloserver.silo.model.profile.ActiveProfileStore? = null,
 ) : ViewModel() {
 
     // Last load request, replayed by the "Can't reach server" Retry / Try Anyway.
@@ -3157,7 +3160,10 @@ class PlayerViewModel(
             qualityPreference = currentMobileQualityPreference(),
             subtitleTracks = state.subtitleTracks,
             audioTracks = state.audioTracks,
-            writeScope = finalPositionScope,
+            // A download's subtitle rows describe the local file, not the
+            // server's inventory. Saved as the item's preference they would not
+            // resolve online and would suppress auto-selection there.
+            writeScope = finalPositionScope.takeUnless { state.isLocalFilePlayback() },
         )
 
     private fun currentMobileQualityPreference(): String? =
@@ -3626,7 +3632,7 @@ class PlayerViewModel(
     private fun persistDesiredAudio(catalogOrdinal: Int) {
         val state = _uiState.value
         val context = mobileSubtitleContext(state)
-        val scope = context.writeScope ?: return
+        val scope = finalPositionScope ?: return
         viewModelScope.launch {
             runCatching {
                 userItemStatePort.recordTrackSelection(
@@ -4872,7 +4878,8 @@ class PlayerViewModel(
      * Subtitle preferences for offline playback, resolved the way the online
      * starter does: the server's effective values for this item when the
      * detail could be read, then the active profile, then the defaults. The
-     * profile read is bounded so an unreachable server cannot stall playback.
+     * cached profile is preferred; the server read is bounded so an
+     * unreachable server cannot stall playback.
      */
     private suspend fun offlineSubtitlePreferences(
         watchDetail: org.siloserver.silo.model.catalog.WatchDetail?,
@@ -4882,11 +4889,13 @@ class PlayerViewModel(
         val forced = watchDetail?.effectiveShowForcedSubtitles
         val profile = if (language == null || mode == null || forced == null) {
             try {
-                withTimeoutOrNull(OFFLINE_PROFILE_READ_TIMEOUT_MS) { profileRepository.getActiveProfile() }
+                val activeId = profileRepository.getActiveProfileId()
+                activeProfileStore?.activeProfile?.value?.takeIf { it.id == activeId }
+                    ?: withTimeoutOrNull(OFFLINE_PROFILE_READ_TIMEOUT_MS) { profileRepository.getActiveProfile() }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                Log.w(TAG, "Could not read the active profile for offline subtitle preferences", e)
+                Log.w(TAG, "Could not read the active profile for offline subtitle preferences: ${e.javaClass.simpleName}")
                 null
             }
         } else {
