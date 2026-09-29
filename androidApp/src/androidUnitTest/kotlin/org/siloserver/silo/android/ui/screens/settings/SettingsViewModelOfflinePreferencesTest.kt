@@ -98,6 +98,7 @@ class SettingsViewModelOfflinePreferencesTest {
         oldReply.complete(snapshot(mode = "auto"))
         runCurrent()
 
+        assertEquals(SubtitleMode.OFF, vm.uiState.value.subtitleMode)
         assertEquals("off", profiles.activeProfile.value?.subtitleMode)
     }
 

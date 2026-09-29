@@ -581,9 +581,8 @@ class SettingsViewModel(
                     if (it.subtitleLanguage == language) it.copy(subtitleLanguage = previous) else it
                 }
             } else {
-                val current = editGeneration > subtitleLanguageConfirmedGeneration
-                applyResolved(result.snapshot, edited = language) { it.subtitleLanguage }
-                if (current) {
+                if (editGeneration > subtitleLanguageConfirmedGeneration) {
+                    applyResolved(result.snapshot, edited = language) { it.subtitleLanguage }
                     subtitleLanguageConfirmedGeneration = editGeneration
                     val confirmed = result.snapshot?.subtitleLanguage ?: language
                     activeProfileStore.update { it.copy(subtitleLanguage = confirmed) }
@@ -603,9 +602,8 @@ class SettingsViewModel(
                     if (it.subtitleMode == mode) it.copy(subtitleMode = previous) else it
                 }
             } else {
-                val current = editGeneration > subtitleModeConfirmedGeneration
-                applyResolved(result.snapshot, edited = mode.wire) { it.subtitleMode }
-                if (current) {
+                if (editGeneration > subtitleModeConfirmedGeneration) {
+                    applyResolved(result.snapshot, edited = mode.wire) { it.subtitleMode }
                     subtitleModeConfirmedGeneration = editGeneration
                     val confirmed = result.snapshot?.subtitleMode ?: mode.wire
                     activeProfileStore.update { it.copy(subtitleMode = confirmed) }
@@ -625,11 +623,10 @@ class SettingsViewModel(
                     if (it.showForcedSubtitles == enabled) it.copy(showForcedSubtitles = previous) else it
                 }
             } else {
-                val current = editGeneration > forcedSubtitlesConfirmedGeneration
-                applyResolved(result.snapshot, edited = enabled.toString()) {
-                    it.showForcedSubtitles.toString()
-                }
-                if (current) {
+                if (editGeneration > forcedSubtitlesConfirmedGeneration) {
+                    applyResolved(result.snapshot, edited = enabled.toString()) {
+                        it.showForcedSubtitles.toString()
+                    }
                     forcedSubtitlesConfirmedGeneration = editGeneration
                     val confirmed = result.snapshot?.showForcedSubtitles ?: enabled
                     activeProfileStore.update { it.copy(showForcedSubtitles = confirmed) }
