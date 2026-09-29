@@ -8,6 +8,8 @@ import org.siloserver.silo.model.download.DownloadsListResponse
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.AuthScopeSnapshot
 import org.siloserver.silo.network.DeviceMetadataProvider
+import org.siloserver.silo.network.DurableLoginAuthority
+import org.siloserver.silo.network.DurableLoginAuthorityProvider
 import org.siloserver.silo.network.SiloDeviceMetadata
 import org.siloserver.silo.network.TokenManagerImpl
 import org.siloserver.silo.network.api.DownloadsApi
@@ -30,11 +32,16 @@ private class RegistryFake : DownloadsApi(
     creation = DownloadCreationV2Api(HttpClient(), TokenManagerImpl(), CompletionTestNoDevices, registryStub(), ApiV2Gate.Unrestricted),
 ) {
     var server: List<DownloadRecord> = emptyList()
+    var onList: (() -> Unit)? = null
+    val listedScopes = mutableListOf<AuthScopeSnapshot?>()
     var reportAnswer: (DownloadStatusEvent) -> ApiResult<DownloadRecord> = { ApiResult.NetworkError(IllegalStateException("offline")) }
     val reports = mutableListOf<Pair<String, DownloadStatusEvent>>()
 
-    override suspend fun list(scope: AuthScopeSnapshot?): ApiResult<DownloadsListResponse> =
-        ApiResult.Success(DownloadsListResponse(server))
+    override suspend fun list(scope: AuthScopeSnapshot?): ApiResult<DownloadsListResponse> {
+        listedScopes += scope
+        onList?.invoke()
+        return ApiResult.Success(DownloadsListResponse(server))
+    }
 
     override suspend fun reportStatus(id: String, event: DownloadStatusEvent, scope: AuthScopeSnapshot?): ApiResult<DownloadRecord> {
         reports += id to event
@@ -49,6 +56,42 @@ private fun entry(status: String, revision: Int? = 1, bytes: Long = 0, completed
 )
 
 class DownloadsRepositoryCompletionTest {
+
+    @Test
+    fun `an old queued job resolves its revision with an empty UI cache`() = runTest {
+        val owner = DurableLoginAuthority("login", AuthScopeSnapshot("server", "profile", "https://example.invalid", "proof"))
+        val authorities = object : DurableLoginAuthorityProvider { override suspend fun snapshotDurableLoginAuthority() = owner }
+        val api = RegistryFake().apply { server = listOf(entry("ready", revision = 7)) }
+        val repo = DownloadsRepository(api, authorities = authorities)
+
+        val row = assertIs<ApiResult.Success<DownloadRecord>>(repo.resolveTransferRecord("dl", 42, owner)).data
+
+        assertEquals(7, row.revision)
+        assertEquals(listOf<AuthScopeSnapshot?>(owner.scope), api.listedScopes)
+        assertEquals(emptyList(), repo.records.value)
+    }
+
+    @Test
+    fun `an old job cannot resolve a replacement targeting another file`() = runTest {
+        val api = RegistryFake().apply { server = listOf(entry("ready", revision = 2).copy(mediaFileId = 99)) }
+        assertEquals(409, assertIs<ApiResult.Error>(DownloadsRepository(api).resolveTransferRecord("dl", 42)).code)
+        assertEquals(404, assertIs<ApiResult.Error>(DownloadsRepository(api).resolveTransferRecord("gone", 42)).code)
+    }
+
+    @Test
+    fun `an old job cannot use a revision returned after its owner changed`() = runTest {
+        val owner = DurableLoginAuthority("login", AuthScopeSnapshot("server", "profile", "https://example.invalid", null))
+        var active = owner
+        val authorities = object : DurableLoginAuthorityProvider { override suspend fun snapshotDurableLoginAuthority() = active }
+        val api = RegistryFake().apply {
+            server = listOf(entry("ready"))
+            onList = { active = owner.copy(loginId = "other-login") }
+        }
+        val repo = DownloadsRepository(api, authorities = authorities)
+
+        assertEquals("identity_changed", assertIs<ApiResult.Error>(repo.resolveTransferRecord("dl", 42, owner)).error)
+        assertEquals(emptyList(), repo.records.value)
+    }
 
     @Test
     fun `refresh keeps a local completion while the server still says ready`() = runTest {

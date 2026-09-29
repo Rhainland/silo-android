@@ -154,13 +154,14 @@ internal enum class DownloadStatusReportOutcome { Settled, Reconcile, RetryLater
  *   (future times are rejected), which a later retry of the same event fixes.
  * - `404`/`403` and other client errors: the entry is gone, not reportable
  *   (preparing, failed, revoked), or downloads are off; resending cannot help.
- * - Auth, throttling, server errors, network loss and identity changes are transient.
+ * - Profile PIN verification, auth, throttling, server errors, network loss and identity changes are transient.
  */
 internal fun downloadStatusReportOutcome(result: ApiResult<DownloadRecord>): DownloadStatusReportOutcome = when (result) {
     is ApiResult.Success -> DownloadStatusReportOutcome.Settled
     is ApiResult.NetworkError -> DownloadStatusReportOutcome.RetryLater
     is ApiResult.Error -> when (result.code) {
         409 -> DownloadStatusReportOutcome.Reconcile
+        403 -> if (result.error == "profile_verification_required") DownloadStatusReportOutcome.RetryLater else DownloadStatusReportOutcome.Settled
         0, 400, 401, 408, 422, 429 -> DownloadStatusReportOutcome.RetryLater
         in 500..599 -> DownloadStatusReportOutcome.RetryLater
         else -> DownloadStatusReportOutcome.Settled

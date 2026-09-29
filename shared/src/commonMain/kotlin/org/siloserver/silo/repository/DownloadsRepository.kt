@@ -184,6 +184,29 @@ class DownloadsRepository(
 
     }
 
+    /** Read the revision for an older queued transfer without relying on the UI cache. */
+    suspend fun resolveTransferRecord(
+        id: String,
+        fileId: Int,
+        expectedAuthority: org.siloserver.silo.network.DurableLoginAuthority? = null,
+    ): ApiResult<DownloadRecord> {
+        val authority = expectedAuthority ?: authorities?.snapshotDurableLoginAuthority()
+        if (!current(authority)) return changed()
+        val result = api.list(authority?.scope)
+        if (!current(authority)) return changed()
+        return when (result) {
+            is ApiResult.Success -> {
+                val row = result.data.downloads.singleOrNull { it.id == id }
+                    ?: return ApiResult.Error(404, "download_not_found", "The queued download no longer exists.")
+                if (row.mediaFileId != fileId) return ApiResult.Error(409, "download_target_changed", "The queued download now targets another file.")
+                if (row.revision == null || row.revision < 1) return ApiResult.Error(0, "invalid_download_registry", "The download revision is unavailable.")
+                ApiResult.Success(row)
+            }
+            is ApiResult.Error -> result
+            is ApiResult.NetworkError -> result
+        }
+    }
+
     /**
      * Reports one local status event under [expectedAuthority] (the owner the
      * download ran for) and records the server's acknowledgement in the cache.

@@ -50,7 +50,9 @@ class DownloadRegistryV2Api(private val client: HttpClient, private val tokens: 
             client.request(path) {
                 this.method = method; authScope(owner!!); requireSiloAuth()
                 // The existing auth plugin attaches the installation's device metadata.
-                if (method != HttpMethod.Get) singleAttempt()
+                // A status event retains its revision and timestamp, so replaying
+                // PATCH after an auth refresh is safe. DELETE remains one attempt.
+                if (method == HttpMethod.Delete) singleAttempt()
                 configure()
             }
         }) { it }

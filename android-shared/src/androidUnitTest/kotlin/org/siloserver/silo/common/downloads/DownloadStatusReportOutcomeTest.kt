@@ -37,4 +37,13 @@ class DownloadStatusReportOutcomeTest {
             assertEquals(DownloadStatusReportOutcome.Settled, downloadStatusReportOutcome(error(code)), "HTTP $code")
         }
     }
+
+    @Test
+    fun `a locked profile keeps its report until PIN verification succeeds`() {
+        val locked = ApiResult.Error(403, "profile_verification_required", "Verify the active profile.")
+        assertEquals(DownloadStatusReportOutcome.RetryLater, downloadStatusReportOutcome(locked))
+        assertEquals(DownloadStatusReportOutcome.Settled, downloadStatusReportOutcome(
+            ApiResult.Error(403, "permission_denied", "Downloads are disabled."),
+        ))
+    }
 }
