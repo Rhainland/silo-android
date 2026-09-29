@@ -158,6 +158,14 @@ class DownloadWorker(
                 storage.locateLocalMedia(serverId, profileId, fileId) != null
             ) {
                 mediaPublished = true
+                requireOwner()
+                // Publication and status enqueue are separate durable writes.
+                // Recover a stop between them using the revision of these bytes.
+                reportStatus(
+                    downloadId, DownloadStatus.Completed,
+                    maxOf(System.currentTimeMillis(), existing.updatedAtMs + 1),
+                    existing.record.revision?.takeIf { it > 0 }, serverId, profileId,
+                )
                 if (existing.offlineTracks == null) {
                     captureOfflineTracks(downloadId, serverId, profileId, fileId, mediaType)
                 }
