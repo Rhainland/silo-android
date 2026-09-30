@@ -33,6 +33,7 @@ import org.siloserver.silo.common.diagnostics.DiagnosticsLifecycleLogger
 import org.siloserver.silo.common.network.ServerReachabilityMonitor
 import org.siloserver.silo.common.settings.PlayerSettingsStore
 import org.siloserver.silo.common.settings.ServerDrivenConfigRefresher
+import org.siloserver.silo.common.settings.TitleArtStore
 import org.siloserver.silo.common.startup.StartupArtworkPlan
 import org.siloserver.silo.common.startup.warmAuthenticatedStartup
 import org.siloserver.silo.common.startup.warmProfileSelectionStartup
@@ -378,6 +379,11 @@ class MainTvActivity : ComponentActivity() {
                 ),
                 serverUrl = get<ServerRegistry>(ServerRegistry::class.java).activeEntry.value?.url,
                 artworkPlan = StartupArtworkPlan.tv(),
+                showTitleArt = {
+                    val titleArt = get<TitleArtStore>(TitleArtStore::class.java)
+                    titleArt.hydrateIfNeeded()
+                    titleArt.state.value.showTitleArt
+                },
             )
         }
     }

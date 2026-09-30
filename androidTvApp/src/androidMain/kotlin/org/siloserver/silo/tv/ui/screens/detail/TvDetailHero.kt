@@ -44,6 +44,7 @@ import androidx.tv.material3.Text
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
 import coil3.compose.AsyncImage
+import org.siloserver.silo.common.settings.LocalShowTitleArt
 import org.siloserver.silo.common.ui.components.ThumbhashImage
 import org.siloserver.silo.tv.R
 import org.siloserver.silo.tv.ui.theme.SuccessGreen
@@ -332,15 +333,17 @@ private fun TitleBlock(
     logoUrl: String?,
 ) {
     val seriesContext = seriesTitle?.trim()?.takeIf { it.isNotEmpty() }
+    // "Show title art" off: every title here is text, episodes included.
+    val shownLogoUrl = logoUrl?.takeIf { LocalShowTitleArt.current }
 
     when {
         seriesContext != null -> EpisodeHierarchyTitle(
             seriesTitle = seriesContext,
             episodeTitle = title,
-            logoUrl = logoUrl,
+            logoUrl = shownLogoUrl,
         )
-        !logoUrl.isNullOrBlank() -> AsyncImage(
-            model = logoUrl,
+        !shownLogoUrl.isNullOrBlank() -> AsyncImage(
+            model = shownLogoUrl,
             contentDescription = title,
             contentScale = ContentScale.Fit,
             alignment = Alignment.BottomStart,

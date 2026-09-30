@@ -312,6 +312,7 @@ fun SettingsScreen(
                         description = "Choose which Home rows are visible and the order they appear in.",
                         onClick = { showHomeSectionsEditor = true },
                     )
+                    TitleArtSettingsRows(store = koinInject())
                 }
             }
 

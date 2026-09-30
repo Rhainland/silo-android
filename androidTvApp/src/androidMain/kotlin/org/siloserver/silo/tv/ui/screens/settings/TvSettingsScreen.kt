@@ -97,6 +97,7 @@ import androidx.tv.material3.Text
 import org.siloserver.silo.common.network.clientVersionLabel
 import org.siloserver.silo.common.settings.CardPresentationSource
 import org.siloserver.silo.common.settings.CardPresentationSupport
+import org.siloserver.silo.common.settings.TitleArtStore
 import org.siloserver.silo.model.settings.CardCaption
 import org.siloserver.silo.model.settings.CardPosterSize
 import org.siloserver.silo.model.settings.CardPresentation
@@ -120,6 +121,7 @@ import org.siloserver.silo.tv.ui.screens.settings.diagnostics.TvDiagnosticsViewM
 import org.siloserver.silo.tv.ui.theme.FocusedContainer
 import org.siloserver.silo.tv.ui.theme.FocusedContent
 import org.siloserver.silo.tv.ui.theme.Spacing
+import org.koin.compose.koinInject
 import org.koin.compose.viewmodel.koinViewModel
 import org.siloserver.silo.viewmodel.HomeViewModel
 import kotlinx.coroutines.delay
@@ -969,6 +971,9 @@ private fun TvGeneralSettingsPane(
                     )
                 }
             }
+        }
+        item {
+            TvTitleArtSettingsGroup()
         }
         item {
             // tvOS TVGeneralSettingsPane TOP MENU parity: the Audiobooks tab
@@ -2669,4 +2674,39 @@ private fun nextUpPromptLabel(seconds: Int): String = when {
     seconds < 60 -> "$seconds seconds before end"
     seconds == 60 -> "1 minute before end"
     else -> "${seconds / 60} minutes before end"
+}
+
+/**
+ * "Show title art" and "Apply to all devices" (settings revision 16). Hidden
+ * until the server confirms the key; older servers keep logos on.
+ */
+@Composable
+private fun TvTitleArtSettingsGroup(store: TitleArtStore = koinInject()) {
+    // Opening Settings is a refresh edge for a choice made on another device.
+    LaunchedEffect(store) { store.refresh() }
+    val state by store.state.collectAsState()
+    if (!state.isSupported) return
+    SettingsGroup(title = "Title Pages") {
+        SettingsToggleRow(
+            label = "Show title art",
+            checked = state.showTitleArt,
+            onCheckedChange = store::setShowTitleArt,
+        )
+        SettingsFooterText(text = "Use logo artwork as the title when available.")
+        SettingsToggleRow(
+            label = "Apply to all devices",
+            checked = state.appliesToAllDevices,
+            onCheckedChange = store::setAppliesToAllDevices,
+        )
+        SettingsFooterText(
+            text = if (state.appliesToAllDevices) {
+                "On: every device on this profile uses this choice. Title art is " +
+                    "${if (state.showTitleArt) "on" else "off"} on every device signed into " +
+                    "this profile. Changing it here changes it everywhere. Turn off " +
+                    "\u201CApply to all devices\u201D to choose for this TV only."
+            } else {
+                "Off: only affects this TV. Your other devices keep their own setting."
+            },
+        )
+    }
 }

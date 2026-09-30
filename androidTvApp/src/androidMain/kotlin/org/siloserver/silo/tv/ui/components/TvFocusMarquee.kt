@@ -34,6 +34,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.tv.material3.Text
+import org.siloserver.silo.common.settings.LocalShowTitleArt
 import org.siloserver.silo.common.ui.components.ThumbhashImage
 import org.siloserver.silo.tv.ui.theme.SiloOnSurface
 import org.siloserver.silo.tv.ui.theme.SiloSecondaryText
@@ -117,7 +118,9 @@ private fun TvMarqueeBlock(
     // lines the synopsis drops to one, keeping the bottom-anchored block's
     // height bounded so it never climbs into the top-menu-bar zone.
     var titleLineCount by remember(content.id) { mutableStateOf(1) }
-    var logoLoaded by remember(content.logoUrl) { mutableStateOf(false) }
+    // "Show title art" off: the marquee always names the title in text.
+    val logoUrl = content.logoUrl?.takeIf { LocalShowTitleArt.current }
+    var logoLoaded by remember(logoUrl) { mutableStateOf(false) }
     val logoAlpha by animateFloatAsState(
         targetValue = if (logoLoaded) 1f else 0f,
         animationSpec = tween(TvMarqueeCrossfadeMs, easing = TvMarqueeEasing),
@@ -133,7 +136,7 @@ private fun TvMarqueeBlock(
         // Keep the semantic text title visible until transparent logo artwork
         // has actually decoded. A bad/slow URL therefore never creates a blank
         // title slot; successful artwork fades over the fixed-height fallback.
-        if (!content.logoUrl.isNullOrBlank()) {
+        if (!logoUrl.isNullOrBlank()) {
             Box(
                 modifier = Modifier
                     .height(MarqueeLogoMaxHeight)
@@ -154,7 +157,7 @@ private fun TvMarqueeBlock(
                     )
                 }
                 ThumbhashImage(
-                    url = content.logoUrl,
+                    url = logoUrl,
                     thumbhash = null,
                     contentDescription = content.title,
                     contentScale = ContentScale.Fit,
@@ -204,6 +207,9 @@ private fun TvMarqueeBlock(
             }
         }
 
+        // A logo title sits in its fixed-height slot whatever the fallback
+        // measured, so only a free-standing text title costs a synopsis line.
+        val textTitleWraps = logoUrl.isNullOrBlank() && titleLineCount > 1
         // Two synopsis lines (one when a text title wraps): the raised
         // typography floors made the old three-line block tall enough to
         // climb under the top menu bar, and the bar zone wins.
@@ -213,7 +219,7 @@ private fun TvMarqueeBlock(
                 color = SiloSecondaryText,
                 fontSize = MarqueeSynopsisSize,
                 lineHeight = MarqueeSynopsisSize * 1.35f,
-                maxLines = if (titleLineCount > 1) 1 else 2,
+                maxLines = if (textTitleWraps) 1 else 2,
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.widthIn(max = MarqueeSynopsisMaxWidth),
             )
