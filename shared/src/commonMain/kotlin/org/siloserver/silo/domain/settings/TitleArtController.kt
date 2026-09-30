@@ -5,6 +5,7 @@ import org.siloserver.silo.model.settings.SettingKeys
 import org.siloserver.silo.model.settings.SettingScope
 import org.siloserver.silo.model.settings.SettingsContractCapabilities
 import org.siloserver.silo.network.ApiResult
+import org.siloserver.silo.network.AuthScopeSnapshot
 import org.siloserver.silo.repository.SettingsRepository
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
@@ -27,6 +28,11 @@ data class TitleArtPreference(
  * TV apps. The client never reimplements precedence: reads take the server's
  * effective value for this device, and writes follow the `ui.title_art`
  * manifest notes.
+ *
+ * Every call takes the caller's captured `authority` and passes it to each
+ * request it makes, so one change (up to a PUT, a DELETE and a re-read) is
+ * bound to one profile: after a profile switch the remaining requests fail as
+ * `identity_changed` instead of addressing the new profile.
  */
 class TitleArtController(
     private val repository: SettingsRepository,
@@ -53,7 +59,7 @@ class TitleArtController(
         data class Failed(val message: String?) : WriteResult
     }
 
-    suspend fun load(): LoadResult {
+    suspend fun load(authority: AuthScopeSnapshot? = null): LoadResult {
         when (val caps = repository.contractCapabilities()) {
             is ApiResult.Success -> if (!isSupported(caps.data)) return LoadResult.Unsupported
             // No contract routes: an older server, not a transient failure.
@@ -61,7 +67,7 @@ class TitleArtController(
                 return if (caps.code == 404) LoadResult.Unsupported else LoadResult.Failed(caps.message)
             is ApiResult.NetworkError -> return LoadResult.Failed(caps.exception.message)
         }
-        return when (val result = resolve()) {
+        return when (val result = resolve(authority)) {
             is ApiResult.Success -> LoadResult.Supported(result.data)
             is ApiResult.Error -> LoadResult.Failed(result.message)
             is ApiResult.NetworkError -> LoadResult.Failed(result.exception.message)
@@ -72,9 +78,13 @@ class TitleArtController(
      * The main switch. While the value applies to all devices it is the
      * profile's value; otherwise it is this device's own.
      */
-    suspend fun setShowTitleArt(show: Boolean, appliesToAllDevices: Boolean): WriteResult {
+    suspend fun setShowTitleArt(
+        show: Boolean,
+        appliesToAllDevices: Boolean,
+        authority: AuthScopeSnapshot? = null,
+    ): WriteResult {
         val scope = if (appliesToAllDevices) SettingScope.PROFILE else SettingScope.PROFILE_DEVICE
-        return put(scope, show) ?: saved()
+        return put(scope, show, authority) ?: saved(authority)
     }
 
     /**
@@ -87,21 +97,29 @@ class TitleArtController(
      * value already is the state asked for (the repository reports that 404 as
      * success).
      */
-    suspend fun setAppliesToAllDevices(enabled: Boolean, showTitleArt: Boolean): WriteResult {
-        if (enabled) return put(SettingScope.PROFILE, showTitleArt) ?: saved()
-        put(SettingScope.PROFILE_DEVICE, showTitleArt)?.let { return it }
-        return when (val cleared = repository.clearProfileValue(KEY)) {
-            is ApiResult.Success -> saved()
+    suspend fun setAppliesToAllDevices(
+        enabled: Boolean,
+        showTitleArt: Boolean,
+        authority: AuthScopeSnapshot? = null,
+    ): WriteResult {
+        if (enabled) return put(SettingScope.PROFILE, showTitleArt, authority) ?: saved(authority)
+        put(SettingScope.PROFILE_DEVICE, showTitleArt, authority)?.let { return it }
+        return when (val cleared = repository.clearProfileValue(KEY, authority)) {
+            is ApiResult.Success -> saved(authority)
             is ApiResult.Error -> WriteResult.Failed(cleared.message)
             is ApiResult.NetworkError -> WriteResult.Failed(cleared.exception.message)
         }
     }
 
     /** Null when the write landed, else the failure to report. */
-    private suspend fun put(scope: SettingScope, value: Boolean): WriteResult.Failed? {
+    private suspend fun put(
+        scope: SettingScope,
+        value: Boolean,
+        authority: AuthScopeSnapshot?,
+    ): WriteResult.Failed? {
         val result = when (scope) {
-            SettingScope.PROFILE -> repository.setProfileValue(KEY, JsonPrimitive(value))
-            SettingScope.PROFILE_DEVICE -> repository.setProfileDeviceValue(KEY, JsonPrimitive(value))
+            SettingScope.PROFILE -> repository.setProfileValue(KEY, JsonPrimitive(value), authority)
+            SettingScope.PROFILE_DEVICE -> repository.setProfileDeviceValue(KEY, JsonPrimitive(value), authority)
             else -> error("ui.title_art allows only profile and profile_device")
         }
         return when (result) {
@@ -111,11 +129,11 @@ class TitleArtController(
         }
     }
 
-    private suspend fun saved(): WriteResult =
-        WriteResult.Saved((resolve() as? ApiResult.Success)?.data)
+    private suspend fun saved(authority: AuthScopeSnapshot?): WriteResult =
+        WriteResult.Saved((resolve(authority) as? ApiResult.Success)?.data)
 
-    private suspend fun resolve(): ApiResult<TitleArtPreference> =
-        when (val result = repository.getEffectiveValues(listOf(KEY))) {
+    private suspend fun resolve(authority: AuthScopeSnapshot?): ApiResult<TitleArtPreference> =
+        when (val result = repository.getEffectiveValues(listOf(KEY), authority = authority)) {
             is ApiResult.Success -> {
                 val entry = result.data[KEY]
                 if (entry == null) {

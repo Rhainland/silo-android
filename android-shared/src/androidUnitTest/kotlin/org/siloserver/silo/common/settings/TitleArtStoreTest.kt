@@ -224,6 +224,34 @@ class TitleArtStoreTest {
     }
 
     @Test
+    fun `one title art change stays on the profile it started on`() = runTest {
+        var activeProfile = "profile-1"
+        val server = FakeTitleArtServer(profileValue = true)
+        val store = DefaultTitleArtStore.forTest(
+            controller = TitleArtController(SettingsRepository(server)),
+            scope = backgroundScope,
+            getActiveProfileId = { activeProfile },
+        )
+        store.refresh()
+        server.authorities.clear()
+        // The profile switches while the device PUT is on the wire.
+        server.afterPut = { activeProfile = "profile-2" }
+
+        store.setAppliesToAllDevices(false)
+        runCurrent()
+
+        assertEquals(listOf("put profile_device true", "delete profile"), server.calls)
+        assertEquals(
+            listOf<Pair<String, String?>>(
+                "put" to "profile-1",
+                "delete" to "profile-1",
+                "effective" to "profile-1",
+            ),
+            server.authorities,
+        )
+    }
+
+    @Test
     fun `clear drops the previous profile's answer`() = runTest {
         val store = storeFor(FakeTitleArtServer(deviceValue = false))
         store.refresh()
@@ -266,6 +294,10 @@ class TitleArtStoreTest {
         var failPuts = false
         var putGate: CompletableDeferred<Unit>? = null
 
+        /** The profile each request was pinned to, in order. */
+        val authorities = mutableListOf<Pair<String, String?>>()
+        var afterPut: () -> Unit = {}
+
         /** Runs before each capabilities answer; a test can suspend it. */
         var capabilitiesFor: suspend () -> Unit = {}
 
@@ -280,6 +312,7 @@ class TitleArtStoreTest {
             seriesIds: List<String>,
             authority: org.siloserver.silo.network.AuthScopeSnapshot?,
         ): ApiResult<EffectiveSettingValuesResponse> {
+            authorities += "effective" to authority?.profileId
             val (value, source) = profileValue?.let { it to "profile" }
                 ?: deviceValue?.let { it to "profile_device" }
                 ?: (true to EffectiveSettingValue.SOURCE_DEFAULT)
@@ -301,7 +334,9 @@ class TitleArtStoreTest {
         ): ApiResult<StoredSettingValue> {
             val bool = (value as JsonPrimitive).content.toBooleanStrict()
             calls += "put ${scope.scope.wire} $bool"
+            authorities += "put" to authority?.profileId
             putGate?.await()
+            afterPut()
             if (failPuts) return ApiResult.Error(500, "boom", "Server error")
             when (scope.scope) {
                 SettingScope.PROFILE -> profileValue = bool
@@ -318,6 +353,7 @@ class TitleArtStoreTest {
             authority: org.siloserver.silo.network.AuthScopeSnapshot?,
         ): ApiResult<Unit> {
             calls += "delete ${scope.scope.wire}"
+            authorities += "delete" to authority?.profileId
             if (scope.scope == SettingScope.PROFILE) {
                 val existed = profileValue != null
                 profileValue = null

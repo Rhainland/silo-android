@@ -5,6 +5,7 @@ import android.content.SharedPreferences
 import androidx.core.content.edit
 import org.siloserver.silo.domain.settings.TitleArtController
 import org.siloserver.silo.domain.settings.TitleArtPreference
+import org.siloserver.silo.network.AuthScopeSnapshot
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -92,6 +93,7 @@ class DefaultTitleArtStore private constructor(
     private val scope: CoroutineScope,
     private val getActiveProfileId: suspend () -> String?,
     private val getServerUrl: suspend () -> String?,
+    private val getAuthScope: suspend () -> AuthScopeSnapshot?,
     private val cache: TitleArtCache,
     identityChanges: Flow<Unit>,
 ) : TitleArtStore {
@@ -102,12 +104,14 @@ class DefaultTitleArtStore private constructor(
         scope: CoroutineScope,
         getActiveProfileId: suspend () -> String?,
         getServerUrl: suspend () -> String?,
+        getAuthScope: suspend () -> AuthScopeSnapshot?,
         identityChanges: Flow<Unit> = emptyFlow(),
     ) : this(
         controller = controller,
         scope = scope,
         getActiveProfileId = getActiveProfileId,
         getServerUrl = getServerUrl,
+        getAuthScope = getAuthScope,
         cache = SharedPreferencesTitleArtCache(
             context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE),
         ),
@@ -136,6 +140,9 @@ class DefaultTitleArtStore private constructor(
 
     /** The last state the server confirmed; a failed write restores it. */
     private var confirmed = TitleArtState()
+
+    /** The profile the committed state was read for; writes must match it. */
+    private var confirmedAuthority: AuthScopeSnapshot? = null
 
     /** Only the latest local request may decide what is shown when it settles. */
     private var requestCounter = 0L
@@ -175,6 +182,7 @@ class DefaultTitleArtStore private constructor(
 
     override suspend fun refresh() {
         val identity = currentIdentity() ?: return
+        val authority = getAuthScope()
         val startGeneration: Int
         val startEpoch: Long
         val sequence: Long
@@ -184,7 +192,7 @@ class DefaultTitleArtStore private constructor(
             sequence = ++refreshSequence
         }
         seedFromCache(identity, startGeneration)
-        val resolved = when (val result = controller.load()) {
+        val resolved = when (val result = controller.load(authority)) {
             is TitleArtController.LoadResult.Supported ->
                 TitleArtState(TitleArtSupport.Supported, result.preference)
             TitleArtController.LoadResult.Unsupported -> TitleArtState(TitleArtSupport.Unsupported)
@@ -211,6 +219,7 @@ class DefaultTitleArtStore private constructor(
             }
             if (mutationEpoch != startEpoch) return@synchronized false
             committedRefresh = sequence
+            confirmedAuthority = authority
             _state.value = resolved
             confirmed = resolved
             _lastError.value = null
@@ -237,14 +246,14 @@ class DefaultTitleArtStore private constructor(
     override fun setShowTitleArt(show: Boolean) {
         mutate(
             next = { it.copy(showTitleArt = show) },
-            write = { pref -> controller.setShowTitleArt(show, pref.appliesToAllDevices) },
+            write = { pref, authority -> controller.setShowTitleArt(show, pref.appliesToAllDevices, authority) },
         )
     }
 
     override fun setAppliesToAllDevices(enabled: Boolean) {
         mutate(
             next = { it.copy(appliesToAllDevices = enabled) },
-            write = { pref -> controller.setAppliesToAllDevices(enabled, pref.showTitleArt) },
+            write = { pref, authority -> controller.setAppliesToAllDevices(enabled, pref.showTitleArt, authority) },
         )
     }
 
@@ -256,7 +265,7 @@ class DefaultTitleArtStore private constructor(
      */
     private fun mutate(
         next: (TitleArtPreference) -> TitleArtPreference,
-        write: suspend (TitleArtPreference) -> TitleArtController.WriteResult,
+        write: suspend (TitleArtPreference, AuthScopeSnapshot) -> TitleArtController.WriteResult,
     ) {
         val startGeneration: Int
         val request: Long
@@ -279,9 +288,19 @@ class DefaultTitleArtStore private constructor(
         // The store owns the write, so leaving the screen cannot strand an
         // unsaved value on screen.
         scope.launch {
+            // One profile for the whole change: every request it makes (up to
+            // a PUT, a DELETE and a re-read) is pinned to this snapshot, so a
+            // profile switch part-way through fails the rest instead of
+            // landing them on the new profile.
+            val authority = getAuthScope()
             val result = writeLock.withLock {
                 if (generation != startGeneration) return@withLock null
-                write(before)
+                val readFor = synchronized(lock) { confirmedAuthority }
+                if (authority == null || (readFor != null && !authority.isSameProfileAs(readFor))) {
+                    TitleArtController.WriteResult.Failed(IDENTITY_CHANGED)
+                } else {
+                    write(before, authority)
+                }
             }
             var refreshNow = false
             val persisted = synchronized(lock) {
@@ -334,6 +353,7 @@ class DefaultTitleArtStore private constructor(
         hasHydrated = false
         _state.value = TitleArtState()
         confirmed = TitleArtState()
+        confirmedAuthority = null
         pendingWrites = 0
         refreshAfterWrites = false
         _isSaving.value = false
@@ -347,6 +367,11 @@ class DefaultTitleArtStore private constructor(
 
     internal companion object {
         const val PREFS_NAME = "silo_title_art"
+        const val IDENTITY_CHANGED = "The acting account or profile changed."
+
+        /** Same signed-in server identity and the same profile. */
+        private fun AuthScopeSnapshot.isSameProfileAs(other: AuthScopeSnapshot): Boolean =
+            isSameIdentityAs(other) && profileId == other.profileId
 
         /** Test seam: no Android Context, in-memory cache. */
         internal fun forTest(
@@ -354,6 +379,7 @@ class DefaultTitleArtStore private constructor(
             scope: CoroutineScope,
             getActiveProfileId: suspend () -> String? = { "profile-1" },
             getServerUrl: suspend () -> String? = { "https://server.test" },
+            getAuthScope: (suspend () -> AuthScopeSnapshot?)? = null,
             cache: TitleArtCache = InMemoryTitleArtCache(),
             identityChanges: Flow<Unit> = emptyFlow(),
         ): DefaultTitleArtStore = DefaultTitleArtStore(
@@ -361,6 +387,15 @@ class DefaultTitleArtStore private constructor(
             scope = scope,
             getActiveProfileId = getActiveProfileId,
             getServerUrl = getServerUrl,
+            getAuthScope = getAuthScope ?: {
+                val url = getServerUrl().orEmpty()
+                AuthScopeSnapshot(
+                    serverId = url,
+                    profileId = getActiveProfileId(),
+                    serverUrl = url,
+                    profileToken = "token-${getActiveProfileId()}",
+                )
+            },
             cache = cache,
             identityChanges = identityChanges,
         )
