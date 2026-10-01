@@ -4,10 +4,19 @@ import io.ktor.client.statement.HttpResponse
 import io.ktor.http.HttpMethod
 import io.ktor.http.HttpStatusCode
 import io.ktor.util.AttributeKey
+import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.update
 
 /** v2 problem code for a profile header the server no longer accepts. */
 const val PROFILE_VERIFICATION_REQUIRED = "profile_verification_required"
@@ -18,12 +27,13 @@ const val PROFILE_VERIFICATION_REQUIRED = "profile_verification_required"
  *
  * An administrator can move an account to another access group, or change its
  * permissions or playback-quality override, while the user is signed in. The
- * server then raises its access-policy revision, and PIN profile tokens minted
- * before the change stop working (403 `profile_verification_required`).
+ * server then raises its access-policy revision: PIN profile tokens minted
+ * before the change stop working (403 `profile_verification_required`), and the
+ * events socket sends `{"type":"access_changed"}` and closes with code 4001.
  *
  * This type only carries those observations. [reportStaleProfile] feeds the
- * profile recovery in the repository layer. It is inert when the server never
- * produces them.
+ * profile recovery in the repository layer; [changes] tells screens to refetch
+ * access-dependent data. Both are inert when the server never produces them.
  */
 class AccessChangeSignals {
     private val _staleProfileReports = MutableSharedFlow<StaleProfileReport>(
@@ -34,8 +44,35 @@ class AccessChangeSignals {
     /** Every request the server refused because its profile proof is stale. */
     val staleProfileReports: SharedFlow<StaleProfileReport> = _staleProfileReports.asSharedFlow()
 
+    private val _revision = MutableStateFlow(0L)
+
+    /** Raised once per events-socket connection that reports an access change. */
+    val revision: StateFlow<Long> = _revision.asStateFlow()
+
+    /**
+     * Access changes reported after collection starts, coalesced: the frame and
+     * close of one connection count once, and the Home and notifications sockets
+     * normally detect the same change within moments of each other.
+     */
+    @OptIn(FlowPreview::class)
+    val changes: Flow<Unit> = revision.drop(1).debounce(ACCESS_CHANGE_COALESCE_MS).map { }
+
     fun reportStaleProfile(report: StaleProfileReport) {
         _staleProfileReports.tryEmit(report)
+    }
+
+    fun reportAccessChanged() {
+        _revision.update { it + 1 }
+    }
+
+    companion object {
+        const val ACCESS_CHANGE_COALESCE_MS = 750L
+
+        /** Close code the events socket uses after an `access_changed` frame. */
+        const val ACCESS_CHANGED_CLOSE_CODE: Short = 4001
+
+        /** Frame `type` of the access-change notice on the events socket. */
+        const val ACCESS_CHANGED_FRAME_TYPE = "access_changed"
     }
 }
 

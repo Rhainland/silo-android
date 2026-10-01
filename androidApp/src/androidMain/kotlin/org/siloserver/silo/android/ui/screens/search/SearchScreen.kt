@@ -41,6 +41,9 @@ import org.siloserver.silo.model.feature.RequestsFeatureStore
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.repository.PersonalDataRepository
 import org.koin.compose.koinInject
+import org.siloserver.silo.common.ui.OnViewerAccessChanged
+import org.siloserver.silo.common.ui.rememberViewerAccessKey
+import org.siloserver.silo.network.AccessChangeSignals
 
 /**
  * The search screen with a search bar and results grid.
@@ -69,6 +72,11 @@ fun SearchScreen(
     val personalDataRepository: PersonalDataRepository = koinInject()
     val requestsFeatureStore: RequestsFeatureStore = koinInject()
     val requestsEnabled by requestsFeatureStore.isEnabled.collectAsState()
+    // An access change can add or remove libraries and titles: re-derive the
+    // media modes and re-run the current query under the new policy.
+    val accessChangeSignals: AccessChangeSignals = koinInject()
+    val viewerAccessKey = rememberViewerAccessKey(accessChangeSignals)
+    OnViewerAccessChanged(accessChangeSignals) { viewModel.retry() }
     val availableModes by produceState(
         initialValue = MediaModeCapabilities(
             listOf(
@@ -78,6 +86,7 @@ fun SearchScreen(
             ),
         ).mobileModes(),
         personalDataRepository,
+        viewerAccessKey,
     ) {
         value = when (val result = personalDataRepository.listUserLibraries()) {
             is ApiResult.Success -> result.data.mobileMediaModeCapabilities().mobileModes()

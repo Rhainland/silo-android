@@ -87,6 +87,8 @@ import org.siloserver.silo.model.download.labelFor
 import org.siloserver.silo.common.settings.PlayerSettingsStore
 import org.siloserver.silo.network.ServerRegistry
 import org.koin.compose.koinInject
+import org.siloserver.silo.common.ui.OnViewerAccessChanged
+import org.siloserver.silo.network.AccessChangeSignals
 import org.siloserver.silo.metadata.DescriptionTranslationPhase
 import org.siloserver.silo.model.feature.MetadataAiFeatureStore
 import org.siloserver.silo.model.metadata.MetadataAiOnView
@@ -187,6 +189,9 @@ fun ItemDetailScreen(
     // effect-local "skip the first" flag would reset and swallow exactly the
     // resume we care about. refreshOnReturn() no-ops while detail is still
     // null, which covers the initial load.
+    // The same quiet refresh when the server reports an access change, so
+    // availability, versions, and quality limits follow the new policy.
+    OnViewerAccessChanged(koinInject<AccessChangeSignals>()) { viewModel.refreshOnReturn() }
     val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
     androidx.compose.runtime.DisposableEffect(lifecycleOwner) {
         val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
