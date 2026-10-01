@@ -10,6 +10,7 @@ import org.siloserver.silo.network.AuthScopeSnapshot
 import org.siloserver.silo.repository.AuthRepository
 import org.siloserver.silo.repository.ProfileCommitResult
 import org.siloserver.silo.repository.ProfileRepository
+import org.siloserver.silo.repository.ProfileVerificationRecovery
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -47,6 +48,7 @@ class TvProfileSelectionViewModel(
     private val profileRepository: ProfileRepository,
     private val authRepository: AuthRepository? = null,
     private val consumeSkipsSingleProfile: () -> Boolean = SignInHandoff::consumeSkipsSingleProfilePicker,
+    private val profileVerificationRecovery: ProfileVerificationRecovery? = null,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(TvProfileSelectionUiState())
@@ -67,6 +69,19 @@ class TvProfileSelectionViewModel(
     init {
         loadProfiles()
         reloadWhenUpdateRequiredLifts()
+        reloadWhenStaleProfileCleared()
+    }
+
+    /**
+     * A load sent with a profile token the server no longer accepts fails with
+     * `profile_verification_required`. The recovery then clears that profile,
+     * and the grid reloads without it instead of leaving the error up.
+     */
+    private fun reloadWhenStaleProfileCleared() {
+        val recovery = profileVerificationRecovery ?: return
+        viewModelScope.launch {
+            recovery.profileCleared.collect { loadProfiles() }
+        }
     }
 
     /**

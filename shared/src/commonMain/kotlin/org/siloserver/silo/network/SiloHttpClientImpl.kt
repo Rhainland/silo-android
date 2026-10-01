@@ -41,6 +41,7 @@ fun createSiloClient(
     diagnosticsObserver: NetworkDiagnosticsObserver? = null,
     cleartextOriginConsent: CleartextOriginConsent? = null,
     retryOnConnectionFailure: Boolean = true,
+    accessChangeSignals: AccessChangeSignals? = null,
 ): HttpClient {
     val platformClient = createPlatformHttpClient(retryOnConnectionFailure)
 
@@ -79,6 +80,7 @@ fun createSiloClient(
             this.deviceMetadataProvider = deviceMetadataProvider
             this.diagnosticsObserver = diagnosticsObserver
             this.cleartextOriginConsent = cleartextOriginConsent
+            this.accessChangeSignals = accessChangeSignals
         }
 
         install(HttpTimeout) {
