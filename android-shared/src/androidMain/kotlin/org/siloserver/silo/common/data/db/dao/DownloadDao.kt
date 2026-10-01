@@ -86,8 +86,8 @@ interface DownloadDao {
      */
     @Query(
         "SELECT recordId, posterThumbhash, offlinePosterPath, offlineSeriesPosterPath, seriesPosterThumbhash " +
-            "FROM downloads WHERE offlinePosterPath IS NOT NULL OR offlineSeriesPosterPath IS NOT NULL " +
-            "OR seriesPosterThumbhash IS NOT NULL ORDER BY recordId",
+            "FROM downloads WHERE posterThumbhash IS NOT NULL OR offlinePosterPath IS NOT NULL " +
+            "OR offlineSeriesPosterPath IS NOT NULL OR seriesPosterThumbhash IS NOT NULL ORDER BY recordId",
     )
     fun observeSavedArtwork(): Flow<List<DownloadArtworkRow>>
 

@@ -258,4 +258,23 @@ class DownloadMetadataStoreTest {
             collector.cancel()
         }
     }
+
+    @Test
+    fun `savedArtworkChanges emits when only the poster thumbhash is saved`() = runBlocking {
+        val emissions = Channel<List<DownloadArtworkRow>>(Channel.UNLIMITED)
+        val collector = launch(Dispatchers.Default) { store.savedArtworkChanges().collect { emissions.send(it) } }
+        suspend fun next() = withTimeout(10_000) { emissions.receive() }
+        try {
+            assertEquals(emptyList(), next())
+
+            // A completed movie queued without a hash, whose poster fetch failed:
+            // the capture saves only the manifest's ThumbHash.
+            val completed = stubSidecar(7)
+            store.writeSidecar("srv1", "profA", completed)
+            store.writeSidecar("srv1", "profA", completed.copy(posterThumbhash = "hash"))
+            assertEquals(listOf(DownloadArtworkRow("dl-7", "hash", null, null, null)), next())
+        } finally {
+            collector.cancel()
+        }
+    }
 }
