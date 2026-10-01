@@ -915,9 +915,12 @@ class TvItemDetailViewModel(
             val previousById = (previousPage.orEmpty() + previousEpisodes.orEmpty())
                 .filter {
                     val latest = lastEpisodeWatchMutation[it.contentId] ?: 0L
-                    // A newer episode write that failed already rolled back to
-                    // this season's optimistic state, so undo it here too.
-                    latest <= episodeMutationWatermark || failedEpisodeWatchMutation[it.contentId] == latest
+                    // An episode written successfully on its own since the season
+                    // write began keeps that state. Otherwise a newer episode
+                    // write that failed rolled back to this season's optimistic
+                    // state, so undo it here too.
+                    (succeededEpisodeWatchMutation[it.contentId] ?: 0L) <= episodeMutationWatermark &&
+                        (latest <= episodeMutationWatermark || failedEpisodeWatchMutation[it.contentId] == latest)
                 }
                 .associateBy { it.contentId }
             episodeWindow.mapEpisodes(seasonNumber) { previousById[it.contentId] ?: it }
@@ -1417,6 +1420,7 @@ class TvItemDetailViewModel(
     // rollback can tell which episodes changed on their own since it began.
     private val lastEpisodeWatchMutation = mutableMapOf<String, Long>()
     private val failedEpisodeWatchMutation = mutableMapOf<String, Long>()
+    private val succeededEpisodeWatchMutation = mutableMapOf<String, Long>()
     private var seasonsRefreshGeneration: Long = 0
     private var nextUpPlaybackDetailGeneration: Long = 0
     private var nextUpSelectorRevision: Long = 0
@@ -1626,6 +1630,10 @@ class TvItemDetailViewModel(
             val result = personalDataRepository.performPersonalWrite(writeIntent)
             if (!personalDataRepository.isCurrent(writeIntent)) return@launch
             val isCurrentMutation = episodeWatchMutationGenerations[episodeContentId] == mutationGeneration
+            if (result is ApiResult.Success) {
+                succeededEpisodeWatchMutation[episodeContentId] =
+                    maxOf(succeededEpisodeWatchMutation[episodeContentId] ?: 0L, mutationGeneration)
+            }
             if (result !is ApiResult.Success) {
                 if (isCurrentMutation) failedEpisodeWatchMutation[episodeContentId] = mutationGeneration
                 if (

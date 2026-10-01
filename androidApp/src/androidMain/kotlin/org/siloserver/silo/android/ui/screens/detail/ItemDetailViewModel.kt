@@ -192,6 +192,7 @@ class ItemDetailViewModel(
     private val seasonWatchedMutationGenerations = mutableMapOf<Int, Int>()
     private var seasonsRefreshGeneration = 0
     private val failedEpisodeWatchedGenerations = mutableMapOf<String, Int>()
+    private val succeededEpisodeWatchedGenerations = mutableMapOf<String, Int>()
 
     private val descriptionTranslation = DescriptionTranslationController(
         repository = metadataAiRepository,
@@ -1192,6 +1193,7 @@ class ItemDetailViewModel(
         val previousSeason = state.seasons.firstOrNull { it.seasonNumber == seasonNumber } ?: return
         val previousEpisodes = state.episodesBySeason[seasonNumber]
         val episodeGenerationsAtStart = episodeWatchedMutationGenerations.toMap()
+        val episodeSuccessesAtStart = succeededEpisodeWatchedGenerations.toMap()
         val admittedAtMs = System.currentTimeMillis()
 
         val generation = (seasonWatchedMutationGenerations[seasonNumber] ?: 0) + 1
@@ -1214,7 +1216,12 @@ class ItemDetailViewModel(
                     userItemState.clearLocalPlaybackProgressBefore(episodeIds, admittedAtMs)
                     refreshAfterSeasonWatchedChange(seriesId, seasonNumber)
                 }
-                else -> restoreSeasonPlayedState(previousSeason, previousEpisodes, episodeGenerationsAtStart)
+                else -> restoreSeasonPlayedState(
+                    previousSeason,
+                    previousEpisodes,
+                    episodeGenerationsAtStart,
+                    episodeSuccessesAtStart,
+                )
             }
         }
     }
@@ -1246,6 +1253,7 @@ class ItemDetailViewModel(
         previousSeason: Season,
         previousEpisodes: List<EpisodeListItem>?,
         episodeGenerationsAtStart: Map<String, Int>,
+        episodeSuccessesAtStart: Map<String, Int>,
     ) {
         val seasonNumber = previousSeason.seasonNumber
         // An episode marked on its own while the season write was pending keeps
@@ -1253,9 +1261,12 @@ class ItemDetailViewModel(
         val previousById = previousEpisodes.orEmpty()
             .filter {
                 val latest = episodeWatchedMutationGenerations[it.contentId]
-                // A newer episode write that failed already rolled back to this
-                // season's optimistic state, so undo it here too.
-                latest == episodeGenerationsAtStart[it.contentId] || failedEpisodeWatchedGenerations[it.contentId] == latest
+                // An episode written successfully on its own since the season
+                // write began keeps that state. Otherwise a newer episode write
+                // that failed rolled back to this season's optimistic state, so
+                // undo it here too.
+                succeededEpisodeWatchedGenerations[it.contentId] == episodeSuccessesAtStart[it.contentId] &&
+                    (latest == episodeGenerationsAtStart[it.contentId] || failedEpisodeWatchedGenerations[it.contentId] == latest)
             }
             .associateBy { it.contentId }
         fun List<EpisodeListItem>.restored() = map { previousById[it.contentId] ?: it }
@@ -1348,9 +1359,12 @@ class ItemDetailViewModel(
             if (!personalDataRepository.isCurrent(writeIntent)) return@launch
             when (writeResult) {
                 // The season's watched state may have flipped with this episode.
-                is ApiResult.Success -> _uiState.value.detail
-                    ?.takeIf { it.type == "series" }
-                    ?.let { refreshSeasonsQuietly(it.contentId) }
+                is ApiResult.Success -> {
+                    succeededEpisodeWatchedGenerations[episodeContentId] = generation
+                    _uiState.value.detail
+                        ?.takeIf { it.type == "series" }
+                        ?.let { refreshSeasonsQuietly(it.contentId) }
+                }
                 else -> if (episodeWatchedMutationGenerations[episodeContentId] == generation) {
                     failedEpisodeWatchedGenerations[episodeContentId] = generation
                     updateEpisodePlayedState(episodeContentId, previous)
