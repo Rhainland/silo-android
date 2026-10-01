@@ -2685,6 +2685,7 @@ private fun TvTitleArtSettingsGroup(store: TitleArtStore = koinInject()) {
     // Opening Settings is a refresh edge for a choice made on another device.
     LaunchedEffect(store) { store.refresh() }
     val state by store.state.collectAsState()
+    val saveError by store.saveError.collectAsState()
     if (!state.isSupported) return
     SettingsGroup(title = "Title Pages") {
         SettingsToggleRow(
@@ -2708,5 +2709,6 @@ private fun TvTitleArtSettingsGroup(store: TitleArtStore = koinInject()) {
                 "Off: only affects this TV. Your other devices keep their own setting."
             },
         )
+        saveError?.let { SettingsFooterText(text = it) }
     }
 }

@@ -65,6 +65,13 @@ interface TitleArtStore {
     val isSaving: StateFlow<Boolean>
     val lastError: StateFlow<String?>
 
+    /**
+     * What the settings screens show after a failed save, e.g. "Couldn't save
+     * title art: Server error". Cleared by the next successful save, a fresh
+     * read when Settings opens, and an identity change.
+     */
+    val saveError: StateFlow<String?>
+
     /** Idempotent first load; seeds from the last-known answer first. */
     suspend fun hydrateIfNeeded()
 
@@ -121,9 +128,11 @@ class DefaultTitleArtStore private constructor(
     private val _state = MutableStateFlow(TitleArtState())
     private val _isSaving = MutableStateFlow(false)
     private val _lastError = MutableStateFlow<String?>(null)
+    private val _saveError = MutableStateFlow<String?>(null)
     override val state: StateFlow<TitleArtState> = _state.asStateFlow()
     override val isSaving: StateFlow<Boolean> = _isSaving.asStateFlow()
     override val lastError: StateFlow<String?> = _lastError.asStateFlow()
+    override val saveError: StateFlow<String?> = _saveError.asStateFlow()
 
     private val lock = Any()
 
@@ -243,7 +252,10 @@ class DefaultTitleArtStore private constructor(
             confirmedIdentity = identity
             _state.value = resolved
             confirmed = resolved
-            if (!keepError) _lastError.value = null
+            if (!keepError) {
+                _lastError.value = null
+                _saveError.value = null
+            }
             hasHydrated = true
             true
         }
@@ -346,6 +358,7 @@ class DefaultTitleArtStore private constructor(
                             result.resolved ?: optimistic,
                         )
                         _lastError.value = null
+                        _saveError.value = null
                         if (requestCounter == request) {
                             mutationEpoch += 1
                             _state.value = confirmed
@@ -355,6 +368,7 @@ class DefaultTitleArtStore private constructor(
                     }
                     is TitleArtController.WriteResult.Failed -> {
                         _lastError.value = result.message
+                        _saveError.value = saveErrorText(result.message)
                         // Every change queued behind this one was built on its
                         // unsaved state (which scope to write, which value to
                         // carry). Drop them all, show the confirmed state, and
@@ -404,6 +418,7 @@ class DefaultTitleArtStore private constructor(
         writeLock = Mutex()
         _isSaving.value = false
         _lastError.value = null
+        _saveError.value = null
     }
 
     private suspend fun currentIdentity(): String? {
@@ -414,6 +429,10 @@ class DefaultTitleArtStore private constructor(
     internal companion object {
         const val PREFS_NAME = "silo_title_art"
         const val IDENTITY_CHANGED = "The acting account or profile changed."
+
+        /** Same wording as the skip-interval save error. */
+        fun saveErrorText(message: String?): String =
+            "Couldn't save title art" + (message?.takeIf { it.isNotBlank() }?.let { ": $it" } ?: ".")
 
         /** Same signed-in server identity and the same profile. */
         private fun AuthScopeSnapshot.isSameProfileAs(other: AuthScopeSnapshot): Boolean =

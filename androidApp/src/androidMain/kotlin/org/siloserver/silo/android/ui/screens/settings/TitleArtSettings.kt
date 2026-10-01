@@ -20,6 +20,7 @@ internal fun ColumnScope.TitleArtSettingsRows(store: TitleArtStore) {
     // shows here without waiting for the next foreground.
     LaunchedEffect(store) { store.refresh() }
     val state by store.state.collectAsState()
+    val saveError by store.saveError.collectAsState()
     if (!state.isSupported) return
 
     val device = if (LocalConfiguration.current.smallestScreenWidthDp >= 600) "tablet" else "phone"
@@ -38,6 +39,7 @@ internal fun ColumnScope.TitleArtSettingsRows(store: TitleArtStore) {
     if (state.appliesToAllDevices) {
         SettingsProse(body = titleArtAllDevicesNote(state, device))
     }
+    saveError?.let { SettingsProse(body = it) }
 }
 
 internal fun titleArtScopeDescription(state: TitleArtState, device: String): String =
