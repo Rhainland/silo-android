@@ -1171,9 +1171,12 @@ class ItemDetailViewModel(
                 // The server applied a series change to every episode; re-read
                 // the seasons and episodes so their checkmarks follow.
                 is ApiResult.Success -> if (isSeries) {
-                    // Episodes written on their own since this began keep that state.
+                    // Episodes written on their own since this began keep that state,
+                    // unless that write failed and rolled back.
                     val changedSince = episodeWatchedMutationGenerations
-                        .filter { (id, generation) -> episodeGenerationsAtStart[id] != generation }
+                        .filter { (id, generation) ->
+                            episodeGenerationsAtStart[id] != generation && failedEpisodeWatchedGenerations[id] != generation
+                        }
                         .keys
                     updateSeasonPlayedState(seasonNumber = null, played = target, skipEpisodeIds = changedSince)
                     val loaded = _uiState.value.episodesBySeason

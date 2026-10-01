@@ -838,10 +838,13 @@ class TvItemDetailViewModel(
                     if (isSeries) {
                         // The server applied the change to every episode, so
                         // cached neighbour seasons in the carousel follow it.
-                        // Episodes written on their own since this began keep that state.
-                        fun EpisodeListItem.applied() =
-                            if ((lastEpisodeWatchMutation[contentId] ?: 0L) > episodeMutationWatermark) this
-                            else withWatchedPlaybackState(target)
+                        // Episodes written on their own since this began keep that
+                        // state, unless that write failed and rolled back.
+                        fun EpisodeListItem.applied(): EpisodeListItem {
+                            val latest = lastEpisodeWatchMutation[contentId] ?: 0L
+                            val keep = latest > episodeMutationWatermark && failedEpisodeWatchMutation[contentId] != latest
+                            return if (keep) this else withWatchedPlaybackState(target)
+                        }
                         episodeWindow.mapEpisodes(null) { it.applied() }
                         _uiState.update { state ->
                             state.copy(episodes = state.episodes.map { it.applied() })
