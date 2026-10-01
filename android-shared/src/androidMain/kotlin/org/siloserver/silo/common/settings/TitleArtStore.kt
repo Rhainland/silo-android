@@ -144,6 +144,16 @@ class DefaultTitleArtStore private constructor(
     /** The profile the committed state was read for; writes must match it. */
     private var confirmedAuthority: AuthScopeSnapshot? = null
 
+    /** The cache key the committed state belongs to. */
+    private var confirmedIdentity: String? = null
+
+    /**
+     * Every request numbered at or below this was queued behind a write that
+     * failed. Each one was built on the failed write's unsaved state, so none
+     * is sent; the store returns to the confirmed state and re-reads.
+     */
+    private var droppedThrough = 0L
+
     /** Only the latest local request may decide what is shown when it settles. */
     private var requestCounter = 0L
     private var pendingWrites = 0
@@ -180,14 +190,20 @@ class DefaultTitleArtStore private constructor(
         refresh()
     }
 
-    override suspend fun refresh() {
+    override suspend fun refresh() = refresh(keepError = false)
+
+    /** [keepError]: a re-read after writes keeps their outcome (a failure stays reported). */
+    private suspend fun refresh(keepError: Boolean) {
+        // Capture the generation before the suspending identity and authority
+        // reads: a reset while they run must not pair the previous profile's
+        // identity or authority with the new generation.
+        val startGeneration = synchronized(lock) { generation }
         val identity = currentIdentity() ?: return
         val authority = getAuthScope()
-        val startGeneration: Int
         val startEpoch: Long
         val sequence: Long
         synchronized(lock) {
-            startGeneration = generation
+            if (generation != startGeneration) return
             startEpoch = mutationEpoch
             sequence = ++refreshSequence
         }
@@ -220,9 +236,10 @@ class DefaultTitleArtStore private constructor(
             if (mutationEpoch != startEpoch) return@synchronized false
             committedRefresh = sequence
             confirmedAuthority = authority
+            confirmedIdentity = identity
             _state.value = resolved
             confirmed = resolved
-            _lastError.value = null
+            if (!keepError) _lastError.value = null
             hasHydrated = true
             true
         }
@@ -239,6 +256,7 @@ class DefaultTitleArtStore private constructor(
             if (!hasHydrated && generation == startGeneration && waiting) {
                 _state.value = cached
                 confirmed = cached
+                confirmedIdentity = identity
             }
         }
     }
@@ -294,8 +312,10 @@ class DefaultTitleArtStore private constructor(
             // landing them on the new profile.
             val authority = getAuthScope()
             val result = writeLock.withLock {
-                if (generation != startGeneration) return@withLock null
-                val readFor = synchronized(lock) { confirmedAuthority }
+                val readFor = synchronized(lock) {
+                    if (generation != startGeneration || request <= droppedThrough) return@withLock null
+                    confirmedAuthority
+                }
                 if (authority == null || (readFor != null && !authority.isSameProfileAs(readFor))) {
                     TitleArtController.WriteResult.Failed(IDENTITY_CHANGED)
                 } else {
@@ -311,34 +331,50 @@ class DefaultTitleArtStore private constructor(
                     refreshAfterWrites = false
                     refreshNow = true
                 }
-                if (result == null) return@synchronized false
-                val latest = requestCounter == request
                 when (result) {
+                    // Dropped: queued behind a failed write.
+                    null -> false
                     is TitleArtController.WriteResult.Saved -> {
                         confirmed = TitleArtState(
                             TitleArtSupport.Supported,
                             result.resolved ?: optimistic,
                         )
                         _lastError.value = null
+                        if (requestCounter == request) {
+                            mutationEpoch += 1
+                            _state.value = confirmed
+                        }
+                        // Cache only what the server confirmed by re-reading.
+                        result.resolved != null
                     }
-                    is TitleArtController.WriteResult.Failed -> _lastError.value = result.message
+                    is TitleArtController.WriteResult.Failed -> {
+                        _lastError.value = result.message
+                        // Every change queued behind this one was built on its
+                        // unsaved state (which scope to write, which value to
+                        // carry). Drop them all, show the confirmed state, and
+                        // re-read the server once nothing is in flight.
+                        droppedThrough = requestCounter
+                        mutationEpoch += 1
+                        _state.value = confirmed
+                        if (pendingWrites == 0) {
+                            refreshNow = true
+                        } else {
+                            refreshAfterWrites = true
+                        }
+                        false
+                    }
                 }
-                if (latest) {
-                    mutationEpoch += 1
-                    _state.value = confirmed
-                }
-                result is TitleArtController.WriteResult.Saved
             }
             if (persisted) persistConfirmed(startGeneration)
-            if (refreshNow) refresh()
+            if (refreshNow) refresh(keepError = true)
         }
     }
 
-    private suspend fun persistConfirmed(startGeneration: Int) {
-        val identity = currentIdentity() ?: return
-        val snapshot = synchronized(lock) {
+    /** Caches under the identity the confirmed state was read for, never a re-read one. */
+    private fun persistConfirmed(startGeneration: Int) {
+        val (identity, snapshot) = synchronized(lock) {
             if (generation != startGeneration) return
-            confirmed
+            (confirmedIdentity ?: return) to confirmed
         }
         cache.write(identity, snapshot)
     }
@@ -354,6 +390,7 @@ class DefaultTitleArtStore private constructor(
         _state.value = TitleArtState()
         confirmed = TitleArtState()
         confirmedAuthority = null
+        confirmedIdentity = null
         pendingWrites = 0
         refreshAfterWrites = false
         _isSaving.value = false

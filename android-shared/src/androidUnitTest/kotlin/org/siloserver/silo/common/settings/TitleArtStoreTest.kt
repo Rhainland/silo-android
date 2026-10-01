@@ -252,6 +252,83 @@ class TitleArtStoreTest {
     }
 
     @Test
+    fun `a change queued behind a failed write is dropped, not sent at the wrong scope`() = runTest {
+        // Title art on, this device only.
+        val server = FakeTitleArtServer(deviceValue = true)
+        val store = storeFor(server)
+        store.refresh()
+
+        // Apply to all devices (held in flight), then turn title art off
+        // while the first write is still pending.
+        server.putGate = CompletableDeferred()
+        store.setAppliesToAllDevices(true)
+        store.setShowTitleArt(false)
+        runCurrent()
+
+        // The first PUT fails.
+        server.failPuts = true
+        server.putGate!!.complete(Unit)
+        runCurrent()
+
+        // The queued change was built on the failed one's unsaved state; it
+        // must not create a profile-wide value.
+        assertEquals(listOf("put profile true"), server.calls)
+        assertNull(server.profileValue)
+        assertEquals(TitleArtPreference(showTitleArt = true, appliesToAllDevices = false), store.state.value.preference)
+        assertFalse(store.isSaving.value)
+        assertEquals("Server error", store.lastError.value)
+
+        // A new change after the failure goes through normally.
+        server.failPuts = false
+        store.setShowTitleArt(false)
+        runCurrent()
+        assertEquals(listOf("put profile true", "put profile_device false"), server.calls)
+        assertFalse(store.state.value.showTitleArt)
+    }
+
+    @Test
+    fun `a reset during the identity read never pairs the old profile with the new generation`() = runTest {
+        var activeProfile = "profile-a"
+        val identityRead = CompletableDeferred<Unit>()
+        var holdNextIdentityRead = true
+        val cache = InMemoryTitleArtCache().apply {
+            // Profile A had title art off.
+            write(
+                "https://server.test|profile-a",
+                TitleArtState(TitleArtSupport.Supported, TitleArtPreference(showTitleArt = false)),
+            )
+        }
+        val server = FakeTitleArtServer(capabilities = ApiResult.NetworkError(RuntimeException("offline")))
+        val store = DefaultTitleArtStore.forTest(
+            controller = TitleArtController(SettingsRepository(server)),
+            scope = backgroundScope,
+            getActiveProfileId = {
+                val profile = activeProfile
+                if (holdNextIdentityRead) {
+                    holdNextIdentityRead = false
+                    identityRead.await()
+                }
+                profile
+            },
+            cache = cache,
+        )
+
+        // A refresh reads profile A's identity and stalls there.
+        backgroundScope.launch { store.refresh() }
+        runCurrent()
+
+        // The profile switches to B (which has nothing cached) before it returns.
+        activeProfile = "profile-b"
+        store.clear()
+        identityRead.complete(Unit)
+        runCurrent()
+
+        // Profile A's cached "off" must not be painted for profile B.
+        assertTrue(store.state.value.showTitleArt)
+        assertFalse(store.state.value.isSupported)
+    }
+
+    @Test
     fun `clear drops the previous profile's answer`() = runTest {
         val store = storeFor(FakeTitleArtServer(deviceValue = false))
         store.refresh()
