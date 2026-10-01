@@ -367,6 +367,36 @@ class MobileDetailActionsTest {
     }
 
     @Test
+    fun seriesWriteAppliesToAnEpisodeWhoseNewerWriteFailed() = runItemDetailTest {
+        val repository = RecordingPersonalDataRepository(
+            mutableListOf(
+                {
+                    delay(100)
+                    ApiResult.Success(Unit)
+                },
+                { ApiResult.Error(500, "failed", "episode failed") },
+            ),
+            engineDispatcher = StandardTestDispatcher(testScheduler),
+        )
+        // Every catalog read fails, so only the series callback can update the episode.
+        val viewModel = itemDetailViewModel(
+            repository,
+            recordingCatalogRepository(mutableListOf()),
+            contentId = "series-1",
+        )
+        viewModel.seedSeriesDetail()
+        runCurrent()
+
+        viewModel.toggleWatched()
+        runCurrent()
+        viewModel.setEpisodeWatched("season-1-episode-1", true)
+        advanceUntilIdle()
+
+        assertEquals(listOf("/api/v2/watched/series-1", "/api/v2/watched/season-1-episode-1"), repository.watchedPaths)
+        assertEquals(true, viewModel.uiState.value.episodes.single().userData?.played)
+    }
+
+    @Test
     fun markingSeriesWatchedRefreshesSeasonsAndVisibleEpisodes() = runItemDetailTest {
         val repository = RecordingPersonalDataRepository(
             mutableListOf({ ApiResult.Success(Unit) }),
