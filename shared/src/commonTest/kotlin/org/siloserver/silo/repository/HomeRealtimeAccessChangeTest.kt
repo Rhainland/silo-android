@@ -48,6 +48,31 @@ class HomeRealtimeAccessChangeTest {
     }
 
     @Test
+    fun `reports of one change from both sockets refresh once`() = runTest {
+        val signals = AccessChangeSignals { testScheduler.currentTime }
+        val changes = mutableListOf<Long>()
+        backgroundScope.launch(start = CoroutineStart.UNDISPATCHED) {
+            signals.changes.collect { changes += testScheduler.currentTime }
+        }
+        testScheduler.runCurrent()
+
+        // Each socket runs its own 15-second server check, so the second
+        // report of the same change can arrive seconds after the first.
+        signals.reportAccessChanged()
+        testScheduler.runCurrent()
+        testScheduler.advanceTimeBy(12_000L)
+        signals.reportAccessChanged()
+        testScheduler.runCurrent()
+        assertEquals(listOf(0L), changes, "the first report refreshes at once; the second is the same change")
+
+        // A later change refreshes again.
+        testScheduler.advanceTimeBy(AccessChangeSignals.ACCESS_CHANGE_COALESCE_MS)
+        signals.reportAccessChanged()
+        testScheduler.runCurrent()
+        assertEquals(2, changes.size)
+    }
+
+    @Test
     fun `nothing refreshes without an access change`() = runTest {
         val signals = AccessChangeSignals()
         val coordinator = HomeRealtimeCoordinator(ScriptedClient { flow { awaitCancellation() } }, TokenManagerImpl(), signals)
