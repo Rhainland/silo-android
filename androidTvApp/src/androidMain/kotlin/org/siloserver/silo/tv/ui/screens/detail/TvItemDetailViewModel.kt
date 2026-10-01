@@ -913,7 +913,12 @@ class TvItemDetailViewModel(
             // page. An episode marked on its own since the season write began
             // keeps that newer state.
             val previousById = (previousPage.orEmpty() + previousEpisodes.orEmpty())
-                .filter { (lastEpisodeWatchMutation[it.contentId] ?: 0L) <= episodeMutationWatermark }
+                .filter {
+                    val latest = lastEpisodeWatchMutation[it.contentId] ?: 0L
+                    // A newer episode write that failed already rolled back to
+                    // this season's optimistic state, so undo it here too.
+                    latest <= episodeMutationWatermark || failedEpisodeWatchMutation[it.contentId] == latest
+                }
                 .associateBy { it.contentId }
             episodeWindow.mapEpisodes(seasonNumber) { previousById[it.contentId] ?: it }
             _uiState.update { state ->
@@ -1411,6 +1416,7 @@ class TvItemDetailViewModel(
     // Unlike episodeWatchMutationGenerations, kept after completion so a season
     // rollback can tell which episodes changed on their own since it began.
     private val lastEpisodeWatchMutation = mutableMapOf<String, Long>()
+    private val failedEpisodeWatchMutation = mutableMapOf<String, Long>()
     private var seasonsRefreshGeneration: Long = 0
     private var nextUpPlaybackDetailGeneration: Long = 0
     private var nextUpSelectorRevision: Long = 0
@@ -1621,6 +1627,7 @@ class TvItemDetailViewModel(
             if (!personalDataRepository.isCurrent(writeIntent)) return@launch
             val isCurrentMutation = episodeWatchMutationGenerations[episodeContentId] == mutationGeneration
             if (result !is ApiResult.Success) {
+                if (isCurrentMutation) failedEpisodeWatchMutation[episodeContentId] = mutationGeneration
                 if (
                     isCurrentMutation &&
                     previousEpisode != null &&

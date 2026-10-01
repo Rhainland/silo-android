@@ -279,6 +279,33 @@ class MobileDetailActionsTest {
     }
 
     @Test
+    fun failedSeasonAndEpisodeWritesBothRollBack() = runItemDetailTest {
+        val repository = RecordingPersonalDataRepository(
+            mutableListOf(
+                {
+                    delay(100)
+                    ApiResult.Error(500, "failed", "season failed")
+                },
+                { ApiResult.Error(500, "failed", "episode failed") },
+            ),
+            engineDispatcher = StandardTestDispatcher(testScheduler),
+        )
+        val viewModel = itemDetailViewModel(repository, recordingCatalogRepository(mutableListOf()))
+        viewModel.seedSeriesDetail()
+        runCurrent()
+
+        viewModel.setSeasonWatched(viewModel.uiState.value.seasons[0], true)
+        runCurrent()
+        viewModel.setEpisodeWatched("season-1-episode-1", false)
+        advanceUntilIdle()
+
+        // The episode's failed write rolls back to the season's optimistic state;
+        // the season rollback must then still undo that.
+        assertFalse(viewModel.uiState.value.episodes.single().userData?.played == true)
+        assertFalse(viewModel.uiState.value.seasons[0].userData?.played == true)
+    }
+
+    @Test
     fun markingSeriesWatchedRefreshesSeasonsAndVisibleEpisodes() = runItemDetailTest {
         val repository = RecordingPersonalDataRepository(
             mutableListOf({ ApiResult.Success(Unit) }),

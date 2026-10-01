@@ -191,6 +191,7 @@ class ItemDetailViewModel(
     private val episodeWatchedMutationGenerations = mutableMapOf<String, Int>()
     private val seasonWatchedMutationGenerations = mutableMapOf<Int, Int>()
     private var seasonsRefreshGeneration = 0
+    private val failedEpisodeWatchedGenerations = mutableMapOf<String, Int>()
 
     private val descriptionTranslation = DescriptionTranslationController(
         repository = metadataAiRepository,
@@ -1250,7 +1251,12 @@ class ItemDetailViewModel(
         // An episode marked on its own while the season write was pending keeps
         // that newer state; only the season write's own change is undone.
         val previousById = previousEpisodes.orEmpty()
-            .filter { episodeWatchedMutationGenerations[it.contentId] == episodeGenerationsAtStart[it.contentId] }
+            .filter {
+                val latest = episodeWatchedMutationGenerations[it.contentId]
+                // A newer episode write that failed already rolled back to this
+                // season's optimistic state, so undo it here too.
+                latest == episodeGenerationsAtStart[it.contentId] || failedEpisodeWatchedGenerations[it.contentId] == latest
+            }
             .associateBy { it.contentId }
         fun List<EpisodeListItem>.restored() = map { previousById[it.contentId] ?: it }
         _uiState.update { state ->
@@ -1346,6 +1352,7 @@ class ItemDetailViewModel(
                     ?.takeIf { it.type == "series" }
                     ?.let { refreshSeasonsQuietly(it.contentId) }
                 else -> if (episodeWatchedMutationGenerations[episodeContentId] == generation) {
+                    failedEpisodeWatchedGenerations[episodeContentId] = generation
                     updateEpisodePlayedState(episodeContentId, previous)
                 }
             }
