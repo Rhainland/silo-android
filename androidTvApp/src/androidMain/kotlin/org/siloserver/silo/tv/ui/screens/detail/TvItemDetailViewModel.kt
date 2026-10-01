@@ -800,10 +800,13 @@ class TvItemDetailViewModel(
         val target = !current.isWatched
         val previousDetail = current.detail
         val admittedAtMs = System.currentTimeMillis()
-        if (previousDetail?.type?.lowercase() == "series") {
+        val seriesGeneration = if (previousDetail?.type?.lowercase() == "series") {
             seasonsRefreshGeneration++
-            seriesWatchMutationGeneration++
+            ++seriesWatchMutationGeneration
+        } else {
+            null
         }
+        val episodeMutationWatermark = nextEpisodeWatchMutationGeneration
         _uiState.update {
             it.copy(
                 isTogglingWatched = true,
@@ -818,6 +821,9 @@ class TvItemDetailViewModel(
                 val result = personalDataRepository.performPersonalWrite(writeIntent)
                 if (!personalDataRepository.isCurrent(writeIntent)) return@launch
                 if (result !is ApiResult.Success) {
+                    if (seriesGeneration != null && seriesGeneration == seriesWatchMutationGeneration) {
+                        failedSeriesWatchGeneration = seriesGeneration
+                    }
                     // Roll back on error.
                     _uiState.update {
                         it.copy(
@@ -832,19 +838,36 @@ class TvItemDetailViewModel(
                     if (isSeries) {
                         // The server applied the change to every episode, so
                         // cached neighbour seasons in the carousel follow it.
-                        episodeWindow.mapEpisodes(null) { it.withWatchedPlaybackState(target) }
+                        // Episodes written on their own since this began keep that state.
+                        fun EpisodeListItem.applied() =
+                            if ((lastEpisodeWatchMutation[contentId] ?: 0L) > episodeMutationWatermark) this
+                            else withWatchedPlaybackState(target)
+                        episodeWindow.mapEpisodes(null) { it.applied() }
                         _uiState.update { state ->
-                            state.copy(episodes = state.episodes.map { it.withWatchedPlaybackState(target) })
+                            state.copy(episodes = state.episodes.map { it.applied() })
                         }
                         publishCarousel()
                         userItemState.clearLocalPlaybackProgressBefore(
                             (_uiState.value.carouselEpisodes + _uiState.value.episodes).map { it.contentId },
                             admittedAtMs,
+                            writeIntent.identityGeneration,
                         )
                     }
                     // Re-read server-resolved state (including series/season episode
                     // resolution) without flashing the full detail loading screen.
                     refreshOnReturn(afterWatchedChange = isSeries)
+                    if (isSeries && previousDetail != null) {
+                        // Seasons outside the carousel are read after the visible refresh starts.
+                        val loaded = (_uiState.value.carouselEpisodes + _uiState.value.episodes)
+                            .map { it.seasonNumber }
+                            .toSet()
+                        val unloaded = _uiState.value.seasons.map { it.seasonNumber }.filter { it !in loaded }
+                        userItemState.clearLocalPlaybackProgressBefore(
+                            unloaded.flatMap { seasonEpisodeIds(previousDetail.contentId, it) },
+                            admittedAtMs,
+                            writeIntent.identityGeneration,
+                        )
+                    }
                 }
             } finally {
                 if (watchedMutationOwner == writeIntent) {
@@ -902,18 +925,15 @@ class TvItemDetailViewModel(
                 val known = (episodeWindow.get(seasonNumber).orEmpty() + previousEpisodes.orEmpty())
                     .filter { it.seasonNumber == seasonNumber }
                     .map { it.contentId }
-                val episodeIds = known.ifEmpty {
-                    when (val r = catalogRepository.getEpisodes(detail.contentId, seasonNumber, libraryId = libraryId, fresh = true)) {
-                        is ApiResult.Success -> r.data.episodes.map { it.contentId }
-                        else -> emptyList()
-                    }
-                }
-                userItemState.clearLocalPlaybackProgressBefore(episodeIds, admittedAtMs)
+                val episodeIds = known.ifEmpty { seasonEpisodeIds(detail.contentId, seasonNumber) }
+                userItemState.clearLocalPlaybackProgressBefore(episodeIds, admittedAtMs, writeIntent.identityGeneration)
                 // Re-reads the series hero, the season list, and the selected season's episodes.
                 refreshOnReturn(afterWatchedChange = true)
                 return@launch
             }
-            if (seriesWatchMutationGeneration != seriesGenerationAtStart) {
+            if (seriesWatchMutationGeneration != seriesGenerationAtStart &&
+                failedSeriesWatchGeneration != seriesWatchMutationGeneration
+            ) {
                 // A series write since this one began also covers this season;
                 // the snapshot is stale, so re-read the server instead.
                 refreshOnReturn(afterWatchedChange = true)
@@ -948,6 +968,13 @@ class TvItemDetailViewModel(
             if (_uiState.value.selectedSeason == seasonNumber) refreshNextUp(_uiState.value.episodes)
         }
     }
+
+    /** Episode ids of a season read fresh from the server; empty if the read fails. */
+    private suspend fun seasonEpisodeIds(seriesContentId: String, seasonNumber: Int): List<String> =
+        when (val r = catalogRepository.getEpisodes(seriesContentId, seasonNumber, libraryId = libraryId, fresh = true)) {
+            is ApiResult.Success -> r.data.episodes.map { it.contentId }
+            else -> emptyList()
+        }
 
     /** Replaces the season list (and its watched state) without touching the selection. */
     private fun refreshSeasonsQuietly(seriesContentId: String, fresh: Boolean = false) {
@@ -1432,6 +1459,7 @@ class TvItemDetailViewModel(
     private val failedEpisodeWatchMutation = mutableMapOf<String, Long>()
     private val succeededEpisodeWatchMutation = mutableMapOf<String, Long>()
     private var seriesWatchMutationGeneration: Long = 0
+    private var failedSeriesWatchGeneration: Long = -1
     private var seasonsRefreshGeneration: Long = 0
     private var nextUpPlaybackDetailGeneration: Long = 0
     private var nextUpSelectorRevision: Long = 0

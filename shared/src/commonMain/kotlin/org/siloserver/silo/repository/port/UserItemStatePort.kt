@@ -109,8 +109,14 @@ interface UserItemStatePort {
      * Clears local resume samples recorded before [admittedAtMs] for [contentIds].
      * A season or series watched write names only its parent, so the episodes it
      * reached keep their local progress unless the caller clears it here.
+     * [identityGeneration] is the write's; nothing is cleared once the active
+     * server, account, or profile has changed since.
      */
-    suspend fun clearLocalPlaybackProgressBefore(contentIds: List<String>, admittedAtMs: Long) {}
+    suspend fun clearLocalPlaybackProgressBefore(
+        contentIds: List<String>,
+        admittedAtMs: Long,
+        identityGeneration: Long,
+    ) {}
 
     /**
      * Durably record per-file track selections. These are local-only hints for

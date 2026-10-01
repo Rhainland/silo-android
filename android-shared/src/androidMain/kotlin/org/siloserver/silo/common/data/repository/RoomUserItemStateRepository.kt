@@ -293,9 +293,14 @@ class RoomUserItemStateRepository(
             .latestProgress()
     }
 
-    override suspend fun clearLocalPlaybackProgressBefore(contentIds: List<String>, admittedAtMs: Long) {
+    override suspend fun clearLocalPlaybackProgressBefore(
+        contentIds: List<String>,
+        admittedAtMs: Long,
+        identityGeneration: Long,
+    ) {
         if (contentIds.isEmpty()) return
         val snapshot = snapshotProvider() ?: return
+        if (snapshot.isIdentityGenerationStamped && snapshot.identityGeneration != identityGeneration) return
         val profileId = snapshot.profileId ?: return
         db.withTransaction {
             val clearedAtMs = now()
