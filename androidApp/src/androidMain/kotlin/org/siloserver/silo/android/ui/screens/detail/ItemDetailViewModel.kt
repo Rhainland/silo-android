@@ -1161,6 +1161,7 @@ class ItemDetailViewModel(
         val isSeries = currentDetail.type == "series"
         if (isSeries) seasonsRefreshGeneration++
         val episodeGenerationsAtStart = episodeWatchedMutationGenerations.toMap()
+        val episodeSuccessesAtStart = succeededEpisodeWatchedGenerations.toMap()
         val admittedAtMs = System.currentTimeMillis()
         updatePlayedState(target)
         val writeIntent = personalDataRepository.beginWatched(contentId, target)
@@ -1171,11 +1172,12 @@ class ItemDetailViewModel(
                 // The server applied a series change to every episode; re-read
                 // the seasons and episodes so their checkmarks follow.
                 is ApiResult.Success -> if (isSeries) {
-                    // Episodes written on their own since this began keep that state,
-                    // unless that write failed and rolled back.
+                    // Episodes written on their own since this began keep that state:
+                    // any successful write since, or a newer write that has not failed.
                     val changedSince = episodeWatchedMutationGenerations
                         .filter { (id, generation) ->
-                            episodeGenerationsAtStart[id] != generation && failedEpisodeWatchedGenerations[id] != generation
+                            succeededEpisodeWatchedGenerations[id] != episodeSuccessesAtStart[id] ||
+                                (episodeGenerationsAtStart[id] != generation && failedEpisodeWatchedGenerations[id] != generation)
                         }
                         .keys
                     updateSeasonPlayedState(seasonNumber = null, played = target, skipEpisodeIds = changedSince)

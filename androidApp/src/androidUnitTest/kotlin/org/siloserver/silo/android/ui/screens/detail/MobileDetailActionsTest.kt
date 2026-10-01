@@ -397,6 +397,48 @@ class MobileDetailActionsTest {
     }
 
     @Test
+    fun seriesWriteKeepsAnEpisodeWrittenSuccessfullyWhileItWasPending() = runItemDetailTest {
+        val repository = RecordingPersonalDataRepository(
+            mutableListOf(
+                {
+                    delay(100)
+                    ApiResult.Success(Unit)
+                },
+                { ApiResult.Success(Unit) },
+                { ApiResult.Error(500, "failed", "episode failed") },
+            ),
+            engineDispatcher = StandardTestDispatcher(testScheduler),
+        )
+        val viewModel = itemDetailViewModel(
+            repository,
+            recordingCatalogRepository(mutableListOf()),
+            contentId = "series-1",
+        )
+        viewModel.seedSeriesDetail(
+            seasonOneEpisodes = listOf(
+                EpisodeListItem(
+                    contentId = "s1e1",
+                    seasonNumber = 1,
+                    episodeNumber = 1,
+                    userData = LeafItemUserData(played = true),
+                ),
+            ),
+        )
+        runCurrent()
+
+        viewModel.toggleWatched()
+        runCurrent()
+        viewModel.setEpisodeWatched("s1e1", false)
+        runCurrent()
+        viewModel.setEpisodeWatched("s1e1", true)
+        advanceUntilIdle()
+
+        // The successful unmark stands; the failed re-mark and the later series
+        // response do not overwrite it.
+        assertFalse(viewModel.uiState.value.episodes.single().userData?.played == true)
+    }
+
+    @Test
     fun markingSeriesWatchedRefreshesSeasonsAndVisibleEpisodes() = runItemDetailTest {
         val repository = RecordingPersonalDataRepository(
             mutableListOf({ ApiResult.Success(Unit) }),
