@@ -687,14 +687,14 @@ class TvItemDetailViewModel(
      * ended. Deliberately NOT [loadAll] — no loading flashes, and the user's
      * season selection is preserved.
      */
-    fun refreshOnReturn() = refreshOnReturn(seedEpisodesFromCache = true)
+    fun refreshOnReturn() = refreshOnReturn(afterWatchedChange = false)
 
     /**
-     * [seedEpisodesFromCache] false skips repainting the episode rail from the
-     * on-disk catalog cache, which still holds the pre-write state after a
-     * watched change.
+     * [afterWatchedChange] reads the season list and episodes fresh from the
+     * server and skips repainting the rail from the on-disk catalog cache:
+     * the cache, and any coalesced request, still hold the pre-write state.
      */
-    private fun refreshOnReturn(seedEpisodesFromCache: Boolean) {
+    private fun refreshOnReturn(afterWatchedChange: Boolean) {
         val current = _uiState.value.detail ?: return
         val playbackReturn = TvDetailTrackSelectionSession.consumePlaybackReturn(contentId)
         playbackReturn?.let { saved ->
@@ -752,7 +752,9 @@ class TvItemDetailViewModel(
         // Null: too far behind to be given a delta, so re-check the lot.
         val favoritesToRecheck =
             TvFavoriteRevalidationSession.changedSince(favoritesRevalidatedThrough)
-        if (current.type.lowercase() == "series" && seriesId != null) refreshSeasonsQuietly(seriesId)
+        if (current.type.lowercase() == "series" && seriesId != null) {
+            refreshSeasonsQuietly(seriesId, fresh = afterWatchedChange)
+        }
         if (seriesId != null && season != null) {
             loadEpisodes(
                 seriesId,
@@ -760,7 +762,7 @@ class TvItemDetailViewModel(
                 quiet = true,
                 revalidateFavorites = favoritesToRecheck,
                 favoritesVersion = favoritesVersion,
-                seedFromCache = seedEpisodesFromCache,
+                freshRead = afterWatchedChange,
             )
         }
     }
@@ -839,7 +841,7 @@ class TvItemDetailViewModel(
                     }
                     // Re-read server-resolved state (including series/season episode
                     // resolution) without flashing the full detail loading screen.
-                    refreshOnReturn(seedEpisodesFromCache = !isSeries)
+                    refreshOnReturn(afterWatchedChange = isSeries)
                 }
             } finally {
                 if (watchedMutationOwner == writeIntent) {
@@ -862,6 +864,7 @@ class TvItemDetailViewModel(
         val previousPage = episodeWindow.get(seasonNumber)
         val previousEpisodes = current.episodes.takeIf { current.selectedSeason == seasonNumber }
         val admittedAtMs = System.currentTimeMillis()
+        val episodeMutationWatermark = nextEpisodeWatchMutationGeneration
         val generation = (seasonWatchMutationGenerations[seasonNumber] ?: 0L) + 1
         seasonWatchMutationGenerations[seasonNumber] = generation
         // A season list read already in flight predates this change.
@@ -892,16 +895,27 @@ class TvItemDetailViewModel(
             if (seasonWatchMutationGenerations[seasonNumber] != generation) return@launch
             seasonWatchMutationGenerations.remove(seasonNumber)
             if (result is ApiResult.Success) {
-                val affected = (episodeWindow.get(seasonNumber).orEmpty() + previousEpisodes.orEmpty())
+                val known = (episodeWindow.get(seasonNumber).orEmpty() + previousEpisodes.orEmpty())
                     .filter { it.seasonNumber == seasonNumber }
-                userItemState.clearLocalPlaybackProgressBefore(affected.map { it.contentId }, admittedAtMs)
+                    .map { it.contentId }
+                val episodeIds = known.ifEmpty {
+                    when (val r = catalogRepository.getEpisodes(detail.contentId, seasonNumber, libraryId = libraryId, fresh = true)) {
+                        is ApiResult.Success -> r.data.episodes.map { it.contentId }
+                        else -> emptyList()
+                    }
+                }
+                userItemState.clearLocalPlaybackProgressBefore(episodeIds, admittedAtMs)
                 // Re-reads the series hero, the season list, and the selected season's episodes.
-                refreshOnReturn(seedEpisodesFromCache = false)
+                refreshOnReturn(afterWatchedChange = true)
                 return@launch
             }
-            previousPage?.let { episodeWindow.put(seasonNumber, it) }
-            // Restore by id: carousel moves may have republished the optimistic page.
-            val previousById = (previousPage.orEmpty() + previousEpisodes.orEmpty()).associateBy { it.contentId }
+            // Restore by id: carousel moves may have republished the optimistic
+            // page. An episode marked on its own since the season write began
+            // keeps that newer state.
+            val previousById = (previousPage.orEmpty() + previousEpisodes.orEmpty())
+                .filter { (lastEpisodeWatchMutation[it.contentId] ?: 0L) <= episodeMutationWatermark }
+                .associateBy { it.contentId }
+            episodeWindow.mapEpisodes(seasonNumber) { previousById[it.contentId] ?: it }
             _uiState.update { state ->
                 state.copy(
                     seasons = state.seasons.map { if (it.seasonNumber == seasonNumber) previousSeason else it },
@@ -918,12 +932,12 @@ class TvItemDetailViewModel(
     }
 
     /** Replaces the season list (and its watched state) without touching the selection. */
-    private fun refreshSeasonsQuietly(seriesContentId: String) {
+    private fun refreshSeasonsQuietly(seriesContentId: String, fresh: Boolean = false) {
         // Only the latest read publishes; a season watched change bumps the
         // generation so an older read cannot undo its optimistic state.
         val generation = ++seasonsRefreshGeneration
         viewModelScope.launch {
-            val result = catalogRepository.getSeasons(seriesContentId, libraryId = libraryId)
+            val result = catalogRepository.getSeasons(seriesContentId, libraryId = libraryId, fresh = fresh)
             if (result !is ApiResult.Success) return@launch
             val seasons = result.data.seasons.sortedForDisplay()
             _uiState.update { state ->
@@ -1394,6 +1408,9 @@ class TvItemDetailViewModel(
     private var nextEpisodeWatchMutationGeneration: Long = 0
     private val episodeWatchMutationGenerations = mutableMapOf<String, Long>()
     private val seasonWatchMutationGenerations = mutableMapOf<Int, Long>()
+    // Unlike episodeWatchMutationGenerations, kept after completion so a season
+    // rollback can tell which episodes changed on their own since it began.
+    private val lastEpisodeWatchMutation = mutableMapOf<String, Long>()
     private var seasonsRefreshGeneration: Long = 0
     private var nextUpPlaybackDetailGeneration: Long = 0
     private var nextUpSelectorRevision: Long = 0
@@ -1430,7 +1447,7 @@ class TvItemDetailViewModel(
         quiet: Boolean = false,
         revalidateFavorites: Set<String>? = emptySet(),
         favoritesVersion: Long? = null,
-        seedFromCache: Boolean = true,
+        freshRead: Boolean = false,
     ) {
         // Cancel any in-flight episode load so a slower response for a
         // previously-selected season can't overwrite episodes/next-up for the
@@ -1449,9 +1466,14 @@ class TvItemDetailViewModel(
 
             if (!ownsRequest()) return@launch
             if (!quiet) _uiState.update { it.copy(episodesLoading = true) }
-            if (seedFromCache) seedCachedEpisodes(seriesContentId, seasonNumber)
+            if (!freshRead) seedCachedEpisodes(seriesContentId, seasonNumber)
             if (!ownsRequest()) return@launch
-            val result = catalogRepository.getEpisodes(seriesContentId, seasonNumber, libraryId = libraryId)
+            val result = catalogRepository.getEpisodes(
+                seriesContentId,
+                seasonNumber,
+                libraryId = libraryId,
+                fresh = freshRead,
+            )
             if (!ownsRequest()) return@launch
             when (result) {
                 is ApiResult.Success -> {
@@ -1585,6 +1607,7 @@ class TvItemDetailViewModel(
         val listGeneration = episodeListGeneration
         val mutationGeneration = ++nextEpisodeWatchMutationGeneration
         episodeWatchMutationGenerations[episodeContentId] = mutationGeneration
+        lastEpisodeWatchMutation[episodeContentId] = mutationGeneration
         val updatedEpisodes = previousEpisodes.map { episode ->
             if (episode.contentId == episodeContentId) episode.withWatchedPlaybackState(watched) else episode
         }

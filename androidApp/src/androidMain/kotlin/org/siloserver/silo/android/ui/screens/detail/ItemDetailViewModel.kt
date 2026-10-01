@@ -451,7 +451,14 @@ class ItemDetailViewModel(
      * Deliberately NOT [loadDetail] — no loading flashes, and the user's
      * season selection is preserved.
      */
-    fun refreshOnReturn() {
+    fun refreshOnReturn() = refreshOnReturn(afterWatchedChange = false)
+
+    /**
+     * [afterWatchedChange] reads the season list and episodes fresh from the
+     * server: a coalesced request or cached fallback could still hold the
+     * state from before the write.
+     */
+    private fun refreshOnReturn(afterWatchedChange: Boolean) {
         val current = _uiState.value.detail ?: return
         viewModelScope.launch {
             // Local overlay first: the player's final position write is already
@@ -476,11 +483,12 @@ class ItemDetailViewModel(
             }
         }
         if (current.type == "series") {
-            refreshSeasonsQuietly(current.contentId)
+            refreshSeasonsQuietly(current.contentId, fresh = afterWatchedChange)
             loadEpisodes(
                 current.contentId,
                 _uiState.value.selectedSeasonNumber,
                 forceRefresh = true,
+                fresh = afterWatchedChange,
             )
         } else if (current.type == "episode") {
             current.seriesId?.let {
@@ -796,6 +804,7 @@ class ItemDetailViewModel(
         seasonsForDownloadRollup: List<Season>? = null,
         forceRefresh: Boolean = false,
         preferPrefetched: Boolean = false,
+        fresh: Boolean = false,
     ) {
         episodeLoadJob?.cancel()
         val cachedEpisodes = _uiState.value.episodesBySeason[seasonNumber]
@@ -833,7 +842,7 @@ class ItemDetailViewModel(
             val result = if (!forceRefresh && preferPrefetched) {
                 catalogRepository.getEpisodesForPrefetch(seriesId, seasonNumber, libraryId = libraryId)
             } else {
-                catalogRepository.getEpisodes(seriesId, seasonNumber, libraryId = libraryId)
+                catalogRepository.getEpisodes(seriesId, seasonNumber, libraryId = libraryId, fresh = fresh)
             }
             when (result) {
                 is ApiResult.Success -> {
@@ -1196,10 +1205,12 @@ class ItemDetailViewModel(
             if (seasonWatchedMutationGenerations[seasonNumber] != generation) return@launch
             when (writeResult) {
                 is ApiResult.Success -> {
-                    userItemState.clearLocalPlaybackProgressBefore(
-                        _uiState.value.episodesBySeason[seasonNumber].orEmpty().map { it.contentId },
-                        admittedAtMs,
-                    )
+                    // Both lists in case the cached page changed while the write was pending.
+                    val episodeIds = (_uiState.value.episodesBySeason[seasonNumber].orEmpty() + previousEpisodes.orEmpty())
+                        .map { it.contentId }
+                        .distinct()
+                        .ifEmpty { seasonEpisodeIds(seriesId, seasonNumber) }
+                    userItemState.clearLocalPlaybackProgressBefore(episodeIds, admittedAtMs)
                     refreshAfterSeasonWatchedChange(seriesId, seasonNumber)
                 }
                 else -> restoreSeasonPlayedState(previousSeason, previousEpisodes, episodeGenerationsAtStart)
@@ -1258,6 +1269,14 @@ class ItemDetailViewModel(
         }
     }
 
+    /** Episode ids of a season whose page is not loaded; empty if the read fails. */
+    private suspend fun seasonEpisodeIds(seriesId: String, seasonNumber: Int): List<String> =
+        when (val result = catalogRepository.getEpisodes(seriesId, seasonNumber, libraryId = libraryId, fresh = true)) {
+            is ApiResult.Success -> result.data.episodes.map { it.contentId }
+            is ApiResult.Error,
+            is ApiResult.NetworkError -> emptyList()
+        }
+
     /**
      * Re-reads what a season or series watched change affected: the season
      * list (season watched state), the series hero, and the visible season's
@@ -1275,7 +1294,7 @@ class ItemDetailViewModel(
             )
         }
         // Re-reads the series hero, the season list, and the visible episodes.
-        refreshOnReturn()
+        refreshOnReturn(afterWatchedChange = true)
     }
 
     /**
@@ -1283,10 +1302,10 @@ class ItemDetailViewModel(
      * selection. Only the latest request publishes, and a season watched
      * change bumps the generation so an older read cannot undo it.
      */
-    private fun refreshSeasonsQuietly(seriesId: String) {
+    private fun refreshSeasonsQuietly(seriesId: String, fresh: Boolean = false) {
         val generation = ++seasonsRefreshGeneration
         viewModelScope.launch {
-            when (val result = catalogRepository.getSeasons(seriesId, libraryId = libraryId)) {
+            when (val result = catalogRepository.getSeasons(seriesId, libraryId = libraryId, fresh = fresh)) {
                 is ApiResult.Success -> {
                     val seasons = result.data.seasons.sortedForDisplay()
                     _uiState.update { state ->
