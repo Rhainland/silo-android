@@ -1161,7 +1161,6 @@ class ItemDetailViewModel(
         val isSeries = currentDetail.type == "series"
         if (isSeries) seasonsRefreshGeneration++
         val episodeGenerationsAtStart = episodeWatchedMutationGenerations.toMap()
-        val episodeSuccessesAtStart = succeededEpisodeWatchedGenerations.toMap()
         val admittedAtMs = System.currentTimeMillis()
         updatePlayedState(target)
         val writeIntent = personalDataRepository.beginWatched(contentId, target)
@@ -1176,7 +1175,7 @@ class ItemDetailViewModel(
                     // any successful write since, or a newer write that has not failed.
                     val changedSince = episodeWatchedMutationGenerations
                         .filter { (id, generation) ->
-                            succeededEpisodeWatchedGenerations[id] != episodeSuccessesAtStart[id] ||
+                            (succeededEpisodeWatchedGenerations[id] ?: 0) > (episodeGenerationsAtStart[id] ?: 0) ||
                                 (episodeGenerationsAtStart[id] != generation && failedEpisodeWatchedGenerations[id] != generation)
                         }
                         .keys
@@ -1217,7 +1216,6 @@ class ItemDetailViewModel(
         val previousSeason = state.seasons.firstOrNull { it.seasonNumber == seasonNumber } ?: return
         val previousEpisodes = state.episodesBySeason[seasonNumber]
         val episodeGenerationsAtStart = episodeWatchedMutationGenerations.toMap()
-        val episodeSuccessesAtStart = succeededEpisodeWatchedGenerations.toMap()
         val admittedAtMs = System.currentTimeMillis()
 
         val seriesGenerationAtStart = watchedMutationGeneration
@@ -1252,7 +1250,6 @@ class ItemDetailViewModel(
                         previousSeason,
                         previousEpisodes,
                         episodeGenerationsAtStart,
-                        episodeSuccessesAtStart,
                     )
                 }
             }
@@ -1301,7 +1298,6 @@ class ItemDetailViewModel(
         previousSeason: Season,
         previousEpisodes: List<EpisodeListItem>?,
         episodeGenerationsAtStart: Map<String, Int>,
-        episodeSuccessesAtStart: Map<String, Int>,
     ) {
         val seasonNumber = previousSeason.seasonNumber
         // An episode marked on its own while the season write was pending keeps
@@ -1312,8 +1308,9 @@ class ItemDetailViewModel(
                 // No episode write admitted since the season write began: restore.
                 // Otherwise restore only if none of those writes succeeded and the
                 // latest failed, having rolled back to this season's optimistic state.
+                val atStart = episodeGenerationsAtStart[it.contentId] ?: 0
                 latest == episodeGenerationsAtStart[it.contentId] ||
-                    (succeededEpisodeWatchedGenerations[it.contentId] == episodeSuccessesAtStart[it.contentId] &&
+                    ((succeededEpisodeWatchedGenerations[it.contentId] ?: 0) <= atStart &&
                         failedEpisodeWatchedGenerations[it.contentId] == latest)
             }
             .associateBy { it.contentId }
