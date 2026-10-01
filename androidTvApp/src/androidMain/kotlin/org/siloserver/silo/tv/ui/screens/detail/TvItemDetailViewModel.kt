@@ -800,7 +800,10 @@ class TvItemDetailViewModel(
         val target = !current.isWatched
         val previousDetail = current.detail
         val admittedAtMs = System.currentTimeMillis()
-        if (previousDetail?.type?.lowercase() == "series") seasonsRefreshGeneration++
+        if (previousDetail?.type?.lowercase() == "series") {
+            seasonsRefreshGeneration++
+            seriesWatchMutationGeneration++
+        }
         _uiState.update {
             it.copy(
                 isTogglingWatched = true,
@@ -865,6 +868,7 @@ class TvItemDetailViewModel(
         val previousEpisodes = current.episodes.takeIf { current.selectedSeason == seasonNumber }
         val admittedAtMs = System.currentTimeMillis()
         val episodeMutationWatermark = nextEpisodeWatchMutationGeneration
+        val seriesGenerationAtStart = seriesWatchMutationGeneration
         val generation = (seasonWatchMutationGenerations[seasonNumber] ?: 0L) + 1
         seasonWatchMutationGenerations[seasonNumber] = generation
         // A season list read already in flight predates this change.
@@ -906,6 +910,12 @@ class TvItemDetailViewModel(
                 }
                 userItemState.clearLocalPlaybackProgressBefore(episodeIds, admittedAtMs)
                 // Re-reads the series hero, the season list, and the selected season's episodes.
+                refreshOnReturn(afterWatchedChange = true)
+                return@launch
+            }
+            if (seriesWatchMutationGeneration != seriesGenerationAtStart) {
+                // A series write since this one began also covers this season;
+                // the snapshot is stale, so re-read the server instead.
                 refreshOnReturn(afterWatchedChange = true)
                 return@launch
             }
@@ -1421,6 +1431,7 @@ class TvItemDetailViewModel(
     private val lastEpisodeWatchMutation = mutableMapOf<String, Long>()
     private val failedEpisodeWatchMutation = mutableMapOf<String, Long>()
     private val succeededEpisodeWatchMutation = mutableMapOf<String, Long>()
+    private var seriesWatchMutationGeneration: Long = 0
     private var seasonsRefreshGeneration: Long = 0
     private var nextUpPlaybackDetailGeneration: Long = 0
     private var nextUpSelectorRevision: Long = 0

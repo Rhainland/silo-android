@@ -1169,6 +1169,7 @@ class ItemDetailViewModel(
                 // The server applied a series change to every episode; re-read
                 // the seasons and episodes so their checkmarks follow.
                 is ApiResult.Success -> if (isSeries) {
+                    updateSeasonPlayedState(seasonNumber = null, played = target)
                     userItemState.clearLocalPlaybackProgressBefore(
                         _uiState.value.episodesBySeason.values.flatten().map { it.contentId },
                         admittedAtMs,
@@ -1196,6 +1197,7 @@ class ItemDetailViewModel(
         val episodeSuccessesAtStart = succeededEpisodeWatchedGenerations.toMap()
         val admittedAtMs = System.currentTimeMillis()
 
+        val seriesGenerationAtStart = watchedMutationGeneration
         val generation = (seasonWatchedMutationGenerations[seasonNumber] ?: 0) + 1
         seasonWatchedMutationGenerations[seasonNumber] = generation
         // A season list read already in flight predates this change.
@@ -1216,34 +1218,51 @@ class ItemDetailViewModel(
                     userItemState.clearLocalPlaybackProgressBefore(episodeIds, admittedAtMs)
                     refreshAfterSeasonWatchedChange(seriesId, seasonNumber)
                 }
-                else -> restoreSeasonPlayedState(
-                    previousSeason,
-                    previousEpisodes,
-                    episodeGenerationsAtStart,
-                    episodeSuccessesAtStart,
-                )
+                // A series write since this one began also covers this season;
+                // the snapshot is stale, so re-read the server instead.
+                else -> if (watchedMutationGeneration != seriesGenerationAtStart) {
+                    refreshAfterSeasonWatchedChange(seriesId, changedSeasonNumber = null)
+                } else {
+                    restoreSeasonPlayedState(
+                        previousSeason,
+                        previousEpisodes,
+                        episodeGenerationsAtStart,
+                        episodeSuccessesAtStart,
+                    )
+                }
             }
         }
     }
 
-    private fun updateSeasonPlayedState(seasonNumber: Int, played: Boolean) {
+    /**
+     * Applies a season ([seasonNumber]) or whole-series (null) watched change to
+     * the loaded seasons and episodes. Like the server, both marking and
+     * unmarking clear an episode's resume point, so a failed follow-up read
+     * cannot leave Resume offering the old position.
+     */
+    private fun updateSeasonPlayedState(seasonNumber: Int?, played: Boolean) {
         fun EpisodeListItem.updated(): EpisodeListItem = copy(
-            userData = (userData ?: LeafItemUserData()).copy(played = played),
+            userData = (userData ?: LeafItemUserData()).copy(
+                played = played,
+                isInProgress = false,
+                positionSeconds = null,
+            ),
         )
+        fun matches(number: Int) = seasonNumber == null || number == seasonNumber
         _uiState.update { state ->
             state.copy(
                 seasons = state.seasons.map { season ->
-                    if (season.seasonNumber != seasonNumber) season else season.copy(
+                    if (!matches(season.seasonNumber)) season else season.copy(
                         userData = (season.userData ?: SeasonUserData()).copy(played = played),
                     )
                 },
-                episodes = if (state.selectedSeasonNumber == seasonNumber) {
+                episodes = if (matches(state.selectedSeasonNumber)) {
                     state.episodes.map { it.updated() }
                 } else {
                     state.episodes
                 },
                 episodesBySeason = state.episodesBySeason.mapValues { (number, episodes) ->
-                    if (number == seasonNumber) episodes.map { it.updated() } else episodes
+                    if (matches(number)) episodes.map { it.updated() } else episodes
                 },
             )
         }
