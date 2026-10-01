@@ -224,6 +224,48 @@ class TitleArtStoreTest {
     }
 
     @Test
+    fun `a write stalled on the previous server never holds back the next server's save`() = runTest {
+        var server = "https://a.test"
+        val api = FakeTitleArtServer()
+        val identities = MutableSharedFlow<Unit>(extraBufferCapacity = 8)
+        val store = DefaultTitleArtStore.forTest(
+            controller = TitleArtController(SettingsRepository(api)),
+            scope = backgroundScope,
+            getServerUrl = { server },
+            identityChanges = identities,
+        )
+        runCurrent()
+        store.refresh()
+
+        // Server A: apply to all devices, with its PUT held on the wire.
+        val heldOnA = CompletableDeferred<Unit>()
+        api.putGate = heldOnA
+        store.setAppliesToAllDevices(true)
+        runCurrent()
+        assertEquals(listOf("put profile true"), api.calls)
+
+        // Switch to server B and let it hydrate.
+        api.putGate = null
+        server = "https://b.test"
+        identities.tryEmit(Unit)
+        runCurrent()
+        assertTrue(store.state.value.isSupported)
+
+        // B's change goes out while A's write is still held.
+        store.setShowTitleArt(false)
+        runCurrent()
+        assertEquals(listOf("put profile true", "put profile_device false"), api.calls)
+        assertEquals(TitleArtPreference(showTitleArt = false, appliesToAllDevices = false), store.state.value.preference)
+        assertFalse(store.isSaving.value)
+
+        // A's write finishing late leaves B's state alone.
+        heldOnA.complete(Unit)
+        runCurrent()
+        assertEquals(TitleArtPreference(showTitleArt = false, appliesToAllDevices = false), store.state.value.preference)
+        assertFalse(store.isSaving.value)
+    }
+
+    @Test
     fun `one title art change stays on the profile it started on`() = runTest {
         var activeProfile = "profile-1"
         val server = FakeTitleArtServer(profileValue = true)

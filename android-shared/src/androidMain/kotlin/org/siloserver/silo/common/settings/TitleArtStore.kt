@@ -170,8 +170,12 @@ class DefaultTitleArtStore private constructor(
     /** A refresh answered while a write was queued; re-read once they drain. */
     private var refreshAfterWrites = false
 
-    /** Keeps writes in the order the user made them. */
-    private val writeLock = Mutex()
+    /**
+     * Keeps one identity's writes in the order the user made them. Replaced at
+     * every identity boundary, so a write still on the wire for the previous
+     * server or profile never holds back the next one's saves.
+     */
+    private var writeLock = Mutex()
 
     init {
         scope.launch {
@@ -289,6 +293,7 @@ class DefaultTitleArtStore private constructor(
         val request: Long
         val before: TitleArtPreference
         val optimistic: TitleArtPreference
+        val writes: Mutex
         synchronized(lock) {
             val current = _state.value
             // Never write to a server that has not confirmed the key.
@@ -297,6 +302,7 @@ class DefaultTitleArtStore private constructor(
             optimistic = next(before)
             if (optimistic == before) return
             startGeneration = generation
+            writes = writeLock
             request = ++requestCounter
             mutationEpoch += 1
             pendingWrites += 1
@@ -311,7 +317,7 @@ class DefaultTitleArtStore private constructor(
             // profile switch part-way through fails the rest instead of
             // landing them on the new profile.
             val authority = getAuthScope()
-            val result = writeLock.withLock {
+            val result = writes.withLock {
                 val readFor = synchronized(lock) {
                     if (generation != startGeneration || request <= droppedThrough) return@withLock null
                     confirmedAuthority
@@ -393,6 +399,9 @@ class DefaultTitleArtStore private constructor(
         confirmedIdentity = null
         pendingWrites = 0
         refreshAfterWrites = false
+        // The previous identity's write may still be on the wire; it keeps its
+        // own lock and its completion bails on the generation check.
+        writeLock = Mutex()
         _isSaving.value = false
         _lastError.value = null
     }
