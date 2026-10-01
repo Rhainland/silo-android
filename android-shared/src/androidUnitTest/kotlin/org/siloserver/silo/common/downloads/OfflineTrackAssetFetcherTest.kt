@@ -5,7 +5,9 @@ import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.respond
 import io.ktor.client.plugins.HttpTimeout
 import io.ktor.client.plugins.defaultRequest
+import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
+import io.ktor.http.headersOf
 import kotlinx.coroutines.runBlocking
 import org.junit.Rule
 import org.junit.Test
@@ -253,6 +255,34 @@ class OfflineTrackAssetFetcherTest {
         // A series_poster URL that names a different kind is rejected too.
         assertNull(artwork.seriesPosterPath)
         assertTrue(requested.none { it.contains("/artwork/") || it.contains("poster.jpg") })
+    }
+
+    @Test
+    fun artworkRedirectsAreNotFollowed() = runBlocking {
+        val storage = DownloadStorage(tmp.newFolder("filesDir"))
+        val client = HttpClient(
+            MockEngine { request ->
+                val path = request.url.encodedPath
+                requested += path
+                when {
+                    path.endsWith("/manifest") -> respond(movieManifest)
+                    path.contains("/artwork/") -> respond(
+                        "",
+                        HttpStatusCode.Found,
+                        headersOf(HttpHeaders.Location, "https://elsewhere.example/poster.jpg"),
+                    )
+                    else -> respond(posterBytes)
+                }
+            },
+        ) {
+            install(HttpTimeout)
+            defaultRequest { url("https://silo.example/") }
+        }
+
+        val artwork = assertNotNull(OfflineTrackAssetFetcher(client, storage).fetch("dl_1", "srv", "prof", 42) {}).artwork
+
+        assertNull(artwork.posterPath)
+        assertTrue(requested.none { it.contains("poster.jpg") })
     }
 
     @Test

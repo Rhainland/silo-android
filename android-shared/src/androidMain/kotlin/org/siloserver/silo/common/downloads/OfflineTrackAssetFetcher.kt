@@ -56,6 +56,10 @@ internal class OfflineTrackAssetFetcher(
     private val storage: DownloadStorage,
     private val manifestRetryDelayMs: Long = 2_000,
 ) {
+    // The server streams artwork itself, so a redirect is never legitimate;
+    // refusing it keeps the fetch on the URL isOfflineArtworkFetchUrl vetted.
+    private val artworkHttpClient = httpClient.config { followRedirects = false }
+
     suspend fun fetch(
         downloadId: String,
         serverId: String,
@@ -154,7 +158,7 @@ internal class OfflineTrackAssetFetcher(
         val partial = File(directory, "$kind.part")
         return try {
             if (!directory.isDirectory && !directory.mkdirs()) throw IOException("could not create $directory")
-            httpClient.prepareGet(url.trim()) {
+            artworkHttpClient.prepareGet(url.trim()) {
                 configure()
                 timeout {
                     requestTimeoutMillis = ARTWORK_REQUEST_TIMEOUT_MS
