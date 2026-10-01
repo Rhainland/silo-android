@@ -4,7 +4,6 @@ import io.ktor.client.statement.HttpResponse
 import io.ktor.http.HttpMethod
 import io.ktor.http.HttpStatusCode
 import io.ktor.util.AttributeKey
-import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -13,10 +12,10 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.drop
-import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.update
+import kotlin.time.TimeSource
 
 /** v2 problem code for a profile header the server no longer accepts. */
 const val PROFILE_VERIFICATION_REQUIRED = "profile_verification_required"
@@ -35,7 +34,10 @@ const val PROFILE_VERIFICATION_REQUIRED = "profile_verification_required"
  * profile recovery in the repository layer; [changes] tells screens to refetch
  * access-dependent data. Both are inert when the server never produces them.
  */
-class AccessChangeSignals {
+class AccessChangeSignals(
+    /** Milliseconds on a monotonic clock; tests substitute virtual time. */
+    private val nowMillis: () -> Long = monotonicMillis(),
+) {
     private val _staleProfileReports = MutableSharedFlow<StaleProfileReport>(
         extraBufferCapacity = 16,
         onBufferOverflow = BufferOverflow.DROP_OLDEST,
@@ -50,12 +52,24 @@ class AccessChangeSignals {
     val revision: StateFlow<Long> = _revision.asStateFlow()
 
     /**
-     * Access changes reported after collection starts, coalesced: the frame and
-     * close of one connection count once, and the Home and notifications sockets
-     * normally detect the same change within moments of each other.
+     * Access changes reported after collection starts, coalesced. The frame and
+     * close of one connection count once. The Home and notifications sockets
+     * each detect the same change on their own server-side check, which runs
+     * every 15 seconds from each connection's start, so their reports can be
+     * that far apart: the first report refreshes at once, and reports within
+     * [ACCESS_CHANGE_COALESCE_MS] of it are taken as the same change.
      */
-    @OptIn(FlowPreview::class)
-    val changes: Flow<Unit> = revision.drop(1).debounce(ACCESS_CHANGE_COALESCE_MS).map { }
+    val changes: Flow<Unit> = flow {
+        var lastEmitted: Long? = null
+        revision.drop(1).collect {
+            val now = nowMillis()
+            val last = lastEmitted
+            if (last == null || now - last >= ACCESS_CHANGE_COALESCE_MS) {
+                lastEmitted = now
+                emit(Unit)
+            }
+        }
+    }
 
     fun reportStaleProfile(report: StaleProfileReport) {
         _staleProfileReports.tryEmit(report)
@@ -66,7 +80,8 @@ class AccessChangeSignals {
     }
 
     companion object {
-        const val ACCESS_CHANGE_COALESCE_MS = 750L
+        /** Longer than the server's 15-second socket access check. */
+        const val ACCESS_CHANGE_COALESCE_MS = 20_000L
 
         /** Close code the events socket uses after an `access_changed` frame. */
         const val ACCESS_CHANGED_CLOSE_CODE: Short = 4001
@@ -74,6 +89,11 @@ class AccessChangeSignals {
         /** Frame `type` of the access-change notice on the events socket. */
         const val ACCESS_CHANGED_FRAME_TYPE = "access_changed"
     }
+}
+
+private fun monotonicMillis(): () -> Long {
+    val start = TimeSource.Monotonic.markNow()
+    return { start.elapsedNow().inWholeMilliseconds }
 }
 
 /**
