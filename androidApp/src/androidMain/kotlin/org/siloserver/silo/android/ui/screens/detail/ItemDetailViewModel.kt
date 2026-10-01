@@ -1261,12 +1261,12 @@ class ItemDetailViewModel(
         val previousById = previousEpisodes.orEmpty()
             .filter {
                 val latest = episodeWatchedMutationGenerations[it.contentId]
-                // An episode written successfully on its own since the season
-                // write began keeps that state. Otherwise a newer episode write
-                // that failed rolled back to this season's optimistic state, so
-                // undo it here too.
-                succeededEpisodeWatchedGenerations[it.contentId] == episodeSuccessesAtStart[it.contentId] &&
-                    (latest == episodeGenerationsAtStart[it.contentId] || failedEpisodeWatchedGenerations[it.contentId] == latest)
+                // No episode write admitted since the season write began: restore.
+                // Otherwise restore only if none of those writes succeeded and the
+                // latest failed, having rolled back to this season's optimistic state.
+                latest == episodeGenerationsAtStart[it.contentId] ||
+                    (succeededEpisodeWatchedGenerations[it.contentId] == episodeSuccessesAtStart[it.contentId] &&
+                        failedEpisodeWatchedGenerations[it.contentId] == latest)
             }
             .associateBy { it.contentId }
         fun List<EpisodeListItem>.restored() = map { previousById[it.contentId] ?: it }
