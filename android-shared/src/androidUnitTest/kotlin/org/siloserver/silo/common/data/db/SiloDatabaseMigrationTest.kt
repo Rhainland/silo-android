@@ -144,6 +144,35 @@ class SiloDatabaseMigrationTest {
         }
     }
 
+    @Test
+    fun migration13To14KeepsOfflineTracksAndAddsNullableArtworkColumns() {
+        val name = "migration-13-to-14"
+        migrationHelper.createDatabase(name, 13).use { database ->
+            database.execSQL(
+                "INSERT INTO downloads (serverId, profileId, mediaFileId, recordId, contentId, title, posterThumbhash, " +
+                    "mediaType, status, kind, fileSize, bytesSent, createdAt, updatedAtMs, revision, offlineTracksJson) VALUES " +
+                    "('s', 'p', 42, 'dl_1', 'ep_1', 'Example', 'THUMB', 'tv', 'completed', 'queued', 1024, 1024, " +
+                    "'2026-09-29T00:00:00Z', 123, 7, '{}')",
+            )
+        }
+        migrationHelper.runMigrationsAndValidate(name, 14, true).use { database ->
+            database.query(
+                "SELECT recordId, posterThumbhash, revision, offlineTracksJson, offlinePosterPath, " +
+                    "offlineSeriesPosterPath, seriesPosterThumbhash FROM downloads",
+            ).use { cursor ->
+                assertEquals(true, cursor.moveToFirst())
+                assertEquals("dl_1", cursor.getString(0))
+                assertEquals("THUMB", cursor.getString(1))
+                assertEquals(7, cursor.getInt(2))
+                assertEquals("{}", cursor.getString(3))
+                assertNull(cursor.getString(4))
+                assertNull(cursor.getString(5))
+                assertNull(cursor.getString(6))
+                assertEquals(false, cursor.moveToNext())
+            }
+        }
+    }
+
     private companion object {
         const val DATABASE_NAME = "migration-7-to-8"
     }
