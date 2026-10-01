@@ -11,6 +11,7 @@ import org.siloserver.silo.model.catalog.FileVersion
 import org.siloserver.silo.model.catalog.ItemDetail
 import org.siloserver.silo.model.catalog.LeafItemUserData
 import org.siloserver.silo.model.catalog.Season
+import org.siloserver.silo.model.catalog.SeasonUserData
 import org.siloserver.silo.model.catalog.initialSeasonDisplayPlan
 import org.siloserver.silo.model.catalog.sortedForDisplay
 import org.siloserver.silo.model.download.DownloadCapability
@@ -188,6 +189,8 @@ class ItemDetailViewModel(
 
     private var watchedMutationGeneration = 0
     private val episodeWatchedMutationGenerations = mutableMapOf<String, Int>()
+    private val seasonWatchedMutationGenerations = mutableMapOf<Int, Int>()
+    private var seasonsRefreshGeneration = 0
 
     private val descriptionTranslation = DescriptionTranslationController(
         repository = metadataAiRepository,
@@ -473,6 +476,7 @@ class ItemDetailViewModel(
             }
         }
         if (current.type == "series") {
+            refreshSeasonsQuietly(current.contentId)
             loadEpisodes(
                 current.contentId,
                 _uiState.value.selectedSeasonNumber,
@@ -1142,14 +1146,158 @@ class ItemDetailViewModel(
         val current = currentDetail.userData?.played == true
         val target = !current
         val generation = ++watchedMutationGeneration
+        val isSeries = currentDetail.type == "series"
+        if (isSeries) seasonsRefreshGeneration++
+        val admittedAtMs = System.currentTimeMillis()
         updatePlayedState(target)
         val writeIntent = personalDataRepository.beginWatched(contentId, target)
         viewModelScope.launch {
             val writeResult = personalDataRepository.performPersonalWrite(writeIntent)
             if (!personalDataRepository.isCurrent(writeIntent)) return@launch
             when (writeResult) {
-                is ApiResult.Success -> { /* already updated */ }
+                // The server applied a series change to every episode; re-read
+                // the seasons and episodes so their checkmarks follow.
+                is ApiResult.Success -> if (isSeries) {
+                    userItemState.clearLocalPlaybackProgressBefore(
+                        _uiState.value.episodesBySeason.values.flatten().map { it.contentId },
+                        admittedAtMs,
+                    )
+                    refreshAfterSeasonWatchedChange(currentDetail.contentId, changedSeasonNumber = null)
+                }
                 else -> if (generation == watchedMutationGeneration) updatePlayedState(current)
+            }
+        }
+    }
+
+    /**
+     * Marks every episode of [season] from its chip or the series overflow
+     * menu. The server applies the change to the season's episodes.
+     */
+    fun setSeasonWatched(season: Season, watched: Boolean) {
+        val state = _uiState.value
+        val detail = state.detail ?: return
+        if (detail.type != "series") return
+        val seriesId = detail.contentId
+        val seasonNumber = season.seasonNumber
+        val previousSeason = state.seasons.firstOrNull { it.seasonNumber == seasonNumber } ?: return
+        val previousEpisodes = state.episodesBySeason[seasonNumber]
+        val episodeGenerationsAtStart = episodeWatchedMutationGenerations.toMap()
+        val admittedAtMs = System.currentTimeMillis()
+
+        val generation = (seasonWatchedMutationGenerations[seasonNumber] ?: 0) + 1
+        seasonWatchedMutationGenerations[seasonNumber] = generation
+        // A season list read already in flight predates this change.
+        seasonsRefreshGeneration++
+        updateSeasonPlayedState(seasonNumber, watched)
+        val writeIntent = personalDataRepository.beginWatched(season.contentId, watched)
+        viewModelScope.launch {
+            val writeResult = personalDataRepository.performPersonalWrite(writeIntent)
+            if (!personalDataRepository.isCurrent(writeIntent)) return@launch
+            if (seasonWatchedMutationGenerations[seasonNumber] != generation) return@launch
+            when (writeResult) {
+                is ApiResult.Success -> {
+                    userItemState.clearLocalPlaybackProgressBefore(
+                        _uiState.value.episodesBySeason[seasonNumber].orEmpty().map { it.contentId },
+                        admittedAtMs,
+                    )
+                    refreshAfterSeasonWatchedChange(seriesId, seasonNumber)
+                }
+                else -> restoreSeasonPlayedState(previousSeason, previousEpisodes, episodeGenerationsAtStart)
+            }
+        }
+    }
+
+    private fun updateSeasonPlayedState(seasonNumber: Int, played: Boolean) {
+        fun EpisodeListItem.updated(): EpisodeListItem = copy(
+            userData = (userData ?: LeafItemUserData()).copy(played = played),
+        )
+        _uiState.update { state ->
+            state.copy(
+                seasons = state.seasons.map { season ->
+                    if (season.seasonNumber != seasonNumber) season else season.copy(
+                        userData = (season.userData ?: SeasonUserData()).copy(played = played),
+                    )
+                },
+                episodes = if (state.selectedSeasonNumber == seasonNumber) {
+                    state.episodes.map { it.updated() }
+                } else {
+                    state.episodes
+                },
+                episodesBySeason = state.episodesBySeason.mapValues { (number, episodes) ->
+                    if (number == seasonNumber) episodes.map { it.updated() } else episodes
+                },
+            )
+        }
+    }
+
+    private fun restoreSeasonPlayedState(
+        previousSeason: Season,
+        previousEpisodes: List<EpisodeListItem>?,
+        episodeGenerationsAtStart: Map<String, Int>,
+    ) {
+        val seasonNumber = previousSeason.seasonNumber
+        // An episode marked on its own while the season write was pending keeps
+        // that newer state; only the season write's own change is undone.
+        val previousById = previousEpisodes.orEmpty()
+            .filter { episodeWatchedMutationGenerations[it.contentId] == episodeGenerationsAtStart[it.contentId] }
+            .associateBy { it.contentId }
+        fun List<EpisodeListItem>.restored() = map { previousById[it.contentId] ?: it }
+        _uiState.update { state ->
+            val episodesBySeason = if (previousEpisodes != null) {
+                state.episodesBySeason.mapValues { (number, episodes) ->
+                    if (number == seasonNumber) episodes.restored() else episodes
+                }
+            } else {
+                state.episodesBySeason - seasonNumber
+            }
+            state.copy(
+                seasons = state.seasons.map { if (it.seasonNumber == seasonNumber) previousSeason else it },
+                episodes = if (state.selectedSeasonNumber == seasonNumber) state.episodes.restored() else state.episodes,
+                episodesBySeason = episodesBySeason,
+            )
+        }
+    }
+
+    /**
+     * Re-reads what a season or series watched change affected: the season
+     * list (season watched state), the series hero, and the visible season's
+     * episodes. Other seasons' cached episodes are dropped when they may be
+     * stale so selecting them later loads fresh checkmarks.
+     */
+    private fun refreshAfterSeasonWatchedChange(seriesId: String, changedSeasonNumber: Int?) {
+        _uiState.update { state ->
+            state.copy(
+                episodesBySeason = state.episodesBySeason.filterKeys { number ->
+                    // The loaded page is the fallback if the selected season's reload fails.
+                    number == state.selectedSeasonNumber || number == loadedSeasonNumber ||
+                        (changedSeasonNumber != null && number != changedSeasonNumber)
+                },
+            )
+        }
+        // Re-reads the series hero, the season list, and the visible episodes.
+        refreshOnReturn()
+    }
+
+    /**
+     * Replaces the season list (and its watched state) without touching the
+     * selection. Only the latest request publishes, and a season watched
+     * change bumps the generation so an older read cannot undo it.
+     */
+    private fun refreshSeasonsQuietly(seriesId: String) {
+        val generation = ++seasonsRefreshGeneration
+        viewModelScope.launch {
+            when (val result = catalogRepository.getSeasons(seriesId, libraryId = libraryId)) {
+                is ApiResult.Success -> {
+                    val seasons = result.data.seasons.sortedForDisplay()
+                    _uiState.update { state ->
+                        if (generation != seasonsRefreshGeneration || state.detail?.contentId != seriesId ||
+                            seasons.isEmpty()
+                        ) state else state.copy(seasons = seasons)
+                    }
+                }
+                // Quiet refresh: on failure keep the season state on screen.
+                is ApiResult.Error,
+                is ApiResult.NetworkError -> Unit
             }
         }
     }
@@ -1174,7 +1322,10 @@ class ItemDetailViewModel(
             val writeResult = personalDataRepository.performPersonalWrite(writeIntent)
             if (!personalDataRepository.isCurrent(writeIntent)) return@launch
             when (writeResult) {
-                is ApiResult.Success -> Unit
+                // The season's watched state may have flipped with this episode.
+                is ApiResult.Success -> _uiState.value.detail
+                    ?.takeIf { it.type == "series" }
+                    ?.let { refreshSeasonsQuietly(it.contentId) }
                 else -> if (episodeWatchedMutationGenerations[episodeContentId] == generation) {
                     updateEpisodePlayedState(episodeContentId, previous)
                 }

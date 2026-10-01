@@ -106,6 +106,13 @@ interface UserItemStatePort {
     suspend fun localPlaybackProgressForContent(contentIds: List<String>): Map<String, LocalPlaybackProgress> = emptyMap()
 
     /**
+     * Clears local resume samples recorded before [admittedAtMs] for [contentIds].
+     * A season or series watched write names only its parent, so the episodes it
+     * reached keep their local progress unless the caller clears it here.
+     */
+    suspend fun clearLocalPlaybackProgressBefore(contentIds: List<String>, admittedAtMs: Long) {}
+
+    /**
      * Durably record per-file track selections. These are local-only hints for
      * future playback starts, stored as stable fingerprints rather than raw UI
      * ordinals so they survive track-list reordering. They do not enqueue a

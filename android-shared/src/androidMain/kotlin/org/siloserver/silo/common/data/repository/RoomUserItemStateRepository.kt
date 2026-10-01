@@ -293,6 +293,18 @@ class RoomUserItemStateRepository(
             .latestProgress()
     }
 
+    override suspend fun clearLocalPlaybackProgressBefore(contentIds: List<String>, admittedAtMs: Long) {
+        if (contentIds.isEmpty()) return
+        val snapshot = snapshotProvider() ?: return
+        val profileId = snapshot.profileId ?: return
+        db.withTransaction {
+            val clearedAtMs = now()
+            contentIds.distinct().forEach { contentId ->
+                userStateDao.clearPlaybackProgressBefore(snapshot.serverId, profileId, contentId, admittedAtMs, clearedAtMs)
+            }
+        }
+    }
+
     override suspend fun localPlaybackProgressForContent(contentIds: List<String>): Map<String, LocalPlaybackProgress> {
         if (contentIds.isEmpty()) return emptyMap()
         val snapshot = snapshotProvider() ?: return emptyMap()

@@ -842,6 +842,11 @@ private fun TvDetailContent(
                                     onSeriesClick = onSeriesClick,
                                     onSeasonClick = onSeasonClick,
                                     onWatchTogether = onWatchTogether,
+                                    // Season mode marks the selected season;
+                                    // Show mode offers only the whole series.
+                                    watchedSeason = state.seasons
+                                        .firstOrNull { it.seasonNumber == state.selectedSeason }
+                                        ?.takeIf { isSeriesDetail && !isShowingSeriesOverview && it.episodeCount > 0 },
                                 )
                             },
                         )
@@ -1488,6 +1493,7 @@ private fun HeroActionRow(
     onSeriesClick: (seriesId: String) -> Unit,
     onSeasonClick: (seriesId: String, seasonNumber: Int) -> Unit,
     onWatchTogether: (RoomSnapshot) -> Unit,
+    watchedSeason: org.siloserver.silo.model.catalog.Season? = null,
 ) {
     val suggestViewModel: TvSuggestToRoomViewModel = koinViewModel()
     val activeRoom by suggestViewModel.room.collectAsState()
@@ -1775,6 +1781,21 @@ private fun HeroActionRow(
                     },
                 ),
             )
+            watchedSeason?.let { season ->
+                val seasonWatched = season.userData?.played == true
+                add(
+                    TvDialogOption(
+                        key = "season-watched",
+                        title = "Mark ${tvSeasonPickerLabel(season)} " +
+                            if (seasonWatched) "Unwatched" else "Watched",
+                        selected = seasonWatched,
+                        onClick = {
+                            moreOpen = false
+                            viewModel.onSetSeasonWatched(season, !seasonWatched)
+                        },
+                    ),
+                )
+            }
             if (canSuggestToRoom) {
                 add(
                     TvDialogOption(

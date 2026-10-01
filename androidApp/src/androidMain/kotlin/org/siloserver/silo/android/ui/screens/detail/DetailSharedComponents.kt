@@ -2,7 +2,9 @@ package org.siloserver.silo.android.ui.screens.detail
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -37,6 +39,7 @@ import androidx.compose.material.icons.outlined.KeyboardArrowDown
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Surface
 import androidx.compose.material3.AlertDialog
@@ -1338,12 +1341,15 @@ fun SectionHeader(
 
 // ── Season chips ──────────────────────────────────────────────
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun SeasonChips(
     seasons: List<Season>,
     selectedSeasonNumber: Int,
     onSeasonSelected: (Int) -> Unit,
     modifier: Modifier = Modifier,
+    /** Long-press menu on a chip; null hides it. */
+    onSeasonWatchedChange: ((Season, Boolean) -> Unit)? = null,
 ) {
     // The series overview deliberately keeps its single selected chip. iOS
     // renders "Season 1" even when there is no alternative season because it
@@ -1389,27 +1395,50 @@ fun SeasonChips(
         ) { season ->
             val isSelected = season.seasonNumber == selectedSeasonNumber
             val label = phoneSeasonLabel(season)
+            val isWatched = season.userData?.played == true
+            var menuExpanded by remember { mutableStateOf(false) }
             // iOS PhoneSeasonChips: 14pt (semibold selected / medium
             // unselected), hpad 16, height 36, unselected fill white-0.06.
-            Surface(
-                shape = PillShape,
-                color = if (isSelected) Color.White else Color.White.copy(alpha = 0.06f),
-                border = if (isSelected) {
-                    null
-                } else {
-                    androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.25f))
-                },
-                modifier = Modifier
-                    .height(36.dp)
-                    .clickable { onSeasonSelected(season.seasonNumber) },
-            ) {
-                Box(contentAlignment = Alignment.Center) {
-                    Text(
-                        text = label,
-                        fontSize = 14.sp,
-                        fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Medium,
-                        color = if (isSelected) Color.Black else Color.White,
-                        modifier = Modifier.padding(horizontal = 16.dp),
+            Box {
+                Surface(
+                    shape = PillShape,
+                    color = if (isSelected) Color.White else Color.White.copy(alpha = 0.06f),
+                    border = if (isSelected) {
+                        null
+                    } else {
+                        androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.25f))
+                    },
+                    modifier = Modifier
+                        .height(36.dp)
+                        .combinedClickable(
+                            onClick = { onSeasonSelected(season.seasonNumber) },
+                            onLongClick = if (onSeasonWatchedChange != null && season.episodeCount > 0) {
+                                { menuExpanded = true }
+                            } else {
+                                null
+                            },
+                        ),
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Text(
+                            text = label,
+                            fontSize = 14.sp,
+                            fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Medium,
+                            color = if (isSelected) Color.Black else Color.White,
+                            modifier = Modifier.padding(horizontal = 16.dp),
+                        )
+                    }
+                }
+                DropdownMenu(
+                    expanded = menuExpanded,
+                    onDismissRequest = { menuExpanded = false },
+                ) {
+                    DropdownMenuItem(
+                        text = { Text(if (isWatched) "Mark Season Unwatched" else "Mark Season Watched") },
+                        onClick = {
+                            menuExpanded = false
+                            onSeasonWatchedChange?.invoke(season, !isWatched)
+                        },
                     )
                 }
             }
