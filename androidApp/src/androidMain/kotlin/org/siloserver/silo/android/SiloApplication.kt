@@ -54,7 +54,8 @@ class SiloApplication : Application(), Configuration.Provider, SingletonImageLoa
         runCatching {
             koinApp.koin.get<org.siloserver.silo.repository.ProfileVerificationRecovery>()
         }.onFailure {
-            android.util.Log.w("SiloApplication", "Profile verification recovery init failed", it)
+            // Class name only: the exception chain can carry auth or server data.
+            android.util.Log.w("SiloApplication", "Profile verification recovery init failed: ${it::class.simpleName}")
         }
         // Drive notifications realtime off the app foreground lifecycle. Guarded:
         // it's a foreground accelerator, never load-bearing for cold start.
