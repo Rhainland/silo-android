@@ -635,7 +635,9 @@ fun TvMainShell(
     // (QA 2026-07-08: Movies → Collections → black 'No collections' page).
     // null = unknown (still loading) → pill stays visible.
     var librariesWithCollections by remember { mutableStateOf<Set<Int>?>(null) }
-    LaunchedEffect(libraries) {
+    // Keyed on the access key too: an access change can alter which libraries
+    // have collections while the library list itself stays equal.
+    LaunchedEffect(libraries, viewerAccessKey) {
         if (libraries.isEmpty()) return@LaunchedEffect
         val ids = mutableSetOf<Int>()
         libraries.forEach { lib ->
