@@ -29,10 +29,12 @@ import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.tv.material3.LocalTextStyle
 import androidx.tv.material3.Text
 import org.siloserver.silo.common.settings.LocalShowTitleArt
 import org.siloserver.silo.common.ui.components.ThumbhashImage
@@ -59,6 +61,9 @@ fun TvFocusMarquee(
     topPadding: androidx.compose.ui.unit.Dp = 0.dp,
     bottomPadding: androidx.compose.ui.unit.Dp = 0.dp,
     animateTransition: Boolean = true,
+    /** An extra line under the block for pages that preview more than catalog
+     *  items (the Requests page's status and stage track). */
+    footer: (@Composable (TvMarqueeContent) -> Unit)? = null,
 ) {
     Box(
         modifier = modifier
@@ -99,12 +104,13 @@ fun TvFocusMarquee(
                         TvMarqueeBlock(
                             content = value,
                             detailLine = detailLine.takeIf { value.id == content?.id },
+                            footer = footer,
                         )
                     }
                 }
             }
         } else if (content != null) {
-            TvMarqueeBlock(content = content, detailLine = detailLine)
+            TvMarqueeBlock(content = content, detailLine = detailLine, footer = footer)
         }
     }
 }
@@ -113,6 +119,7 @@ fun TvFocusMarquee(
 private fun TvMarqueeBlock(
     content: TvMarqueeContent,
     detailLine: String?,
+    footer: (@Composable (TvMarqueeContent) -> Unit)? = null,
 ) {
     // tvOS parity (TVFocusMarquee): when the text-fallback title wraps to two
     // lines the synopsis drops to one, keeping the bottom-anchored block's
@@ -195,13 +202,16 @@ private fun TvMarqueeBlock(
             ) {
                 content.badges.forEach { badge -> MarqueeBadge(badge) }
                 if (content.metaParts.isNotEmpty()) {
-                    Text(
-                        text = content.metaParts.joinToString(" · "),
-                        color = SiloSecondaryText,
-                        fontSize = MarqueeMetaSize,
-                        fontWeight = FontWeight.Medium,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
+                    TvFactsRow(
+                        tokens = content.metaParts,
+                        style = LocalTextStyle.current.merge(
+                            TextStyle(
+                                color = SiloSecondaryText,
+                                fontSize = MarqueeMetaSize,
+                                fontWeight = FontWeight.Medium,
+                            ),
+                        ),
+                        spacing = MarqueeMetaGap,
                     )
                 }
             }
@@ -267,6 +277,8 @@ private fun TvMarqueeBlock(
                     badges.forEach { badge -> MarqueeBadge(badge.uppercase()) }
                 }
             }
+
+        footer?.invoke(content)
     }
 }
 
@@ -305,6 +317,9 @@ private val MarqueeLogoMaxHeight = 84.dp
 private val MarqueeDetailLineHeight = 20.dp
 private val MarqueeTitleSize = 44.sp
 private val MarqueeMetaSize = 14.sp
+
+/** About a space at [MarqueeMetaSize], so `·` spacing matches the joined text. */
+private val MarqueeMetaGap = 4.dp
 private val MarqueeDetailSize = 14.sp
 private val MarqueeSynopsisSize = 16.sp
 private val MarqueeBadgeSize = 10.5.sp
