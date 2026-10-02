@@ -3,14 +3,21 @@ package org.siloserver.silo.repository
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.launch
 import org.siloserver.silo.network.AccessChangeSignals
+import org.siloserver.silo.network.IdentityTransitionBarrier
+import org.siloserver.silo.network.IdentityTransitionPhase
 import org.siloserver.silo.network.StaleProfileReport
 import org.siloserver.silo.network.TokenManager
 
@@ -70,12 +77,27 @@ class ProfileVerificationRecovery(
     private val signals: AccessChangeSignals,
     private val tokenManager: TokenManager,
     private val profileRepository: ProfileRepository,
+    identityTransitions: IdentityTransitionBarrier,
     scope: CoroutineScope,
 ) {
     private val _pending = MutableStateFlow<ProfileVerificationPrompt?>(null)
 
     /** The prompt waiting for the navigation layer, or null. */
     val pending: StateFlow<ProfileVerificationPrompt?> = _pending.asStateFlow()
+
+    /**
+     * [pending], emitted again after every completed identity transition. The
+     * navigation layer collects this so a prompt deferred behind a
+     * remote-playback overlay is decided again when the overlay ends, even if
+     * the visible destination does not change.
+     */
+    val promptChecks: Flow<ProfileVerificationPrompt?> = combine(
+        pending,
+        identityTransitions.transitions
+            .filter { it.phase == IdentityTransitionPhase.DID_CHANGE }
+            .map { it.generation }
+            .onStart { emit(identityTransitions.generation.value) },
+    ) { prompt, _ -> prompt }
 
     private val _profileCleared = MutableSharedFlow<Unit>(
         extraBufferCapacity = 1,

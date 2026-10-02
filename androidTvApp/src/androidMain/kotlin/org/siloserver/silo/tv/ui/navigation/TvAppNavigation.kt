@@ -581,8 +581,10 @@ fun TvAppNavigation(
     // after a sign-out, a server switch, or a profile pick.
     val profileVerificationRecovery: ProfileVerificationRecovery = koinInject()
     LaunchedEffect(Unit) {
+        // promptChecks re-emits when a remote-playback overlay ends, so a
+        // prompt deferred behind it does not wait for the next navigation.
         kotlinx.coroutines.flow.combine(
-            profileVerificationRecovery.pending,
+            profileVerificationRecovery.promptChecks,
             navController.currentBackStackEntryFlow,
         ) { prompt, entry -> prompt to entry.destination.route }
             .collect { (prompt, route) ->

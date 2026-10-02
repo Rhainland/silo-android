@@ -94,6 +94,7 @@ val repositoryModule = module {
             signals = get(),
             tokenManager = get(),
             profileRepository = get(),
+            identityTransitions = get(),
             scope = CoroutineScope(SupervisorJob() + Dispatchers.Default),
         )
     }
