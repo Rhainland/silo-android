@@ -60,15 +60,11 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.text.SpanStyle
-import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
 import org.siloserver.silo.android.ui.theme.SiloBackground
 import org.siloserver.silo.android.ui.theme.SiloOnSurface
@@ -78,6 +74,7 @@ import org.siloserver.silo.android.ui.theme.SiloDetailActionControlActive
 import org.siloserver.silo.android.ui.theme.SiloOpaqueControl
 import org.siloserver.silo.android.ui.theme.SiloOpaqueControlBorder
 import org.siloserver.silo.android.ui.theme.SiloSecondaryText
+import org.siloserver.silo.android.ui.theme.SiloSurfaceElevated
 import org.siloserver.silo.android.ui.theme.PillShape
 import org.siloserver.silo.common.settings.LocalShowTitleArt
 import org.siloserver.silo.common.ui.components.ThumbhashImage
@@ -268,11 +265,9 @@ private fun ExpandedDetailHero(
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
-                        // Movies and series name their type and studio or
-                        // network; an episode keeps its season/episode line.
-                        val titleEyebrow = HeroMetadata.titleEyebrow(detail)
-                            ?: eyebrow?.takeIf { it.isNotBlank() }?.let { HeroEyebrow(label = it) }
-                        if (titleEyebrow != null) HeroEyebrowLine(titleEyebrow)
+                        if (!eyebrow.isNullOrBlank()) {
+                            EyebrowChip(text = eyebrow)
+                        }
                         ExpandedHeroTitle(detail = detail)
                         val metadataTokens = (factsLine + sourceTokens).distinct()
                         if (metadataTokens.isNotEmpty() || detail.contentRating != null) {
@@ -508,19 +503,7 @@ fun DetailHero(
             artworkThumbhash = detail.backdropThumbhash ?: detail.posterThumbhash,
             contentDescription = detail.title,
         ) {
-            val titleEyebrow = HeroMetadata.titleEyebrow(detail)
-            if (titleEyebrow == null) {
-                HeroTitle(detail = detail)
-            } else {
-                Column(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(10.dp),
-                ) {
-                    HeroEyebrowLine(titleEyebrow)
-                    HeroTitle(detail = detail)
-                }
-            }
+            HeroTitle(detail = detail)
         }
 
         Column(
@@ -881,38 +864,22 @@ private fun splitHeroTitle(raw: String): Pair<String, String?> {
     return raw to null
 }
 
-/** The hero eyebrow: a title's type and, when known, its studio or network. */
-data class HeroEyebrow(val label: String, val provider: String? = null)
-
-/**
- * One small uppercase, letter-spaced line above the hero title —
- * `MOVIE · MARVEL STUDIOS`, `SERIES · HBO`. The provider reads slightly
- * brighter than the type.
- */
 @Composable
-private fun HeroEyebrowLine(eyebrow: HeroEyebrow) {
-    val text = buildAnnotatedString {
-        withStyle(SpanStyle(color = Color.White.copy(alpha = 0.7f))) {
-            append(eyebrow.label.uppercase())
-        }
-        eyebrow.provider?.let { provider ->
-            withStyle(SpanStyle(color = Color.White.copy(alpha = 0.45f))) { append(" · ") }
-            withStyle(SpanStyle(color = Color.White.copy(alpha = 0.88f))) {
-                append(provider.uppercase())
-            }
-        }
+private fun EyebrowChip(text: String) {
+    Surface(
+        shape = PillShape,
+        color = SiloSurfaceElevated,
+    ) {
+        Text(
+            text = text,
+            fontSize = 12.sp,
+            lineHeight = 16.sp,
+            fontWeight = FontWeight.SemiBold,
+            letterSpacing = 0.6.sp,
+            color = DetailPrimaryText,
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 5.dp),
+        )
     }
-    Text(
-        text = text,
-        fontSize = 12.sp,
-        lineHeight = 16.sp,
-        fontWeight = FontWeight.SemiBold,
-        letterSpacing = 0.16.em,
-        textAlign = TextAlign.Center,
-        maxLines = 1,
-        overflow = TextOverflow.Ellipsis,
-        modifier = Modifier.fillMaxWidth(),
-    )
 }
 
 @Composable
@@ -1454,22 +1421,6 @@ fun SeasonChips(
 // ── Hero metadata helpers (mirror PhoneHeroMetadata.swift) ────
 
 object HeroMetadata {
-
-    /**
-     * `Movie · <first studio>` or `Series · <first network>`; the type alone
-     * when the catalog has no provider. Null for every other type.
-     */
-    fun titleEyebrow(detail: ItemDetail): HeroEyebrow? {
-        val (label, providers) = when (detail.type) {
-            "movie" -> "Movie" to detail.studios
-            "series" -> "Series" to detail.networks
-            else -> return null
-        }
-        return HeroEyebrow(
-            label = label,
-            provider = providers.firstNotNullOfOrNull { it.trim().takeIf(String::isNotEmpty) },
-        )
-    }
 
     fun episodeEyebrow(detail: ItemDetail): String? {
         val s = detail.seasonNumber
