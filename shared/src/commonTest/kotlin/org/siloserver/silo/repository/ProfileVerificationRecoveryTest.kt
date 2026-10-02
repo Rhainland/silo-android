@@ -79,7 +79,7 @@ class ProfileVerificationRecoveryTest {
             identityTransitions = barrier,
         )
         profiles.selectProfile("kid", "stale-pin-token")
-        val recovery = ProfileVerificationRecovery(AccessChangeSignals(), tokens, profiles, backgroundScope)
+        val recovery = ProfileVerificationRecovery(AccessChangeSignals(), tokens, profiles, barrier, backgroundScope)
         return Fixture(barrier, tokens, profiles, recovery)
     }
 
@@ -259,6 +259,50 @@ class ProfileVerificationRecoveryTest {
     }
 
     @Test
+    fun `ending a remote playback overlay asks again without a navigation`() = runTest {
+        // Production shape: the token manager mutates identity through the same barrier.
+        val barrier = DefaultIdentityTransitionBarrier()
+        val tokens = ScopedTokenManager(barrier, TokenManagerImpl(barrier))
+        tokens.setServerUrl(serverUrl)
+        tokens.saveTokens("access", "refresh", 3_600)
+        val profiles = ProfileRepository(
+            profileApi = ProfileApi(HttpClient(MockEngine { respond("{}") }), ApiV2Gate.Unrestricted),
+            tokenManager = tokens,
+            identityTransitions = barrier,
+        )
+        profiles.selectProfile("kid", "stale-pin-token")
+        val recovery = ProfileVerificationRecovery(AccessChangeSignals(), tokens, profiles, barrier, backgroundScope)
+        recovery.handle(report())
+        val prompt = assertNotNull(recovery.pending.value)
+        tokens.beginTemporaryScope(
+            TemporaryAuthScope(
+                generationId = "overlay",
+                serverId = "server-1",
+                serverUrl = serverUrl,
+                accessToken = "overlay-access",
+                refreshToken = "overlay-refresh",
+                profileId = "guest",
+                profileToken = "guest-token",
+                expiresAtEpochMs = Long.MAX_VALUE,
+            ),
+        )
+        val checks = mutableListOf<ProfileVerificationPrompt?>()
+        backgroundScope.launch(start = CoroutineStart.UNDISPATCHED) {
+            recovery.promptChecks.collect { checks += it }
+        }
+        testScheduler.runCurrent()
+        assertEquals(listOf<ProfileVerificationPrompt?>(prompt), checks)
+        assertEquals(ProfilePromptAction.Defer, recovery.actionFor(prompt, "home", deferRoutes = emptySet()))
+
+        tokens.endTemporaryScope()
+        testScheduler.runCurrent()
+
+        assertTrue(checks.size > 1, "the overlay ending re-emits the pending prompt")
+        assertEquals(prompt, checks.last())
+        assertEquals(ProfilePromptAction.Navigate, recovery.actionFor(prompt, "home", deferRoutes = emptySet()))
+    }
+
+    @Test
     fun `on the picker the prompt is consumed without navigating`() = runTest {
         val f = fixture()
         val cleared = mutableListOf<Unit>()
@@ -296,7 +340,7 @@ class ProfileVerificationRecoveryTest {
             identityTransitions = barrier,
         )
         val signals = AccessChangeSignals()
-        val recovery = ProfileVerificationRecovery(signals, tokens, profiles, backgroundScope)
+        val recovery = ProfileVerificationRecovery(signals, tokens, profiles, barrier, backgroundScope)
         testScheduler.runCurrent()
 
         signals.reportStaleProfile(report())
@@ -322,7 +366,7 @@ class ProfileVerificationRecoveryTest {
         )
         profiles.selectProfile("kid", "stale-pin-token")
         val signals = AccessChangeSignals()
-        val recovery = ProfileVerificationRecovery(signals, tokens, profiles, backgroundScope)
+        val recovery = ProfileVerificationRecovery(signals, tokens, profiles, barrier, backgroundScope)
         testScheduler.runCurrent()
 
         signals.reportStaleProfile(report())
