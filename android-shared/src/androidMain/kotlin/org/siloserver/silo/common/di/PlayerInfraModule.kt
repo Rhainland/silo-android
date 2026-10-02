@@ -214,8 +214,6 @@ val playerInfraModule = module {
             context = androidContext(),
             controller = TitleArtController(get<SettingsRepository>()),
             scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate),
-            getActiveProfileId = { get<ProfileRepository>().getActiveProfileId() },
-            getServerUrl = { get<TokenManager>().getServerUrl() },
             getAuthScope = { get<TokenManager>().snapshotCurrentScope() },
             identityChanges = identityChanges,
         )

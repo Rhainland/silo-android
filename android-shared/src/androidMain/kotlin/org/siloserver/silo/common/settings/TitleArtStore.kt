@@ -5,6 +5,7 @@ import android.content.SharedPreferences
 import androidx.core.content.edit
 import org.siloserver.silo.domain.settings.TitleArtController
 import org.siloserver.silo.domain.settings.TitleArtPreference
+import org.siloserver.silo.network.AndroidServerRegistry
 import org.siloserver.silo.network.AuthScopeSnapshot
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
@@ -112,8 +113,6 @@ interface TitleArtStore {
 class DefaultTitleArtStore private constructor(
     private val controller: TitleArtController,
     private val scope: CoroutineScope,
-    private val getActiveProfileId: suspend () -> String?,
-    private val getServerUrl: suspend () -> String?,
     private val getAuthScope: suspend () -> AuthScopeSnapshot?,
     private val cache: TitleArtCache,
     identityChanges: Flow<Unit>,
@@ -123,15 +122,11 @@ class DefaultTitleArtStore private constructor(
         context: Context,
         controller: TitleArtController,
         scope: CoroutineScope,
-        getActiveProfileId: suspend () -> String?,
-        getServerUrl: suspend () -> String?,
         getAuthScope: suspend () -> AuthScopeSnapshot?,
         identityChanges: Flow<Unit> = emptyFlow(),
     ) : this(
         controller = controller,
         scope = scope,
-        getActiveProfileId = getActiveProfileId,
-        getServerUrl = getServerUrl,
         getAuthScope = getAuthScope,
         cache = SharedPreferencesTitleArtCache(
             context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE),
@@ -235,12 +230,14 @@ class DefaultTitleArtStore private constructor(
 
     /** [keepError]: a re-read after writes keeps their outcome (a failure stays reported). */
     private suspend fun refresh(keepError: Boolean) {
-        // Capture the generation before the suspending identity and authority
-        // reads: a reset while they run must not pair the previous profile's
-        // identity or authority with the new generation.
+        // Capture the generation before the suspending authority read: a
+        // reset while it runs must not pair the previous profile's authority
+        // with the new generation. The cache key comes from the same snapshot
+        // the load is pinned to, so the answer is always cached for the
+        // profile it was read for.
         val startGeneration = synchronized(lock) { generation }
-        val identity = currentIdentity() ?: return
-        val authority = getAuthScope()
+        val authority = getAuthScope() ?: return
+        val identity = authority.cacheIdentity() ?: return
         val startEpoch: Long
         val sequence: Long
         synchronized(lock) {
@@ -445,11 +442,6 @@ class DefaultTitleArtStore private constructor(
         _saveError.value = null
     }
 
-    private suspend fun currentIdentity(): String? {
-        val profileId = getActiveProfileId()?.takeIf { it.isNotBlank() } ?: return null
-        return "${getServerUrl().orEmpty()}|$profileId"
-    }
-
     internal companion object {
         const val PREFS_NAME = "silo_title_art"
         const val IDENTITY_CHANGED = "The acting account or profile changed."
@@ -458,17 +450,27 @@ class DefaultTitleArtStore private constructor(
         fun saveErrorText(message: String?): String =
             "Couldn't save title art" + (message?.takeIf { it.isNotBlank() }?.let { ": $it" } ?: ".")
 
+        /** The cache key for this snapshot's server and profile; null without a profile. */
+        private fun AuthScopeSnapshot.cacheIdentity(): String? =
+            profileId?.takeIf { it.isNotBlank() }?.let { "$serverUrl|$it" }
+
         /**
-         * Same server, signed-in account and profile. Not
-         * [AuthScopeSnapshot.isSameIdentityAs]: its identity generation also
-         * moves when a remote-playback overlay starts or ends, which leaves
-         * the profile a toggle addresses unchanged. A real profile or server
-         * switch resets the store before the write runs.
+         * Same server and profile, and the same sign-in when both are the
+         * saved account. Not [AuthScopeSnapshot.isSameIdentityAs]: its
+         * identity generation also moves when a remote-playback overlay starts
+         * or ends, which leaves the profile a toggle addresses unchanged. An
+         * overlay's snapshot carries no credential epoch (it is always 0), so
+         * the epoch is compared only between two saved-account snapshots, and
+         * the server ids are matched the way the overlay handoff matches them.
+         * A real profile or server switch resets the store before the write
+         * runs.
          */
-        private fun AuthScopeSnapshot.isSameProfileAs(other: AuthScopeSnapshot): Boolean =
-            serverId == other.serverId &&
-                credentialEpoch == other.credentialEpoch &&
-                profileId == other.profileId
+        private fun AuthScopeSnapshot.isSameProfileAs(other: AuthScopeSnapshot): Boolean {
+            if (profileId != other.profileId) return false
+            if (!AndroidServerRegistry.serverIdsMatch(serverId, other.serverId)) return false
+            val bothSavedAccount = credentialGenerationId == null && other.credentialGenerationId == null
+            return !bothSavedAccount || credentialEpoch == other.credentialEpoch
+        }
 
         /** Test seam: no Android Context, in-memory cache. */
         internal fun forTest(
@@ -482,8 +484,6 @@ class DefaultTitleArtStore private constructor(
         ): DefaultTitleArtStore = DefaultTitleArtStore(
             controller = controller,
             scope = scope,
-            getActiveProfileId = getActiveProfileId,
-            getServerUrl = getServerUrl,
             getAuthScope = getAuthScope ?: {
                 val url = getServerUrl().orEmpty()
                 AuthScopeSnapshot(

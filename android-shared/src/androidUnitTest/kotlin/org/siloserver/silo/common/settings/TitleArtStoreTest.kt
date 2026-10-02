@@ -409,32 +409,135 @@ class TitleArtStoreTest {
 
     @Test
     fun `a remote playback overlay on the same profile does not block a change`() = runTest {
-        var identityGeneration = 1L
+        // Shaped like the token manager's snapshots: the saved account carries
+        // a credential epoch, an overlay carries a generation id and epoch 0.
+        val saved = AuthScopeSnapshot(
+            serverId = "https://server.test",
+            profileId = "profile-1",
+            serverUrl = "https://server.test",
+            profileToken = "token-profile-1",
+            identityGeneration = 1L,
+            isIdentityGenerationStamped = true,
+            credentialEpoch = 3L,
+        )
+        val overlay = saved.copy(
+            profileToken = null,
+            credentialGenerationId = "overlay-1",
+            identityGeneration = 2L,
+            credentialEpoch = 0L,
+        )
+        var current = saved
         val server = FakeTitleArtServer()
         val store = DefaultTitleArtStore.forTest(
             controller = TitleArtController(SettingsRepository(server)),
             scope = backgroundScope,
-            getAuthScope = {
-                AuthScopeSnapshot(
-                    serverId = "https://server.test",
-                    profileId = "profile-1",
-                    serverUrl = "https://server.test",
-                    profileToken = "token-profile-1",
-                    identityGeneration = identityGeneration,
-                    isIdentityGenerationStamped = true,
-                )
-            },
+            getAuthScope = { current },
         )
         store.refresh()
 
-        // A cast session begins: the generation moves, the profile does not.
-        identityGeneration += 1
+        // A cast session for the same profile begins after the read.
+        current = overlay
+        store.setShowTitleArt(false)
+        runCurrent()
+        // It ends again before the next change.
+        current = saved.copy(identityGeneration = 3L)
+        store.setShowTitleArt(true)
+        runCurrent()
+
+        assertEquals(listOf("put profile_device false", "put profile_device true"), server.calls)
+        assertTrue(store.state.value.showTitleArt)
+        assertNull(store.saveError.value)
+    }
+
+    @Test
+    fun `a change read before the overlay ends still saves after it`() = runTest {
+        val saved = AuthScopeSnapshot(
+            serverId = "https://server.test",
+            profileId = "profile-1",
+            serverUrl = "https://server.test",
+            profileToken = "token-profile-1",
+            identityGeneration = 2L,
+            isIdentityGenerationStamped = true,
+            credentialEpoch = 3L,
+        )
+        var current = saved.copy(
+            profileToken = null,
+            credentialGenerationId = "overlay-1",
+            credentialEpoch = 0L,
+        )
+        val server = FakeTitleArtServer()
+        val store = DefaultTitleArtStore.forTest(
+            controller = TitleArtController(SettingsRepository(server)),
+            scope = backgroundScope,
+            getAuthScope = { current },
+        )
+        // The read lands while the overlay is active.
+        store.refresh()
+
+        current = saved.copy(identityGeneration = 3L)
         store.setShowTitleArt(false)
         runCurrent()
 
         assertEquals(listOf("put profile_device false"), server.calls)
-        assertFalse(store.state.value.showTitleArt)
         assertNull(store.saveError.value)
+    }
+
+    @Test
+    fun `a new sign-in on the same profile blocks a change read before it`() = runTest {
+        val before = AuthScopeSnapshot(
+            serverId = "https://server.test",
+            profileId = "profile-1",
+            serverUrl = "https://server.test",
+            profileToken = "token-profile-1",
+            identityGeneration = 1L,
+            isIdentityGenerationStamped = true,
+            credentialEpoch = 3L,
+        )
+        var current = before
+        val server = FakeTitleArtServer()
+        val store = DefaultTitleArtStore.forTest(
+            controller = TitleArtController(SettingsRepository(server)),
+            scope = backgroundScope,
+            getAuthScope = { current },
+        )
+        store.refresh()
+
+        current = before.copy(identityGeneration = 3L, credentialEpoch = 5L)
+        store.setShowTitleArt(false)
+        runCurrent()
+
+        assertTrue(server.calls.isEmpty())
+        assertEquals(
+            DefaultTitleArtStore.saveErrorText(DefaultTitleArtStore.IDENTITY_CHANGED),
+            store.saveError.value,
+        )
+    }
+
+    @Test
+    fun `the answer is cached for the profile the load was pinned to`() = runTest {
+        val cache = InMemoryTitleArtCache()
+        val server = FakeTitleArtServer(deviceValue = false)
+        val store = DefaultTitleArtStore.forTest(
+            controller = TitleArtController(SettingsRepository(server)),
+            scope = backgroundScope,
+            // The active scope is a cast overlay for another profile than the
+            // saved account's profile-1.
+            getAuthScope = {
+                AuthScopeSnapshot(
+                    serverId = "https://server.test",
+                    profileId = "phone-profile",
+                    serverUrl = "https://server.test",
+                    profileToken = null,
+                    credentialGenerationId = "overlay-1",
+                )
+            },
+            cache = cache,
+        )
+        store.refresh()
+
+        assertEquals(listOf<Pair<String, String?>>("effective" to "phone-profile"), server.authorities)
+        assertNull(cache.read("https://server.test|profile-1"))
+        assertFalse(cache.read("https://server.test|phone-profile")!!.preference.showTitleArt)
     }
 
     @Test
