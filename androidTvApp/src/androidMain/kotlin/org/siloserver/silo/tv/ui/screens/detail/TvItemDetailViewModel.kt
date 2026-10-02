@@ -692,8 +692,17 @@ class TvItemDetailViewModel(
      * [refreshOnReturn] after the server reports an access change, except that
      * a refusal ([isAccessRefusal]) replaces the detail with the error the
      * initial load shows. Transient failures still keep the current detail.
+     * With no detail on screen (an earlier change refused it, or the first
+     * load failed), it runs the full load again, as Retry does, so a title the
+     * viewer regains access to comes back.
      */
-    fun refreshAfterAccessChange() = quietRefresh(showAccessRefusal = true)
+    fun refreshAfterAccessChange() {
+        val state = _uiState.value
+        when {
+            state.detail != null -> quietRefresh(showAccessRefusal = true)
+            !state.isLoading -> loadAll()
+        }
+    }
 
     private fun quietRefresh(showAccessRefusal: Boolean) {
         val current = _uiState.value.detail ?: return
