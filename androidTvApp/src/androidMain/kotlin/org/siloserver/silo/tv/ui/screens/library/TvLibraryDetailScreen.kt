@@ -84,8 +84,11 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.layout.offset
 import androidx.compose.ui.unit.sp
+import org.koin.compose.koinInject
 import org.koin.compose.viewmodel.koinViewModel
 import org.koin.core.parameter.parametersOf
+import org.siloserver.silo.common.ui.OnViewerAccessChanged
+import org.siloserver.silo.network.AccessChangeSignals
 
 /**
  * Android TV library detail surface, with tvOS as the master.
@@ -135,6 +138,7 @@ fun TvLibraryDetailScreen(
     } else {
         null
     }
+    OnViewerAccessChanged(koinInject<AccessChangeSignals>()) { viewModel.refreshAfterAccessChange() }
 
     // Apply the committed cascade section on entry / whenever the commit
     // changes it. Keyed on sectionRequestNonce (bumped on every commit) AND the

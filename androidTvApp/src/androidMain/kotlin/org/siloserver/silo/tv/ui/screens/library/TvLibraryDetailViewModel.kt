@@ -371,6 +371,11 @@ class TvLibraryDetailViewModel(
                 browseFilter = it.browseFilter.forTab(it.selectedTab),
             )
         }
+        // The group list went stale while a group was open (an access change).
+        val groupBy = _uiState.value.selectedTab.audiobookGroupBy
+        if (groupBy != null && loadedAudiobookGroupBy != groupBy) {
+            loadAudiobookGroups(groupBy = groupBy, reset = true)
+        }
     }
 
     fun retryRecommended() {
@@ -388,6 +393,44 @@ class TvLibraryDetailViewModel(
     fun retryAudiobookGroups() {
         val groupBy = _uiState.value.selectedTab.audiobookGroupBy ?: return
         loadAudiobookGroups(groupBy = groupBy, reset = true)
+    }
+
+    /**
+     * The server reported an access change: titles, sections, facets, and
+     * collections in this library may differ under the new policy. Reload the
+     * visible tab now and let the others reload when next opened, instead of
+     * trusting their one-time loaded flags.
+     */
+    fun refreshAfterAccessChange() {
+        loadedRecommended = false
+        loadedBrowse = false
+        loadedCollections = false
+        loadedFilters = false
+        loadedAudiobookGroupBy = null
+        val state = _uiState.value
+        when (state.selectedTab) {
+            TvLibraryTab.Recommended -> loadRecommended()
+            TvLibraryTab.Browse,
+            TvLibraryTab.Genres,
+            TvLibraryTab.Alphabet,
+            TvLibraryTab.RecentlyAdded -> {
+                loadFilters()
+                loadBrowse(reset = true)
+            }
+            TvLibraryTab.Authors,
+            TvLibraryTab.Series -> {
+                val groupBy = state.selectedTab.audiobookGroupBy ?: return
+                // A selected author or series shows its titles; keep the
+                // selection and reload those. The group list reloads when the
+                // selection is cleared (onAudiobookGroupCleared).
+                if (state.selectedAudiobookGroup != null) {
+                    loadBrowse(reset = true)
+                } else {
+                    loadAudiobookGroups(groupBy = groupBy, reset = true)
+                }
+            }
+            TvLibraryTab.Collections -> loadCollections()
+        }
     }
 
     private fun updateBrowseFilter(filter: TvLibraryBrowseFilter) {
