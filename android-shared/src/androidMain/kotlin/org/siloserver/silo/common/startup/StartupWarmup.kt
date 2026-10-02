@@ -95,8 +95,9 @@ suspend fun warmAuthenticatedStartup(
     /**
      * Whether Home will draw title logos (`ui.title_art`). Asked only when the
      * artwork is warmed, after Home has loaded; false skips the logo fetch.
+     * Must not suspend on the network: it gates every first-row warm.
      */
-    showTitleArt: suspend () -> Boolean = { true },
+    showTitleArt: () -> Boolean = { true },
 ) {
     val homeGeneration = identityTransitions.generation.value
     val homeOwner = sectionRepository.captureHomeAuthority()

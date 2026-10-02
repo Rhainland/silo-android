@@ -379,11 +379,9 @@ class MainTvActivity : ComponentActivity() {
                 ),
                 serverUrl = get<ServerRegistry>(ServerRegistry::class.java).activeEntry.value?.url,
                 artworkPlan = StartupArtworkPlan.tv(),
-                showTitleArt = {
-                    val titleArt = get<TitleArtStore>(TitleArtStore::class.java)
-                    titleArt.hydrateIfNeeded()
-                    titleArt.state.value.showTitleArt
-                },
+                // What Home will draw right now (cached answer, else logos on);
+                // never waits on the title art request.
+                showTitleArt = { get<TitleArtStore>(TitleArtStore::class.java).state.value.showTitleArt },
             )
         }
     }
