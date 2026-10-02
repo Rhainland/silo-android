@@ -36,7 +36,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.tv.material3.LocalTextStyle
 import androidx.tv.material3.Text
-import org.siloserver.silo.common.settings.LocalShowTitleArt
+import org.siloserver.silo.common.settings.titleLogoUrl
 import org.siloserver.silo.common.ui.components.ThumbhashImage
 import org.siloserver.silo.tv.ui.theme.SiloOnSurface
 import org.siloserver.silo.tv.ui.theme.SiloSecondaryText
@@ -126,7 +126,7 @@ private fun TvMarqueeBlock(
     // height bounded so it never climbs into the top-menu-bar zone.
     var titleLineCount by remember(content.id) { mutableStateOf(1) }
     // "Show title art" off: the marquee always names the title in text.
-    val logoUrl = content.logoUrl?.takeIf { LocalShowTitleArt.current }
+    val logoUrl = titleLogoUrl(content.logoUrl)
     var logoLoaded by remember(logoUrl) { mutableStateOf(false) }
     val logoAlpha by animateFloatAsState(
         targetValue = if (logoLoaded) 1f else 0f,
