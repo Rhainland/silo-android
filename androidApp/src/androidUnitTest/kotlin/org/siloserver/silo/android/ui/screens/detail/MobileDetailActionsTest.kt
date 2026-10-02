@@ -11,6 +11,7 @@ import org.siloserver.silo.network.AuthScopeSnapshot
 import org.siloserver.silo.network.SiloJson
 import org.siloserver.silo.network.TokenManager
 import org.siloserver.silo.network.TokenManagerImpl
+import org.siloserver.silo.repository.port.CatalogCachePort
 import org.siloserver.silo.repository.port.NoOpUserItemStatePort
 import org.siloserver.silo.repository.port.PersonalWrite
 import org.siloserver.silo.repository.port.PersonalWriteHandle
@@ -487,6 +488,96 @@ class MobileDetailActionsTest {
         assertFalse(state.hasExplicitVersionSelection)
         assertFalse(state.hasExplicitAudioSelection)
         assertFalse(state.hasExplicitSubtitleSelection)
+    }
+
+    @Test
+    fun accessChangeReloadsARefusedTitleOnceAccessReturns() = runItemDetailTest {
+        var available = true
+        val viewModel = itemDetailViewModel(
+            personalDataRepository = RecordingPersonalDataRepository(mutableListOf()),
+            catalogRepository = switchableCatalogRepository(available = { available }),
+            contentId = "movie-1",
+        )
+        advanceUntilIdle()
+        assertEquals("movie-1", viewModel.uiState.value.detail?.contentId)
+
+        available = false
+        viewModel.refreshAfterAccessChange()
+        advanceUntilIdle()
+        assertEquals(null, viewModel.uiState.value.detail)
+
+        available = true
+        viewModel.refreshAfterAccessChange()
+        advanceUntilIdle()
+
+        assertEquals("movie-1", viewModel.uiState.value.detail?.contentId)
+        assertEquals(null, viewModel.uiState.value.error)
+    }
+
+    @Test
+    fun accessChangeOnAStillRefusedTitleDoesNotRepaintItsCachedDetail() = runItemDetailTest {
+        var available = true
+        val viewModel = itemDetailViewModel(
+            personalDataRepository = RecordingPersonalDataRepository(mutableListOf()),
+            catalogRepository = switchableCatalogRepository(
+                available = { available },
+                cached = ItemDetail(contentId = "movie-1", type = "movie", title = "Cached"),
+            ),
+            contentId = "movie-1",
+        )
+        advanceUntilIdle()
+
+        available = false
+        viewModel.refreshAfterAccessChange()
+        advanceUntilIdle()
+        // A second, unrelated access change runs the full load, which paints
+        // the durable cached copy before the live request is refused again.
+        viewModel.refreshAfterAccessChange()
+        advanceUntilIdle()
+
+        assertEquals(null, viewModel.uiState.value.detail)
+        assertTrue(viewModel.uiState.value.error != null)
+    }
+
+    /**
+     * Serves `movie-1` while [available] is true and a 404 problem otherwise.
+     * [cached] stands in for the durable detail cache, which a refusal does
+     * not evict.
+     */
+    private fun kotlinx.coroutines.test.TestScope.switchableCatalogRepository(
+        available: () -> Boolean,
+        cached: ItemDetail? = null,
+    ): CatalogRepository {
+        val dispatcher = StandardTestDispatcher(testScheduler)
+        val client = HttpClient(
+            MockEngine(
+                MockEngineConfig().apply {
+                    this.dispatcher = dispatcher
+                    addHandler { request ->
+                        when {
+                            request.url.encodedPath != "/api/v2/catalog/items/movie-1" -> respond("{}")
+                            available() -> respond(
+                                """{"content_id":"movie-1","type":"movie","title":"Movie","cast":[],"crew":[],"versions":[],"subtitles":[]}""",
+                                HttpStatusCode.OK,
+                                headersOf(HttpHeaders.ContentType, "application/json"),
+                            )
+                            else -> respond(
+                                """{"type":"about:blank","title":"not_found","status":404,"detail":"Item not found"}""",
+                                HttpStatusCode.NotFound,
+                                headersOf(HttpHeaders.ContentType, "application/problem+json"),
+                            )
+                        }
+                    }
+                },
+            ),
+        ) { install(ContentNegotiation) { json(SiloJson) } }
+        return CatalogRepository(
+            CatalogApi(client),
+            catalogCache = object : CatalogCachePort {
+                override suspend fun getCachedItemDetail(contentId: String): ItemDetail? = cached
+            },
+            requestDispatcher = dispatcher,
+        )
     }
 
     private val viewModels = mutableListOf<ViewModel>()
