@@ -131,4 +131,17 @@ class StaleProfileDetectionTest {
         assertFalse(isHouseholdManagementRequest(HttpMethod.Post, "/api/v2/profiles/p1/verify-pin"))
         assertFalse(isHouseholdManagementRequest(HttpMethod.Get, "/api/v2/home/sections"))
     }
+
+    @Test
+    fun `only an authoritative refusal counts as lost access`() {
+        assertTrue(ApiResult.Error(404, "not_found", "").isAccessRefusal())
+        assertTrue(ApiResult.Error(410, "gone", "").isAccessRefusal())
+        assertTrue(ApiResult.Error(403, "forbidden", "").isAccessRefusal())
+        // A stale profile proof is recovered by re-verifying, not by hiding the title.
+        assertFalse(ApiResult.Error(403, PROFILE_VERIFICATION_REQUIRED, "").isAccessRefusal())
+        assertFalse(ApiResult.Error(401, "unauthorized", "").isAccessRefusal())
+        assertFalse(ApiResult.Error(503, "unavailable", "").isAccessRefusal())
+        assertFalse(ApiResult.Error(0, "identity_changed", "").isAccessRefusal())
+        assertFalse(ApiResult.NetworkError(RuntimeException("offline")).isAccessRefusal())
+    }
 }

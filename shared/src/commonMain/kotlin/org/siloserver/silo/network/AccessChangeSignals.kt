@@ -21,6 +21,16 @@ import kotlin.time.TimeSource
 const val PROFILE_VERIFICATION_REQUIRED = "profile_verification_required"
 
 /**
+ * Whether a failed read says the viewer may no longer see the resource: 404,
+ * 410, or a 403 other than [PROFILE_VERIFICATION_REQUIRED] (a stale profile
+ * proof, which profile recovery handles). Transport failures, 401, and 5xx are
+ * transient and say nothing about access.
+ */
+fun ApiResult<*>.isAccessRefusal(): Boolean =
+    this is ApiResult.Error &&
+        (code == 404 || code == 410 || (code == 403 && error != PROFILE_VERIFICATION_REQUIRED))
+
+/**
  * How the client learns that the server changed what the signed-in viewer may
  * access, without the session ending.
  *

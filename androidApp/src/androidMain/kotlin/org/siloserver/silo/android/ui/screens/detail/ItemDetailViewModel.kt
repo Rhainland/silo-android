@@ -19,6 +19,7 @@ import org.siloserver.silo.model.download.DownloadRecord
 import org.siloserver.silo.model.download.statusEnum
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.errorMessage
+import org.siloserver.silo.network.isAccessRefusal
 import org.siloserver.silo.model.catalog.isBookLikeItemType
 import org.siloserver.silo.metadata.DescriptionTranslationController
 import org.siloserver.silo.metadata.DescriptionTranslationPhase
@@ -471,14 +472,22 @@ class ItemDetailViewModel(
      * Deliberately NOT [loadDetail] — no loading flashes, and the user's
      * season selection is preserved.
      */
-    fun refreshOnReturn() = refreshOnReturn(afterWatchedChange = false)
+    fun refreshOnReturn() = quietRefresh()
+
+    /**
+     * [refreshOnReturn] after the server reports an access change, except that
+     * a refusal ([isAccessRefusal]) replaces the detail with the error the
+     * initial load shows. Transient failures still keep the current detail.
+     */
+    fun refreshAfterAccessChange() = quietRefresh(showAccessRefusal = true)
 
     /**
      * [afterWatchedChange] reads the season list and episodes fresh from the
      * server: a coalesced request or cached fallback could still hold the
      * state from before the write.
+     * [showAccessRefusal]: see [refreshAfterAccessChange].
      */
-    private fun refreshOnReturn(afterWatchedChange: Boolean) {
+    private fun quietRefresh(afterWatchedChange: Boolean = false, showAccessRefusal: Boolean = false) {
         val current = _uiState.value.detail ?: return
         viewModelScope.launch {
             // Local overlay first: the player's final position write is already
@@ -497,8 +506,16 @@ class ItemDetailViewModel(
                         )
                     }
                 }
+                is ApiResult.Error -> if (showAccessRefusal && result.isAccessRefusal()) {
+                    _uiState.update {
+                        it.copy(
+                            isLoading = false,
+                            detail = null,
+                            error = result.message.ifBlank { "Failed to load details" },
+                        )
+                    }
+                }
                 // Quiet refresh: on failure keep showing what we have.
-                is ApiResult.Error,
                 is ApiResult.NetworkError -> Unit
             }
         }
@@ -1373,7 +1390,7 @@ class ItemDetailViewModel(
             )
         }
         // Re-reads the series hero, the season list, and the visible episodes.
-        refreshOnReturn(afterWatchedChange = true)
+        quietRefresh(afterWatchedChange = true)
     }
 
     /**

@@ -39,6 +39,7 @@ import org.siloserver.silo.playback.resolveSubtitleTrackOrdinal
 import org.siloserver.silo.playback.subtitleTrackFingerprint
 import org.siloserver.silo.model.section.SectionItem
 import org.siloserver.silo.network.ApiResult
+import org.siloserver.silo.network.isAccessRefusal
 import org.siloserver.silo.network.IdentityTransitionBarrier
 import org.siloserver.silo.network.IdentityTransitionPhase
 import org.siloserver.silo.network.TokenManager
@@ -687,14 +688,22 @@ class TvItemDetailViewModel(
      * ended. Deliberately NOT [loadAll] — no loading flashes, and the user's
      * season selection is preserved.
      */
-    fun refreshOnReturn() = refreshOnReturn(afterWatchedChange = false)
+    fun refreshOnReturn() = quietRefresh()
+
+    /**
+     * [refreshOnReturn] after the server reports an access change, except that
+     * a refusal ([isAccessRefusal]) replaces the detail with the error the
+     * initial load shows. Transient failures still keep the current detail.
+     */
+    fun refreshAfterAccessChange() = quietRefresh(showAccessRefusal = true)
 
     /**
      * [afterWatchedChange] reads the season list and episodes fresh from the
      * server and skips repainting the rail from the on-disk catalog cache:
      * the cache, and any coalesced request, still hold the pre-write state.
+     * [showAccessRefusal]: see [refreshAfterAccessChange].
      */
-    private fun refreshOnReturn(afterWatchedChange: Boolean) {
+    private fun quietRefresh(afterWatchedChange: Boolean = false, showAccessRefusal: Boolean = false) {
         val current = _uiState.value.detail ?: return
         val playbackReturn = TvDetailTrackSelectionSession.consumePlaybackReturn(contentId)
         playbackReturn?.let { saved ->
@@ -734,8 +743,16 @@ class TvItemDetailViewModel(
                         }
                     }
                 }
+                is ApiResult.Error -> if (showAccessRefusal && result.isAccessRefusal()) {
+                    _uiState.update {
+                        it.copy(
+                            isLoading = false,
+                            detail = null,
+                            error = result.message.ifBlank { "Failed to load details" },
+                        )
+                    }
+                }
                 // Quiet refresh: on failure keep showing what we have.
-                is ApiResult.Error,
                 is ApiResult.NetworkError -> Unit
             }
         }
@@ -860,7 +877,7 @@ class TvItemDetailViewModel(
                     }
                     // Re-read server-resolved state (including series/season episode
                     // resolution) without flashing the full detail loading screen.
-                    refreshOnReturn(afterWatchedChange = isSeries)
+                    quietRefresh(afterWatchedChange = isSeries)
                     if (isSeries && previousDetail != null) {
                         // Seasons outside the carousel are read after the visible refresh starts.
                         val loaded = (_uiState.value.carouselEpisodes + _uiState.value.episodes)
@@ -933,7 +950,7 @@ class TvItemDetailViewModel(
                 val episodeIds = known.ifEmpty { seasonEpisodeIds(detail.contentId, seasonNumber) }
                 userItemState.clearLocalPlaybackProgressBefore(episodeIds, admittedAtMs, writeIntent.identityGeneration)
                 // Re-reads the series hero, the season list, and the selected season's episodes.
-                refreshOnReturn(afterWatchedChange = true)
+                quietRefresh(afterWatchedChange = true)
                 return@launch
             }
             if (seriesWatchMutationGeneration != seriesGenerationAtStart &&
@@ -941,7 +958,7 @@ class TvItemDetailViewModel(
             ) {
                 // A series write since this one began also covers this season;
                 // the snapshot is stale, so re-read the server instead.
-                refreshOnReturn(afterWatchedChange = true)
+                quietRefresh(afterWatchedChange = true)
                 return@launch
             }
             // Restore by id: carousel moves may have republished the optimistic
