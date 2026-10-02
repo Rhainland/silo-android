@@ -906,6 +906,11 @@ private fun TvGeneralSettingsPane(
 ) {
     var activeCardPicker by remember { mutableStateOf<CardPresentationPicker?>(null) }
     var showHomeSectionsEditor by remember { mutableStateOf(false) }
+    val titleArtStore: TitleArtStore = koinInject()
+    // Opening General is a refresh edge for a title art choice made on another
+    // device. Kept out of the LazyColumn item, which re-enters composition on
+    // scroll.
+    LaunchedEffect(titleArtStore) { titleArtStore.refresh() }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -973,7 +978,7 @@ private fun TvGeneralSettingsPane(
             }
         }
         item {
-            TvTitleArtSettingsGroup()
+            TvTitleArtSettingsGroup(store = titleArtStore)
         }
         item {
             // tvOS TVGeneralSettingsPane TOP MENU parity: the Audiobooks tab
@@ -2678,12 +2683,11 @@ private fun nextUpPromptLabel(seconds: Int): String = when {
 
 /**
  * "Show title art" and "Apply to all devices" (settings revision 16). Hidden
- * until the server confirms the key; older servers keep logos on.
+ * until the server confirms the key; older servers keep logos on. The
+ * switches stay disabled until this session's read lands.
  */
 @Composable
-private fun TvTitleArtSettingsGroup(store: TitleArtStore = koinInject()) {
-    // Opening Settings is a refresh edge for a choice made on another device.
-    LaunchedEffect(store) { store.refresh() }
+private fun TvTitleArtSettingsGroup(store: TitleArtStore) {
     val state by store.state.collectAsState()
     val saveError by store.saveError.collectAsState()
     if (!state.isSupported) return
@@ -2692,12 +2696,14 @@ private fun TvTitleArtSettingsGroup(store: TitleArtStore = koinInject()) {
             label = "Show title art",
             checked = state.showTitleArt,
             onCheckedChange = store::setShowTitleArt,
+            enabled = state.canEdit,
         )
         SettingsFooterText(text = "Use logo artwork as the title when available.")
         SettingsToggleRow(
             label = "Apply to all devices",
             checked = state.appliesToAllDevices,
             onCheckedChange = store::setAppliesToAllDevices,
+            enabled = state.canEdit,
         )
         SettingsFooterText(
             text = if (state.appliesToAllDevices) {

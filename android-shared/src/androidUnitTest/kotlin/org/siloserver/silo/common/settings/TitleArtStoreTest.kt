@@ -10,6 +10,7 @@ import org.siloserver.silo.model.settings.SettingScopeIdentity
 import org.siloserver.silo.model.settings.SettingsContractCapabilities
 import org.siloserver.silo.model.settings.StoredSettingValue
 import org.siloserver.silo.network.ApiResult
+import org.siloserver.silo.network.AuthScopeSnapshot
 import org.siloserver.silo.network.api.SettingsApi
 import org.siloserver.silo.repository.SettingsRepository
 import io.ktor.client.HttpClient
@@ -47,7 +48,11 @@ class TitleArtStoreTest {
         store.refresh()
 
         assertEquals(
-            TitleArtState(TitleArtSupport.Supported, TitleArtPreference(showTitleArt = false, appliesToAllDevices = true)),
+            TitleArtState(
+                TitleArtSupport.Supported,
+                TitleArtPreference(showTitleArt = false, appliesToAllDevices = true),
+                isConfirmed = true,
+            ),
             store.state.value,
         )
         assertFalse(store.state.value.showTitleArt)
@@ -81,14 +86,12 @@ class TitleArtStoreTest {
         store.setShowTitleArt(false)
         // Optimistic: surfaces switch to text before the write lands.
         assertFalse(store.state.value.showTitleArt)
-        assertTrue(store.isSaving.value)
 
         server.putGate!!.complete(Unit)
         runCurrent()
 
         assertEquals(listOf("put profile_device false"), server.calls)
         assertEquals(TitleArtPreference(showTitleArt = false, appliesToAllDevices = false), store.state.value.preference)
-        assertFalse(store.isSaving.value)
     }
 
     @Test
@@ -136,7 +139,6 @@ class TitleArtStoreTest {
         runCurrent()
 
         assertTrue(store.state.value.showTitleArt)
-        assertEquals("Server error", store.lastError.value)
         // Settings shows the failure under the switches until a save succeeds.
         assertEquals("Couldn't save title art: Server error", store.saveError.value)
 
@@ -264,13 +266,11 @@ class TitleArtStoreTest {
         runCurrent()
         assertEquals(listOf("put profile true", "put profile_device false"), api.calls)
         assertEquals(TitleArtPreference(showTitleArt = false, appliesToAllDevices = false), store.state.value.preference)
-        assertFalse(store.isSaving.value)
 
         // A's write finishing late leaves B's state alone.
         heldOnA.complete(Unit)
         runCurrent()
         assertEquals(TitleArtPreference(showTitleArt = false, appliesToAllDevices = false), store.state.value.preference)
-        assertFalse(store.isSaving.value)
         assertNull(store.saveError.value)
     }
 
@@ -326,8 +326,7 @@ class TitleArtStoreTest {
         assertEquals(listOf("put profile true"), server.calls)
         assertNull(server.profileValue)
         assertEquals(TitleArtPreference(showTitleArt = true, appliesToAllDevices = false), store.state.value.preference)
-        assertFalse(store.isSaving.value)
-        assertEquals("Server error", store.lastError.value)
+        assertEquals("Couldn't save title art: Server error", store.saveError.value)
 
         // A new change after the failure goes through normally.
         server.failPuts = false
@@ -380,6 +379,82 @@ class TitleArtStoreTest {
     }
 
     @Test
+    fun `a cached answer is shown but not written until the server re-reads it`() = runTest {
+        // Cached: this device only. Since then another device applied "off" to all devices.
+        val cache = InMemoryTitleArtCache().apply {
+            write("https://server.test|profile-1", TitleArtState(TitleArtSupport.Supported, TitleArtPreference()))
+        }
+        val server = FakeTitleArtServer(profileValue = false)
+        val held = CompletableDeferred<Unit>()
+        server.capabilitiesFor = { held.await() }
+        val store = storeFor(server, cache)
+        backgroundScope.launch { store.hydrateIfNeeded() }
+        runCurrent()
+        assertTrue(store.state.value.isSupported)
+        assertFalse(store.state.value.canEdit)
+
+        // A toggle before the read lands would pick profile_device from the stale cache.
+        store.setShowTitleArt(false)
+        runCurrent()
+        assertTrue(server.calls.isEmpty())
+        assertNull(store.saveError.value)
+
+        held.complete(Unit)
+        runCurrent()
+        assertTrue(store.state.value.canEdit)
+        store.setShowTitleArt(true)
+        runCurrent()
+        assertEquals(listOf("put profile true"), server.calls)
+    }
+
+    @Test
+    fun `a remote playback overlay on the same profile does not block a change`() = runTest {
+        var identityGeneration = 1L
+        val server = FakeTitleArtServer()
+        val store = DefaultTitleArtStore.forTest(
+            controller = TitleArtController(SettingsRepository(server)),
+            scope = backgroundScope,
+            getAuthScope = {
+                AuthScopeSnapshot(
+                    serverId = "https://server.test",
+                    profileId = "profile-1",
+                    serverUrl = "https://server.test",
+                    profileToken = "token-profile-1",
+                    identityGeneration = identityGeneration,
+                    isIdentityGenerationStamped = true,
+                )
+            },
+        )
+        store.refresh()
+
+        // A cast session begins: the generation moves, the profile does not.
+        identityGeneration += 1
+        store.setShowTitleArt(false)
+        runCurrent()
+
+        assertEquals(listOf("put profile_device false"), server.calls)
+        assertFalse(store.state.value.showTitleArt)
+        assertNull(store.saveError.value)
+    }
+
+    @Test
+    fun `concurrent startup loads share one round trip`() = runTest {
+        val server = FakeTitleArtServer()
+        val held = CompletableDeferred<Unit>()
+        server.capabilitiesFor = { held.await() }
+        val store = storeFor(server)
+
+        repeat(3) { backgroundScope.launch { store.hydrateIfNeeded() } }
+        backgroundScope.launch { store.refresh() }
+        runCurrent()
+        held.complete(Unit)
+        runCurrent()
+
+        assertEquals(1, server.capabilityRequests)
+        assertTrue(store.state.value.canEdit)
+    }
+
+    @Test
     fun `clear drops the previous profile's answer`() = runTest {
         val store = storeFor(FakeTitleArtServer(deviceValue = false))
         store.refresh()
@@ -428,8 +503,10 @@ class TitleArtStoreTest {
 
         /** Runs before each capabilities answer; a test can suspend it. */
         var capabilitiesFor: suspend () -> Unit = {}
+        var capabilityRequests = 0
 
         override suspend fun getContractCapabilities(): ApiResult<SettingsContractCapabilities> {
+            capabilityRequests += 1
             capabilitiesFor()
             return capabilities
         }

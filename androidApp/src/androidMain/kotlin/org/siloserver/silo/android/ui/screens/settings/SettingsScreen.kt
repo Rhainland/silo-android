@@ -73,6 +73,7 @@ import org.siloserver.silo.android.ui.util.formatBytes
 import org.siloserver.silo.model.download.DownloadQuality
 import org.koin.compose.koinInject
 import org.koin.compose.viewmodel.koinViewModel
+import org.siloserver.silo.common.settings.TitleArtStore
 import org.siloserver.silo.model.feature.MetadataAiFeatureStore
 import org.siloserver.silo.model.metadata.MetadataAiOnView
 
@@ -117,6 +118,11 @@ fun SettingsScreen(
     val diagnosticsState by diagnosticsViewModel.state.collectAsState()
     var showRemoveAllDownloadsConfirm by remember { mutableStateOf(false) }
     var showHomeSectionsEditor by remember { mutableStateOf(false) }
+    val titleArtStore: TitleArtStore = koinInject()
+    // Opening Settings is a refresh edge, so a title art choice made on
+    // another device shows here without waiting for the next foreground. Kept
+    // out of the LazyColumn item, which re-enters composition on scroll.
+    LaunchedEffect(titleArtStore) { titleArtStore.refresh() }
 
     LaunchedEffect(state.loggedOut) {
         if (state.loggedOut) {
@@ -312,7 +318,7 @@ fun SettingsScreen(
                         description = "Choose which Home rows are visible and the order they appear in.",
                         onClick = { showHomeSectionsEditor = true },
                     )
-                    TitleArtSettingsRows(store = koinInject())
+                    TitleArtSettingsRows(store = titleArtStore)
                 }
             }
 

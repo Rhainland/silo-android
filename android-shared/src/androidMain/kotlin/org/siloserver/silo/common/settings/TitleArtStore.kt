@@ -7,6 +7,9 @@ import org.siloserver.silo.domain.settings.TitleArtController
 import org.siloserver.silo.domain.settings.TitleArtPreference
 import org.siloserver.silo.network.AuthScopeSnapshot
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -33,6 +36,12 @@ enum class TitleArtSupport {
 data class TitleArtState(
     val support: TitleArtSupport = TitleArtSupport.Unknown,
     val preference: TitleArtPreference = TitleArtPreference(),
+    /**
+     * The server answered for this profile since the last identity change. A
+     * cached answer alone may be stale, and the main switch's scope comes from
+     * [appliesToAllDevices], so the switches wait for this.
+     */
+    val isConfirmed: Boolean = false,
 ) {
     /**
      * What title surfaces render. Anything short of a supporting server keeps
@@ -49,6 +58,9 @@ data class TitleArtState(
 
     /** Only a server that answered for the key gets the settings controls. */
     val isSupported: Boolean get() = support == TitleArtSupport.Supported
+
+    /** The switches accept changes only once the server has confirmed [preference]. */
+    val canEdit: Boolean get() = isSupported && isConfirmed
 }
 
 /**
@@ -62,8 +74,6 @@ data class TitleArtState(
  */
 interface TitleArtStore {
     val state: StateFlow<TitleArtState>
-    val isSaving: StateFlow<Boolean>
-    val lastError: StateFlow<String?>
 
     /**
      * What the settings screens show after a failed save, e.g. "Couldn't save
@@ -75,13 +85,17 @@ interface TitleArtStore {
     /** Idempotent first load; seeds from the last-known answer first. */
     suspend fun hydrateIfNeeded()
 
-    /** Re-probe capabilities and re-resolve the effective value. */
+    /**
+     * Re-probe capabilities and re-resolve the effective value. Joins a load
+     * already in flight for this identity instead of starting another.
+     */
     suspend fun refresh()
 
     /**
      * The main switch: applied locally at once, then written at `profile`
      * while the value applies to all devices, else at `profile_device`.
-     * Restores the last confirmed state if the write fails.
+     * Restores the last confirmed state if the write fails. Ignored until
+     * [TitleArtState.canEdit].
      */
     fun setShowTitleArt(show: Boolean)
 
@@ -126,12 +140,8 @@ class DefaultTitleArtStore private constructor(
     )
 
     private val _state = MutableStateFlow(TitleArtState())
-    private val _isSaving = MutableStateFlow(false)
-    private val _lastError = MutableStateFlow<String?>(null)
     private val _saveError = MutableStateFlow<String?>(null)
     override val state: StateFlow<TitleArtState> = _state.asStateFlow()
-    override val isSaving: StateFlow<Boolean> = _isSaving.asStateFlow()
-    override val lastError: StateFlow<String?> = _lastError.asStateFlow()
     override val saveError: StateFlow<String?> = _saveError.asStateFlow()
 
     private val lock = Any()
@@ -180,6 +190,13 @@ class DefaultTitleArtStore private constructor(
     private var refreshAfterWrites = false
 
     /**
+     * The load in flight for the current identity. Startup asks from several
+     * places at once (the identity collector, the shell, the foreground
+     * refresher); they share one capabilities and effective-values round trip.
+     */
+    private var inFlightLoad: Deferred<Unit>? = null
+
+    /**
      * Keeps one identity's writes in the order the user made them. Replaced at
      * every identity boundary, so a write still on the wire for the previous
      * server or profile never holds back the next one's saves.
@@ -200,10 +217,21 @@ class DefaultTitleArtStore private constructor(
 
     override suspend fun hydrateIfNeeded() {
         if (hasHydrated) return
-        refresh()
+        load()
     }
 
-    override suspend fun refresh() = refresh(keepError = false)
+    override suspend fun refresh() = load()
+
+    private suspend fun load() {
+        // Lazy, so the load starts outside the lock (Main.immediate would
+        // otherwise run it inline while the lock is held).
+        val load = synchronized(lock) {
+            inFlightLoad?.takeUnless { it.isCompleted }
+                ?: scope.async(start = CoroutineStart.LAZY) { refresh(keepError = false) }
+                    .also { inFlightLoad = it }
+        }
+        load.await()
+    }
 
     /** [keepError]: a re-read after writes keeps their outcome (a failure stays reported). */
     private suspend fun refresh(keepError: Boolean) {
@@ -223,12 +251,12 @@ class DefaultTitleArtStore private constructor(
         seedFromCache(identity, startGeneration)
         val resolved = when (val result = controller.load(authority)) {
             is TitleArtController.LoadResult.Supported ->
-                TitleArtState(TitleArtSupport.Supported, result.preference)
-            TitleArtController.LoadResult.Unsupported -> TitleArtState(TitleArtSupport.Unsupported)
+                TitleArtState(TitleArtSupport.Supported, result.preference, isConfirmed = true)
+            TitleArtController.LoadResult.Unsupported ->
+                TitleArtState(TitleArtSupport.Unsupported, isConfirmed = true)
             is TitleArtController.LoadResult.Failed -> {
                 synchronized(lock) {
                     if (generation != startGeneration) return@synchronized
-                    _lastError.value = result.message
                     if (_state.value.support == TitleArtSupport.Unknown) {
                         _state.value = TitleArtState(TitleArtSupport.Unavailable)
                     }
@@ -252,10 +280,7 @@ class DefaultTitleArtStore private constructor(
             confirmedIdentity = identity
             _state.value = resolved
             confirmed = resolved
-            if (!keepError) {
-                _lastError.value = null
-                _saveError.value = null
-            }
+            if (!keepError) _saveError.value = null
             hasHydrated = true
             true
         }
@@ -308,8 +333,9 @@ class DefaultTitleArtStore private constructor(
         val writes: Mutex
         synchronized(lock) {
             val current = _state.value
-            // Never write to a server that has not confirmed the key.
-            if (!current.isSupported) return
+            // Never write to a server that has not confirmed the key, nor
+            // pick a scope from a cached answer the server has not re-read.
+            if (!current.canEdit) return
             before = current.preference
             optimistic = next(before)
             if (optimistic == before) return
@@ -318,7 +344,6 @@ class DefaultTitleArtStore private constructor(
             request = ++requestCounter
             mutationEpoch += 1
             pendingWrites += 1
-            _isSaving.value = true
             _state.value = current.copy(preference = optimistic)
         }
         // The store owns the write, so leaving the screen cannot strand an
@@ -334,7 +359,7 @@ class DefaultTitleArtStore private constructor(
                     if (generation != startGeneration || request <= droppedThrough) return@withLock null
                     confirmedAuthority
                 }
-                if (authority == null || (readFor != null && !authority.isSameProfileAs(readFor))) {
+                if (authority == null || readFor == null || !authority.isSameProfileAs(readFor)) {
                     TitleArtController.WriteResult.Failed(IDENTITY_CHANGED)
                 } else {
                     write(before, authority)
@@ -344,7 +369,6 @@ class DefaultTitleArtStore private constructor(
             val persisted = synchronized(lock) {
                 if (generation != startGeneration) return@synchronized false
                 pendingWrites = (pendingWrites - 1).coerceAtLeast(0)
-                _isSaving.value = pendingWrites > 0
                 if (pendingWrites == 0 && refreshAfterWrites) {
                     refreshAfterWrites = false
                     refreshNow = true
@@ -356,8 +380,8 @@ class DefaultTitleArtStore private constructor(
                         confirmed = TitleArtState(
                             TitleArtSupport.Supported,
                             result.resolved ?: optimistic,
+                            isConfirmed = true,
                         )
-                        _lastError.value = null
                         _saveError.value = null
                         if (requestCounter == request) {
                             mutationEpoch += 1
@@ -367,7 +391,6 @@ class DefaultTitleArtStore private constructor(
                         result.resolved != null
                     }
                     is TitleArtController.WriteResult.Failed -> {
-                        _lastError.value = result.message
                         _saveError.value = saveErrorText(result.message)
                         // Every change queued behind this one was built on its
                         // unsaved state (which scope to write, which value to
@@ -413,11 +436,12 @@ class DefaultTitleArtStore private constructor(
         confirmedIdentity = null
         pendingWrites = 0
         refreshAfterWrites = false
+        // A load still running for the previous identity bails on the
+        // generation check; the next caller starts a fresh one.
+        inFlightLoad = null
         // The previous identity's write may still be on the wire; it keeps its
         // own lock and its completion bails on the generation check.
         writeLock = Mutex()
-        _isSaving.value = false
-        _lastError.value = null
         _saveError.value = null
     }
 
@@ -434,9 +458,17 @@ class DefaultTitleArtStore private constructor(
         fun saveErrorText(message: String?): String =
             "Couldn't save title art" + (message?.takeIf { it.isNotBlank() }?.let { ": $it" } ?: ".")
 
-        /** Same signed-in server identity and the same profile. */
+        /**
+         * Same server, signed-in account and profile. Not
+         * [AuthScopeSnapshot.isSameIdentityAs]: its identity generation also
+         * moves when a remote-playback overlay starts or ends, which leaves
+         * the profile a toggle addresses unchanged. A real profile or server
+         * switch resets the store before the write runs.
+         */
         private fun AuthScopeSnapshot.isSameProfileAs(other: AuthScopeSnapshot): Boolean =
-            isSameIdentityAs(other) && profileId == other.profileId
+            serverId == other.serverId &&
+                credentialEpoch == other.credentialEpoch &&
+                profileId == other.profileId
 
         /** Test seam: no Android Context, in-memory cache. */
         internal fun forTest(
@@ -482,7 +514,7 @@ internal class InMemoryTitleArtCache : TitleArtCache {
     override fun read(identity: String): TitleArtState? = synchronized(entries) { entries[identity] }
     override fun write(identity: String, state: TitleArtState) {
         if (state.support != TitleArtSupport.Supported && state.support != TitleArtSupport.Unsupported) return
-        synchronized(entries) { entries[identity] = state }
+        synchronized(entries) { entries[identity] = state.copy(isConfirmed = false) }
     }
 }
 
@@ -520,11 +552,7 @@ private class SharedPreferencesTitleArtCache(
         }
     }
 
-    private fun prefix(identity: String): String =
-        "ta_" + java.security.MessageDigest.getInstance("SHA-256")
-            .digest(identity.toByteArray(Charsets.UTF_8))
-            .joinToString(separator = "") { "%02x".format(it) }
-            .take(24)
+    private fun prefix(identity: String): String = settingsCachePrefix("ta_", identity)
 
     private companion object {
         const val SUPPORTED = "supported"
