@@ -47,7 +47,8 @@ class SiloTvApplication : Application(), Configuration.Provider, SingletonImageL
         runCatching {
             koinApp.koin.get<org.siloserver.silo.repository.ProfileVerificationRecovery>()
         }.onFailure {
-            android.util.Log.w("SiloTvApplication", "Profile verification recovery init failed", it)
+            // Class name only: the exception chain can carry auth or server data.
+            android.util.Log.w("SiloTvApplication", "Profile verification recovery init failed: ${it::class.simpleName}")
         }
         // Live-home socket (Apple realtime-updates spec). Guarded — a dead
         // socket just means Home refreshes on open only.
