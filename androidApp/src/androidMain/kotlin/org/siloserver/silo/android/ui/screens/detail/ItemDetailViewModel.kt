@@ -17,6 +17,7 @@ import org.siloserver.silo.model.download.DownloadCapability
 import org.siloserver.silo.model.download.DownloadRecord
 import org.siloserver.silo.model.download.statusEnum
 import org.siloserver.silo.network.ApiResult
+import org.siloserver.silo.network.isAccessRefusal
 import org.siloserver.silo.model.catalog.isBookLikeItemType
 import org.siloserver.silo.metadata.DescriptionTranslationController
 import org.siloserver.silo.metadata.DescriptionTranslationPhase
@@ -448,7 +449,16 @@ class ItemDetailViewModel(
      * Deliberately NOT [loadDetail] — no loading flashes, and the user's
      * season selection is preserved.
      */
-    fun refreshOnReturn() {
+    fun refreshOnReturn() = quietRefresh(showAccessRefusal = false)
+
+    /**
+     * [refreshOnReturn] after the server reports an access change, except that
+     * a refusal ([isAccessRefusal]) replaces the detail with the error the
+     * initial load shows. Transient failures still keep the current detail.
+     */
+    fun refreshAfterAccessChange() = quietRefresh(showAccessRefusal = true)
+
+    private fun quietRefresh(showAccessRefusal: Boolean) {
         val current = _uiState.value.detail ?: return
         viewModelScope.launch {
             // Local overlay first: the player's final position write is already
@@ -467,8 +477,16 @@ class ItemDetailViewModel(
                         )
                     }
                 }
+                is ApiResult.Error -> if (showAccessRefusal && result.isAccessRefusal()) {
+                    _uiState.update {
+                        it.copy(
+                            isLoading = false,
+                            detail = null,
+                            error = result.message.ifBlank { "Failed to load details" },
+                        )
+                    }
+                }
                 // Quiet refresh: on failure keep showing what we have.
-                is ApiResult.Error,
                 is ApiResult.NetworkError -> Unit
             }
         }

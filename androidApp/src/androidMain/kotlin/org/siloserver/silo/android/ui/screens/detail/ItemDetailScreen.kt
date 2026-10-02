@@ -178,8 +178,9 @@ fun ItemDetailScreen(
     // resume we care about. refreshOnReturn() no-ops while detail is still
     // null, which covers the initial load.
     // The same quiet refresh when the server reports an access change, so
-    // availability, versions, and quality limits follow the new policy.
-    OnViewerAccessChanged(koinInject<AccessChangeSignals>()) { viewModel.refreshOnReturn() }
+    // availability, versions, and quality limits follow the new policy; a
+    // title the viewer can no longer see shows the unavailable state.
+    OnViewerAccessChanged(koinInject<AccessChangeSignals>()) { viewModel.refreshAfterAccessChange() }
     val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
     androidx.compose.runtime.DisposableEffect(lifecycleOwner) {
         val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
