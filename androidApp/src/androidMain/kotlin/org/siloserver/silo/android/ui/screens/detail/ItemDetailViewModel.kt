@@ -419,6 +419,10 @@ class ItemDetailViewModel(
                     _uiState.update {
                         it.copy(
                             isLoading = false,
+                            // The durable cache still holds a title the server
+                            // now refuses; drop the copy seedCachedDetail painted
+                            // so the screen shows the error, not stale actions.
+                            detail = if (result.isAccessRefusal()) null else it.detail,
                             error = result.message.ifBlank { "Failed to load details" },
                         )
                     }
