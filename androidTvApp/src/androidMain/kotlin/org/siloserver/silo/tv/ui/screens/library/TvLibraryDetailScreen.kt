@@ -180,6 +180,7 @@ fun TvLibraryDetailScreen(
                 showBrowseControls = true,
                 onSortKeySelected = viewModel::onSortKeySelected,
                 onFacetSelectionApplied = viewModel::onFacetSelectionApplied,
+                onPreserveFiltersChanged = viewModel::onPreserveFiltersChanged,
                 onContentUpFallbackChanged = onContentUpFallbackChanged,
                 onShuffle = onShuffleLibrary,
             )
@@ -365,6 +366,7 @@ private fun LibraryTab(
     showBrowseControls: Boolean = false,
     onSortKeySelected: (TvLibrarySortOption) -> Unit = {},
     onFacetSelectionApplied: (TvCatalogFacetSelection) -> Unit = {},
+    onPreserveFiltersChanged: ((Boolean) -> Unit)? = null,
     /** Shell hook for overriding D-pad Up while the A–Z rail holds focus. */
     onContentUpFallbackChanged: ((((Boolean) -> Boolean)?) -> Unit)? = null,
     onClearAudiobookGroup: (() -> Unit)? = null,
@@ -477,6 +479,8 @@ private fun LibraryTab(
             initial = state.browseFilter.facetSelection,
             onApply = onFacetSelectionApplied,
             onClose = { openPanel = null },
+            preserveEnabled = state.preserveFilters,
+            onPreserveChange = onPreserveFiltersChanged,
         )
         null -> Unit
     }

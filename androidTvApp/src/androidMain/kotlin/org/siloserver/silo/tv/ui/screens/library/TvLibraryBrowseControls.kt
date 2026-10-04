@@ -22,6 +22,8 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.ArrowUpward
+import androidx.compose.material.icons.filled.CheckBox
+import androidx.compose.material.icons.filled.CheckBoxOutlineBlank
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.ChevronLeft
@@ -389,6 +391,9 @@ fun TvBrowseFilterPanel(
     initial: TvCatalogFacetSelection,
     onApply: (TvCatalogFacetSelection) -> Unit,
     onClose: () -> Unit,
+    preserveEnabled: Boolean = false,
+    /** Shows the "Preserve sort & filters" row; null hides it (non-library grids). */
+    onPreserveChange: ((Boolean) -> Unit)? = null,
 ) {
     var draft by remember { mutableStateOf(initial) }
     // null = top-level facet list; non-null = that facet's value list.
@@ -482,6 +487,8 @@ fun TvBrowseFilterPanel(
                         firstRowFocusRequester = screenFocusRequester,
                         onOpenFacet = { openFacet = it },
                         onDraftChanged = { draft = it },
+                        preserveEnabled = preserveEnabled,
+                        onPreserveChange = onPreserveChange,
                         onDone = commitAndClose,
                     )
                     else -> FacetValuesScreen(
@@ -506,8 +513,12 @@ private fun FilterListScreen(
     firstRowFocusRequester: FocusRequester,
     onOpenFacet: (TvCatalogFacet) -> Unit,
     onDraftChanged: (TvCatalogFacetSelection) -> Unit,
+    preserveEnabled: Boolean,
+    onPreserveChange: ((Boolean) -> Unit)?,
     onDone: () -> Unit,
 ) {
+    // The toggle takes effect at once rather than on Done (tvOS `preserveRow`).
+    var preserve by remember { mutableStateOf(preserveEnabled) }
     if (availableFacets.isEmpty()) {
         Text(
             text = "No filters available",
@@ -564,6 +575,27 @@ private fun FilterListScreen(
         text = "OPTIONS",
         modifier = Modifier.padding(start = 12.dp, top = 14.dp, bottom = 4.dp),
     )
+    if (onPreserveChange != null) {
+        BrowsePanelRow(
+            onClick = {
+                preserve = !preserve
+                onPreserveChange(preserve)
+            },
+        ) { foreground ->
+            Icon(
+                imageVector = if (preserve) Icons.Filled.CheckBox else Icons.Filled.CheckBoxOutlineBlank,
+                contentDescription = null,
+                tint = foreground,
+                modifier = Modifier.size(15.dp),
+            )
+            Text(
+                text = "Preserve sort & filters",
+                style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp, lineHeight = 17.sp),
+                color = foreground,
+                maxLines = 1,
+            )
+        }
+    }
     BrowsePanelRow(
         onClick = {
             if (draft.canReset) onDraftChanged(TvCatalogFacetSelection())

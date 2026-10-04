@@ -2,6 +2,7 @@ package org.siloserver.silo.tv.ui.screens.library
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import org.siloserver.silo.common.settings.BrowsePrefsStore
 import org.siloserver.silo.model.catalog.AudiobookGroup
 import org.siloserver.silo.model.catalog.BrowseItem
 import org.siloserver.silo.model.catalog.CatalogQueryGroup
@@ -163,6 +164,7 @@ class TvLibraryDetailViewModel(
     private val libraryTitle: String,
     private val libraryType: String,
     private val mediaScope: String? = null,
+    private val browsePrefs: BrowsePrefsStore? = null,
 ) : ViewModel() {
 
     data class UiState(
@@ -192,12 +194,15 @@ class TvLibraryDetailViewModel(
         val collectionSections: List<TvCollectionSection> = emptyList(),
         val collectionsLoading: Boolean = false,
         val collectionsError: String? = null,
+        /** "Preserve sort & filters" for this library's Browse grid (default ON). */
+        val preserveFilters: Boolean = true,
     )
 
     private val _uiState = MutableStateFlow(
         UiState(
             title = libraryTitle,
             libraryType = libraryType,
+            preserveFilters = browsePrefs?.preserveEnabled(libraryId) ?: true,
         ),
     )
     val uiState: StateFlow<UiState> = _uiState.asStateFlow()
@@ -395,12 +400,31 @@ class TvLibraryDetailViewModel(
         loadAudiobookGroups(groupBy = groupBy, reset = true)
     }
 
+    /**
+     * Turning preserve off clears the saved state; turning it on saves the
+     * current Browse sort and filters at once (tvOS `setPreserveEnabled`).
+     */
+    fun onPreserveFiltersChanged(enabled: Boolean) {
+        browsePrefs?.setPreserveEnabled(libraryId, enabled)
+        _uiState.update { it.copy(preserveFilters = enabled) }
+        if (enabled) saveBrowseFilter(_uiState.value)
+    }
+
     private fun updateBrowseFilter(filter: TvLibraryBrowseFilter) {
-        if (_uiState.value.browseFilter == filter) return
+        val previous = _uiState.value.browseFilter
+        if (previous == filter) return
         _uiState.update { it.copy(browseFilter = filter) }
+        if (previous.toSavedState() != filter.toSavedState()) saveBrowseFilter(_uiState.value)
         if (_uiState.value.selectedTab == TvLibraryTab.Browse || loadedBrowse) {
             loadBrowse(reset = true)
         }
+    }
+
+    // Only the Browse grid's own sort and filters persist; the other grid
+    // sections are fixed presets.
+    private fun saveBrowseFilter(state: UiState) {
+        if (state.selectedTab != TvLibraryTab.Browse) return
+        browsePrefs?.saveState(libraryId, state.browseFilter.toSavedState())
     }
 
     private var recommendedGeneration = 0L
@@ -804,8 +828,9 @@ class TvLibraryDetailViewModel(
         when (tab) {
             TvLibraryTab.Recommended,
             TvLibraryTab.Collections -> this
-            // Browse lands on the tvOS default view: Title A–Z, no facets.
-            TvLibraryTab.Browse -> copy(
+            // Browse restores the saved sort and filters, else lands on the
+            // tvOS default view: Title A–Z, no facets.
+            TvLibraryTab.Browse -> browsePrefs?.savedState(libraryId)?.toTvBrowseFilter() ?: copy(
                 genre = null,
                 namePrefix = null,
                 sort = TvLibrarySortOption.Title.wireValue,
