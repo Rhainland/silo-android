@@ -400,9 +400,16 @@ private fun LibraryTab(
     )
 
     if (state.browseError != null) {
+        // The error replaces the Sort/Filter row, and Retry resends the same
+        // query. A saved filter the server rejects would otherwise keep
+        // Browse failing across restarts, so offer to clear it here; that
+        // also overwrites the saved state.
+        val canClearFilters = showBrowseControls && state.browseFilter.facetSelection.canReset
         TvErrorScreen(
             message = state.browseError,
             onRetry = onRetry,
+            secondaryActionLabel = "Clear filters".takeIf { canClearFilters },
+            onSecondaryAction = { onFacetSelectionApplied(TvCatalogFacetSelection()) }.takeIf { canClearFilters },
             modifier = Modifier.padding(
                 start = Spacing.safeArea,
                 top = TvTopMenuLayout.contentTopInset,

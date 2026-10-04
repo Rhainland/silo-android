@@ -119,6 +119,26 @@ class TvLibraryBrowsePrefsTest {
         assertEquals("year", prefs.savedState(LIBRARY_ID)?.sort)
     }
 
+    @Test
+    fun clearingFiltersReplacesARestoredFilterButKeepsTheSort() = runPrefsTest {
+        val prefs = BrowsePrefsStore(ApplicationProvider.getApplicationContext(), FakeServerRegistry(), "androidtv")
+        val first = viewModel(prefs)
+        first.onTabSelected(TvLibraryTab.Browse)
+        first.onSortKeySelected(TvLibrarySortOption.Year)
+        first.onFacetSelectionApplied(
+            TvCatalogFacetSelection().toggled(TvCatalogFacet.WatchStatus, TvWatchStatusFilter.Unwatched.wireValue),
+        )
+
+        // The Browse error screen's Clear filters action, after a restart.
+        val second = viewModel(prefs)
+        second.onTabSelected(TvLibraryTab.Browse)
+        second.onFacetSelectionApplied(TvCatalogFacetSelection())
+
+        val saved = prefs.savedState(LIBRARY_ID)
+        assertEquals(emptyMap(), saved?.selections)
+        assertEquals("year", saved?.sort)
+    }
+
     private val createdViewModels = mutableListOf<TvLibraryDetailViewModel>()
 
     private fun runPrefsTest(block: suspend () -> Unit) = runTest {
