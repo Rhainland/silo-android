@@ -249,6 +249,8 @@ fun PlayerScreen(
     // party. When set, a WatchPartyPlayback binds this player to the room and
     // the room's playback context, not the route, decides what plays.
     roomId: String? = null,
+    // The running shuffle this item is a pick of (see PlayerViewModel.attachShuffle).
+    shuffleId: String? = null,
     navController: NavHostController,
     viewModel: PlayerViewModel = koinViewModel(),
 ) {
@@ -841,6 +843,7 @@ fun PlayerScreen(
         // the route, so nothing plays solo first.
         if (inRoom) return@LaunchedEffect
         if (!viewModel.claimInitialRouteLoad()) return@LaunchedEffect
+        viewModel.attachShuffle(shuffleId)
         viewModel.loadContent(
             libraryId = libraryId,
             contentId = contentId,

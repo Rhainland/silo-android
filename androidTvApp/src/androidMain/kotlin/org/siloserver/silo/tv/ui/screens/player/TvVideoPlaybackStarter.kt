@@ -33,6 +33,7 @@ import org.siloserver.silo.model.playback.applyResumeRewind
 import org.siloserver.silo.model.playback.buildPlaybackSubtitleChoices
 import org.siloserver.silo.model.playback.enrichAuthoritativePlaybackSubtitleChoices
 import org.siloserver.silo.model.playback.isExplicitStartOver
+import org.siloserver.silo.playback.firstPlaybackPart
 import org.siloserver.silo.model.playback.resolvePlaybackStartRequestPosition
 import org.siloserver.silo.model.playback.resolvePlaybackStartPosition
 import org.siloserver.silo.network.ApiResult
@@ -128,6 +129,7 @@ class TvVideoPlaybackStarter(
                 targetVersions = watchDetail.versions,
                 targetLastFileId = watchDetail.userData?.lastFileId,
                 preferredQuality = preferredQuality,
+                fromBeginning = isExplicitStartOver(request.resumePositionOverride),
             )
             val version = watchDetail.versions.first { it.fileId == resolvedEpisodeSelection.fileId }
             // The server rejects -1, while the Ready result retains it for the
@@ -519,6 +521,8 @@ fun resolveTvPlaybackStartSelection(
     targetVersions: List<FileVersion>,
     targetLastFileId: Int?,
     preferredQuality: String?,
+    /** A start from the beginning opens a multi-part item at its first part. */
+    fromBeginning: Boolean = false,
 ): ResolvedEpisodeSelection {
     require(targetVersions.isNotEmpty()) { "targetVersions must not be empty" }
 
@@ -530,7 +534,9 @@ fun resolveTvPlaybackStartSelection(
         ?.let { preferredId -> targetVersions.firstOrNull { it.fileId == preferredId } }
         ?: semanticFileId
             ?.let { handoffFileId -> targetVersions.firstOrNull { it.fileId == handoffFileId } }
-        ?: selectPlaybackVersion(targetVersions, targetLastFileId, preferredQuality)
+        ?: selectPlaybackVersion(targetVersions, targetLastFileId, preferredQuality).let { selected ->
+            if (fromBeginning) firstPlaybackPart(targetVersions, selected) else selected
+        }
     val resolvedSubtitle = resolveEpisodeSubtitleIntent(
         intent = episodeSelectionHandoff?.subtitle ?: EpisodeSubtitleIntent.auto(),
         targetSubtitles = buildPlaybackSubtitleChoices(

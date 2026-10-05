@@ -36,6 +36,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Bedtime
+import androidx.compose.material.icons.filled.Shuffle
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -276,11 +277,13 @@ fun TvPlayerScreen(
     // False while Navigation fades this screen in or out. True Black Bars
     // keeps the black plate meanwhile (see `clearBars`).
     navigationSettled: Boolean = true,
+    // The running shuffle this item is a pick of; picks play from the beginning.
+    shuffleId: String? = null,
     // Scope the ViewModel key by fileId too so switching 4K <-> 1080p on
     // the detail screen and replaying actually spins up a fresh player
     // session instead of reusing the cached one bound to the first fileId.
     viewModel: TvPlayerViewModel = koinViewModel(
-        key = "tv-player-$contentId-$libraryId-${preferredFileId ?: "auto"}-${preferredQuality ?: "quality-auto"}-${roomId ?: "solo"}-${resumePositionOverride ?: "server"}-${initialAudioTrackIndex ?: "a"}-${initialSubtitleTrackIndex ?: "s"}",
+        key = "tv-player-$contentId-$libraryId-${preferredFileId ?: "auto"}-${preferredQuality ?: "quality-auto"}-${roomId ?: "solo"}-${resumePositionOverride ?: "server"}-${initialAudioTrackIndex ?: "a"}-${initialSubtitleTrackIndex ?: "s"}-${shuffleId ?: "in-order"}",
         parameters = {
             parametersOf(
                 TvPlayerLaunchArgs(
@@ -296,6 +299,7 @@ fun TvPlayerScreen(
                     initialSubtitleAutoResolved = initialSubtitleAutoResolved,
                     autoAdvanceCount = autoAdvanceCount,
                     episodeSelectionHandoff = episodeSelectionHandoff,
+                    shuffleId = shuffleId,
                 ),
             )
         },
@@ -2379,6 +2383,7 @@ fun TvPlayerScreen(
             hudOpen = state.hudOpen,
             showNextUp = state.showNextUp,
             nextEpisode = state.nextEpisode,
+            shuffle = state.shuffle,
             nextUpVideoEnded = state.nextUpVideoEnded,
             nextUpCountdownSeconds = state.nextUpCountdownSeconds,
             nextUpCountdownTotalSeconds = state.nextUpCountdownTotalSeconds,
@@ -2400,6 +2405,12 @@ fun TvPlayerScreen(
             ),
             onPlayNextNow = viewModel::playNextEpisodeNow,
             onKeepWatching = viewModel::dismissNextUp,
+            onPickAnother = viewModel::pickAnotherShuffle,
+            onStopShuffling = {
+                // Stop shuffling leaves the player, back to where the shuffle started.
+                viewModel.stopShuffling()
+                stopPlaybackAndExit()
+            },
             onToggleAutoPlayNext = { viewModel.onSetAutoPlayNext(!autoPlayNextEnabled) },
             onExitPlayback = { stopPlaybackAndExit() },
             onNextUpVideoBoundsChanged = { nextUpVideoBounds = it },
@@ -3051,6 +3062,11 @@ private fun TvPlayerNextUpOverlay(
     onToggleAutoPlay: () -> Unit,
     onBack: () -> Unit,
     onVideoBoundsChanged: (Rect) -> Unit,
+    // Set while a shuffle plays: the next item is a random pick, and the
+    // viewer can pick another or stop shuffling.
+    shuffle: TvShuffleUiState? = null,
+    onPickAnother: () -> Unit = {},
+    onStopShuffling: () -> Unit = {},
 ) {
     val primaryFocus = remember { FocusRequester() }
     var upNextHasFocus by remember { mutableStateOf(false) }
@@ -3096,8 +3112,32 @@ private fun TvPlayerNextUpOverlay(
                 modifier = Modifier.weight(1f),
                 verticalArrangement = Arrangement.spacedBy(20.dp),
             ) {
+                shuffle?.scopeLabel?.let { scope ->
+                    Row(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(percent = 50))
+                            .background(Color.White.copy(alpha = 0.10f))
+                            .padding(horizontal = 14.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        androidx.tv.material3.Icon(
+                            imageVector = Icons.Filled.Shuffle,
+                            contentDescription = null,
+                            tint = Color.White.copy(alpha = 0.75f),
+                            modifier = Modifier.size(16.dp),
+                        )
+                        androidx.tv.material3.Text(
+                            text = "Shuffling $scope",
+                            color = Color.White.copy(alpha = 0.75f),
+                            style = androidx.tv.material3.MaterialTheme.typography.labelLarge,
+                            maxLines = 1,
+                        )
+                    }
+                }
                 val eyebrow = when {
                     nextEpisode == null -> if (videoEnded) "Finished" else "More To Watch"
+                    shuffle != null -> "Up Next at Random"
                     videoEnded -> "Playing Next"
                     else -> "Up Next"
                 }
@@ -3109,15 +3149,18 @@ private fun TvPlayerNextUpOverlay(
 
                 if (nextEpisode != null) {
                     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        nextEpisode.seriesTitle?.takeIf { it.isNotBlank() }?.let { seriesTitle ->
+                        // A shuffled movie has no series line; its own title heads the panel.
+                        val heading = nextEpisode.seriesTitle?.takeIf { it.isNotBlank() }
+                            ?: nextEpisode.title.takeUnless { nextEpisode.isEpisode }
+                        heading?.let { title ->
                             androidx.tv.material3.Text(
-                                text = seriesTitle,
+                                text = title,
                                 color = Color.White,
                                 style = androidx.tv.material3.MaterialTheme.typography.headlineSmall,
                                 maxLines = 1,
                             )
                         }
-                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        if (nextEpisode.isEpisode) Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                             androidx.tv.material3.Text(
                                 text = "S${nextEpisode.seasonNumber}·E${nextEpisode.episodeNumber}",
                                 color = Color.White.copy(alpha = 0.62f),
@@ -3166,6 +3209,14 @@ private fun TvPlayerNextUpOverlay(
                         }
                     }
 
+                    if (shuffle != null) {
+                        TvDialogActionRow(
+                            title = "Pick Another",
+                            onClick = onPickAnother,
+                            enabled = !shuffle.pickingAnother,
+                            modifier = Modifier.width(260.dp),
+                        )
+                    }
                     if (!videoEnded) {
                         TvDialogActionRow(
                             title = "Keep Watching",
@@ -3178,21 +3229,49 @@ private fun TvPlayerNextUpOverlay(
                         onClick = onBack,
                         modifier = Modifier.width(160.dp),
                     )
+                    shuffle?.message?.let { message ->
+                        androidx.tv.material3.Text(
+                            text = message,
+                            color = Color(0xFFFFB4AB),
+                            style = androidx.tv.material3.MaterialTheme.typography.bodyMedium,
+                        )
+                    }
                     // Interactive toggle (was a dead focusable): OK flips
                     // auto-play; focus inverts the pill so the D-pad stop is
                     // visible.
                     var autoPlayToggleFocused by remember { mutableStateOf(false) }
-                    androidx.tv.material3.Text(
-                        text = "Auto-play is ${if (autoPlayEnabled) "On" else "Off"}",
-                        color = if (autoPlayToggleFocused) Color.Black else Color.White.copy(alpha = 0.54f),
-                        style = androidx.tv.material3.MaterialTheme.typography.labelMedium,
-                        modifier = Modifier
-                            .onFocusChanged { autoPlayToggleFocused = it.isFocused }
-                            .clip(RoundedCornerShape(percent = 50))
-                            .background(if (autoPlayToggleFocused) Color.White else Color.Transparent)
-                            .clickable { onToggleAutoPlay() }
-                            .padding(horizontal = 12.dp, vertical = 4.dp),
-                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        androidx.tv.material3.Text(
+                            text = "Auto-play is ${if (autoPlayEnabled) "On" else "Off"}",
+                            color = if (autoPlayToggleFocused) Color.Black else Color.White.copy(alpha = 0.54f),
+                            style = androidx.tv.material3.MaterialTheme.typography.labelMedium,
+                            modifier = Modifier
+                                .onFocusChanged { autoPlayToggleFocused = it.isFocused }
+                                .clip(RoundedCornerShape(percent = 50))
+                                .background(if (autoPlayToggleFocused) Color.White else Color.Transparent)
+                                .clickable { onToggleAutoPlay() }
+                                .padding(horizontal = 12.dp, vertical = 4.dp),
+                        )
+                        if (shuffle != null) {
+                            var stopFocused by remember { mutableStateOf(false) }
+                            androidx.tv.material3.Text(
+                                text = "·",
+                                color = Color.White.copy(alpha = 0.54f),
+                                style = androidx.tv.material3.MaterialTheme.typography.labelMedium,
+                            )
+                            androidx.tv.material3.Text(
+                                text = "Stop shuffling",
+                                color = if (stopFocused) Color.Black else Color.White.copy(alpha = 0.54f),
+                                style = androidx.tv.material3.MaterialTheme.typography.labelMedium,
+                                modifier = Modifier
+                                    .onFocusChanged { stopFocused = it.isFocused }
+                                    .clip(RoundedCornerShape(percent = 50))
+                                    .background(if (stopFocused) Color.White else Color.Transparent)
+                                    .clickable { onStopShuffling() }
+                                    .padding(horizontal = 12.dp, vertical = 4.dp),
+                            )
+                        }
+                    }
                 } else {
                     // Finished / no-next-episode state.
                     androidx.tv.material3.Text(
@@ -3201,7 +3280,7 @@ private fun TvPlayerNextUpOverlay(
                         style = androidx.tv.material3.MaterialTheme.typography.headlineSmall,
                     )
                     androidx.tv.material3.Text(
-                        text = "No next episode is available.",
+                        text = if (shuffle != null) "Nothing else in this shuffle can play." else "No next episode is available.",
                         color = Color.White.copy(alpha = 0.62f),
                         style = androidx.tv.material3.MaterialTheme.typography.bodyMedium,
                     )
@@ -3467,8 +3546,9 @@ private fun TvPlayerViewModel.UiState.toSiloCastPlaybackState(
         supportsSubtitlePosition = true,
         volume = volumeState.volume,
         isMuted = volumeState.isMuted,
-        hasNextEpisode = nextEpisode != null,
-        nextEpisodeTitle = nextEpisode?.title,
+        // A shuffle replaces the series order: the remote offers no sequential next.
+        hasNextEpisode = nextEpisode != null && shuffle == null,
+        nextEpisodeTitle = nextEpisode?.title?.takeIf { shuffle == null },
         error = error,
     )
 }
@@ -3559,6 +3639,7 @@ private fun TvPlayerOverlays(
     nextUpVideoEnded: Boolean,
     nextUpCountdownSeconds: Int?,
     nextUpCountdownTotalSeconds: Int,
+    shuffle: TvShuffleUiState?,
     autoPlayNextEnabled: Boolean,
     introSkipState: IntroAutoSkipState,
     /** Bumps when the pill's timer (re)starts, so its fill re-anchors. */
@@ -3575,6 +3656,8 @@ private fun TvPlayerOverlays(
     showSpinner: Boolean,
     onPlayNextNow: () -> Unit,
     onKeepWatching: () -> Unit,
+    onPickAnother: () -> Unit,
+    onStopShuffling: () -> Unit,
     onToggleAutoPlayNext: () -> Unit,
     onExitPlayback: () -> Unit,
     onNextUpVideoBoundsChanged: (Rect) -> Unit,
@@ -3766,6 +3849,9 @@ private fun TvPlayerOverlays(
                     onToggleAutoPlay = onToggleAutoPlayNext,
                     onBack = onExitPlayback,
                     onVideoBoundsChanged = onNextUpVideoBoundsChanged,
+                    shuffle = shuffle,
+                    onPickAnother = onPickAnother,
+                    onStopShuffling = onStopShuffling,
                 )
             }
         }

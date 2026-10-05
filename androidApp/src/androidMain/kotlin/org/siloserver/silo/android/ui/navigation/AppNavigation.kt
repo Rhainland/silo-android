@@ -1155,6 +1155,14 @@ fun AppNavigation(
             CollectionDetailScreen(
                 collectionId = backStackEntry.arguments?.getString("collectionId") ?: "",
                 onBackClick = { navController.popBackStack() },
+                onShuffleStarted = { shuffle ->
+                    navController.navigate(
+                        org.siloserver.silo.android.ui.screens.shuffle.shufflePlayerRoute(
+                            shuffle,
+                            backStackEntry.arguments?.getString("libraryId")?.toIntOrNull(),
+                        ),
+                    )
+                },
                 onItemClick = { contentId ->
                     navController.navigate(
                         Route.ItemDetail(
@@ -1276,6 +1284,11 @@ fun AppNavigation(
                     resolvedSeason = seasonNumber
                     resolvedEpisodeId = episodeId
                     resolvedSeriesId = seriesId
+                },
+                onShuffleStarted = { shuffle ->
+                    navController.navigate(
+                        org.siloserver.silo.android.ui.screens.shuffle.shufflePlayerRoute(shuffle, libraryId),
+                    )
                 },
                 onPersonClick = { personId ->
                     personId.toLongOrNull()?.let { id ->
@@ -1471,6 +1484,11 @@ fun AppNavigation(
                     nullable = true
                     defaultValue = null
                 },
+                navArgument("shuffleId") {
+                    type = NavType.StringType
+                    nullable = true
+                    defaultValue = null
+                },
             ),
         ) { backStackEntry ->
             val playerViewModel = koinViewModel<PlayerViewModel>()
@@ -1499,6 +1517,7 @@ fun AppNavigation(
                     backStackEntry.arguments?.getString("resumePosition"),
                 ),
                 roomId = backStackEntry.arguments?.getString("roomId"),
+                shuffleId = backStackEntry.arguments?.getString("shuffleId"),
                 navController = navController,
                 viewModel = playerViewModel,
             )

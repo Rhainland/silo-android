@@ -394,7 +394,8 @@ fun PlayerOverlay(
                 playbackSpeed = playbackSpeed,
                 // A party plays at 1x; the saved speed is never changed from it.
                 playbackSpeedEnabled = !inRoom,
-                nextEpisode = state.nextEpisode.takeUnless { inRoom },
+                // A shuffle replaces the series order: no sequential next episode.
+                nextEpisode = state.nextEpisode.takeUnless { inRoom || state.shuffle != null },
                 brightnessFraction = brightnessFraction,
                 seekEnabled = seekEnabled,
                 playPauseEnabled = playPauseEnabled,
@@ -482,7 +483,10 @@ fun PlayerOverlay(
             modifier = Modifier.zIndex(3f),
         ) {
             PlayerNextUpScreen(
-                nextEpisode = state.nextEpisode ?: retainedUpNextInfo,
+                // The retained card covers the fade-out only; a shuffle that
+                // can no longer play anything shows Finished while open.
+                nextEpisode = state.nextEpisode
+                    ?: retainedUpNextInfo.takeUnless { state.showUpNext && state.shuffle != null },
                 onVideoBoundsChanged = onNextUpVideoBoundsChanged,
                 onDeckItems = state.onDeckItems,
                 videoEnded = state.upNextVideoEnded,
@@ -497,6 +501,13 @@ fun PlayerOverlay(
                 onPlayOnDeckItem = viewModel::playOnDeckItemNow,
                 onBack = handleBack,
                 compactTabletop = tabletopMode,
+                shuffle = state.shuffle,
+                onPickAnother = viewModel::pickAnotherShuffle,
+                onStopShuffling = {
+                    // Stop shuffling leaves the player, back to where the shuffle started.
+                    viewModel.stopShuffling()
+                    handleBack()
+                },
             )
         }
 

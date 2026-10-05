@@ -138,10 +138,13 @@ fun ItemDetailScreen(
     // Auto-presents the cast remote after "Play on device" launches, mirroring
     // Apple's playOnTV: the connect/handoff handshake renders in the remote.
     onOpenCastRemote: () -> Unit = {},
+    // Plays the first pick of a shuffle started from the series overflow menu.
+    onShuffleStarted: (org.siloserver.silo.model.shuffle.Shuffle) -> Unit = {},
     viewModel: ItemDetailViewModel,
     modifier: Modifier = Modifier,
 ) {
     val state by viewModel.uiState.collectAsState()
+    val shuffleLauncher = org.siloserver.silo.android.ui.screens.shuffle.rememberShuffleLauncher(onShuffleStarted)
     val seriesRedirect = remember(state.detail) { state.detail?.let(::seriesDetailRedirect) }
     var seriesRedirectFailed by rememberSaveable(state.detail?.contentId) { mutableStateOf(false) }
     LaunchedEffect(seriesRedirect) {
@@ -741,6 +744,30 @@ fun ItemDetailScreen(
                             onSeasonSelected = { viewModel.selectSeason(it) },
                             onSeasonWatchedChange = { season, watched ->
                                 viewModel.setSeasonWatched(season, watched)
+                            },
+                            onShuffleSeries = if (
+                                shuffleLauncher.supports(org.siloserver.silo.model.shuffle.ShuffleScopeKind.SERIES)
+                            ) {
+                                {
+                                    shuffleLauncher.start(
+                                        org.siloserver.silo.model.shuffle.ShuffleScopeKind.SERIES,
+                                        detail.contentId,
+                                    )
+                                }
+                            } else {
+                                null
+                            },
+                            onShuffleSeason = if (
+                                shuffleLauncher.supports(org.siloserver.silo.model.shuffle.ShuffleScopeKind.SEASON)
+                            ) {
+                                { season ->
+                                    shuffleLauncher.start(
+                                        org.siloserver.silo.model.shuffle.ShuffleScopeKind.SEASON,
+                                        season.contentId,
+                                    )
+                                }
+                            } else {
+                                null
                             },
                             onFavoriteClick = { viewModel.toggleFavorite() },
                             onWatchlistClick = { viewModel.toggleWatchlist() },

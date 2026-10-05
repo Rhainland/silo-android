@@ -194,12 +194,18 @@ fun TvItemDetailScreen(
     onWatchParty: (WatchPartyDestination?) -> Unit,
     onOpenPerson: (personId: Long) -> Unit,
     onBack: () -> Unit,
+    // Plays the first pick of a shuffle started from the More menu.
+    onShuffleStarted: (org.siloserver.silo.model.shuffle.Shuffle) -> Unit = {},
     viewModel: TvItemDetailViewModel = koinViewModel(
         key = "item-detail-$contentId-$libraryId-${seasonNumber ?: "default"}-${initialEpisodeContentId ?: "default"}",
         parameters = { parametersOf(contentId, libraryId) },
     ),
 ) {
     val state by viewModel.uiState.collectAsState()
+    val shuffleLauncher = org.siloserver.silo.common.ui.rememberShuffleLauncher(
+        org.koin.compose.koinInject(),
+        onShuffleStarted,
+    )
     val seriesRedirect = remember(state.detail) {
         state.detail?.let(::tvSeriesDetailRedirect)
     }
@@ -327,6 +333,7 @@ fun TvItemDetailScreen(
             onSeasonClick = onSeasonClick,
             onWatchParty = onWatchParty,
             onOpenPerson = onOpenPerson,
+            shuffleLauncher = shuffleLauncher,
         )
     }
 }
@@ -347,6 +354,7 @@ private fun TvDetailContent(
     onSeasonClick: (seriesId: String, seasonNumber: Int) -> Unit,
     onWatchParty: (WatchPartyDestination?) -> Unit,
     onOpenPerson: (personId: Long) -> Unit,
+    shuffleLauncher: org.siloserver.silo.common.ui.ShuffleLauncher,
 ) {
     val playFocus = remember { FocusRequester() }
     // The circular Version control in the hero action cluster. Hoisted here so
@@ -864,6 +872,35 @@ private fun TvDetailContent(
                                     watchedSeason = state.seasons
                                         .firstOrNull { it.seasonNumber == state.selectedSeason }
                                         ?.takeIf { isSeriesDetail && !isShowingSeriesOverview && it.episodeCount > 0 },
+                                    onShuffleSeries = if (
+                                        isSeriesDetail &&
+                                        shuffleLauncher.supports(org.siloserver.silo.model.shuffle.ShuffleScopeKind.SERIES)
+                                    ) {
+                                        {
+                                            shuffleLauncher.start(
+                                                org.siloserver.silo.model.shuffle.ShuffleScopeKind.SERIES,
+                                                detail.contentId,
+                                            )
+                                        }
+                                    } else {
+                                        null
+                                    },
+                                    // Season mode offers the season on screen,
+                                    // hidden with fewer than two playable episodes.
+                                    shuffleSeason = state.seasons
+                                        .firstOrNull { it.seasonNumber == state.selectedSeason }
+                                        ?.takeIf { season ->
+                                            isSeriesDetail && !isShowingSeriesOverview && !state.episodesLoading &&
+                                                state.episodes.all { it.seasonNumber == season.seasonNumber } &&
+                                                org.siloserver.silo.model.shuffle.canShuffleSeason(state.episodes) &&
+                                                shuffleLauncher.supports(org.siloserver.silo.model.shuffle.ShuffleScopeKind.SEASON)
+                                        },
+                                    onShuffleSeason = { season ->
+                                        shuffleLauncher.start(
+                                            org.siloserver.silo.model.shuffle.ShuffleScopeKind.SEASON,
+                                            season.contentId,
+                                        )
+                                    },
                                 )
                             },
                         )
@@ -1512,6 +1549,9 @@ private fun HeroActionRow(
     libraryId: Int?,
     onWatchParty: (WatchPartyDestination?) -> Unit,
     watchedSeason: org.siloserver.silo.model.catalog.Season? = null,
+    onShuffleSeries: (() -> Unit)? = null,
+    shuffleSeason: org.siloserver.silo.model.catalog.Season? = null,
+    onShuffleSeason: (org.siloserver.silo.model.catalog.Season) -> Unit = {},
 ) {
     val watchPartyEntry = rememberTvWatchPartyDetailEntry()
     var moreOpen by remember(detail.contentId) { mutableStateOf(false) }
@@ -1790,6 +1830,31 @@ private fun HeroActionRow(
 
     if (moreOpen) {
         val options = buildList {
+            // Shuffle leads the menu, as on the web.
+            if (onShuffleSeries != null) {
+                add(
+                    TvDialogOption(
+                        key = "shuffle-series",
+                        title = "Shuffle Series",
+                        onClick = {
+                            moreOpen = false
+                            onShuffleSeries()
+                        },
+                    ),
+                )
+            }
+            shuffleSeason?.let { season ->
+                add(
+                    TvDialogOption(
+                        key = "shuffle-season",
+                        title = "Shuffle ${tvSeasonPickerLabel(season)}",
+                        onClick = {
+                            moreOpen = false
+                            onShuffleSeason(season)
+                        },
+                    ),
+                )
+            }
             add(
                 TvDialogOption(
                     key = "favorite",
@@ -1877,6 +1942,8 @@ private fun HeroActionRow(
             title = "More Actions",
             options = options,
             onDismiss = { moreOpen = false },
+            // Shuffle is first and takes focus over a selected toggle below it.
+            initialFocusKey = options.firstOrNull()?.key?.takeIf { it.startsWith("shuffle-") },
         )
     }
 
