@@ -292,7 +292,10 @@ internal fun TvLibraryBrowseFilter.toSavedState(): CatalogFilterState = CatalogF
     order = order,
 )
 
-/** Rebuilds the Browse filter from a saved state; unknown values are dropped. */
+/**
+ * Rebuilds the Browse filter from a saved state. Unknown watch-status and
+ * dynamic-range values are dropped; other facet values are restored as saved.
+ */
 internal fun CatalogFilterState.toTvBrowseFilter(): TvLibraryBrowseFilter {
     var selection = TvCatalogFacetSelection(matchAll = matchAll)
     for ((facet, values) in selections) {

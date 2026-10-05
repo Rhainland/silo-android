@@ -384,6 +384,12 @@ fun TvBrowseSortPanel(
 // Filter panel (list → values)
 // ============================================================================
 
+/** The library Browse "Preserve sort & filters" value and its change handler. */
+data class TvBrowsePreserveToggle(
+    val enabled: Boolean,
+    val onChange: (Boolean) -> Unit,
+)
+
 @Composable
 fun TvBrowseFilterPanel(
     libraryType: String,
@@ -391,9 +397,8 @@ fun TvBrowseFilterPanel(
     initial: TvCatalogFacetSelection,
     onApply: (TvCatalogFacetSelection) -> Unit,
     onClose: () -> Unit,
-    preserveEnabled: Boolean = false,
     /** Shows the "Preserve sort & filters" row; null hides it (non-library grids). */
-    onPreserveChange: ((Boolean) -> Unit)? = null,
+    preserve: TvBrowsePreserveToggle? = null,
 ) {
     var draft by remember { mutableStateOf(initial) }
     // null = top-level facet list; non-null = that facet's value list.
@@ -487,8 +492,7 @@ fun TvBrowseFilterPanel(
                         firstRowFocusRequester = screenFocusRequester,
                         onOpenFacet = { openFacet = it },
                         onDraftChanged = { draft = it },
-                        preserveEnabled = preserveEnabled,
-                        onPreserveChange = onPreserveChange,
+                        preserve = preserve,
                         onDone = commitAndClose,
                     )
                     else -> FacetValuesScreen(
@@ -513,12 +517,9 @@ private fun FilterListScreen(
     firstRowFocusRequester: FocusRequester,
     onOpenFacet: (TvCatalogFacet) -> Unit,
     onDraftChanged: (TvCatalogFacetSelection) -> Unit,
-    preserveEnabled: Boolean,
-    onPreserveChange: ((Boolean) -> Unit)?,
+    preserve: TvBrowsePreserveToggle?,
     onDone: () -> Unit,
 ) {
-    // The toggle takes effect at once rather than on Done (tvOS `preserveRow`).
-    var preserve by remember { mutableStateOf(preserveEnabled) }
     if (availableFacets.isEmpty()) {
         Text(
             text = "No filters available",
@@ -575,15 +576,13 @@ private fun FilterListScreen(
         text = "OPTIONS",
         modifier = Modifier.padding(start = 12.dp, top = 14.dp, bottom = 4.dp),
     )
-    if (onPreserveChange != null) {
+    if (preserve != null) {
+        // The toggle takes effect at once rather than on Done (tvOS `preserveRow`).
         BrowsePanelRow(
-            onClick = {
-                preserve = !preserve
-                onPreserveChange(preserve)
-            },
+            onClick = { preserve.onChange(!preserve.enabled) },
         ) { foreground ->
             Icon(
-                imageVector = if (preserve) Icons.Filled.CheckBox else Icons.Filled.CheckBoxOutlineBlank,
+                imageVector = if (preserve.enabled) Icons.Filled.CheckBox else Icons.Filled.CheckBoxOutlineBlank,
                 contentDescription = null,
                 tint = foreground,
                 modifier = Modifier.size(15.dp),

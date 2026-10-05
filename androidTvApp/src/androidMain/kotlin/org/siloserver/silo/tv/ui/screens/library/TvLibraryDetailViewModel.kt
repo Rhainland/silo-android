@@ -236,9 +236,6 @@ class TvLibraryDetailViewModel(
 
     fun onTabSelected(tab: TvLibraryTab) {
         val state = _uiState.value
-        val nextFilter = state.browseFilter.forTab(tab)
-        val filterChanged = nextFilter != state.browseFilter
-        val audiobookGroupBy = tab.audiobookGroupBy
         // Re-selecting the section that is already active is a no-op. The
         // screen re-issues the committed section every time it re-enters
         // composition — backing out of item detail / the player returns to a
@@ -247,6 +244,9 @@ class TvLibraryDetailViewModel(
         // and facets back to the tab's defaults (Title A–Z). Only a genuine
         // tab CHANGE applies the new tab's defaults.
         if (state.selectedTab == tab) return
+        val nextFilter = state.browseFilter.forTab(tab)
+        val filterChanged = nextFilter != state.browseFilter
+        val audiobookGroupBy = tab.audiobookGroupBy
         _uiState.update {
             it.copy(
                 selectedTab = tab,
@@ -414,7 +414,9 @@ class TvLibraryDetailViewModel(
         val previous = _uiState.value.browseFilter
         if (previous == filter) return
         _uiState.update { it.copy(browseFilter = filter) }
-        if (previous.toSavedState() != filter.toSavedState()) saveBrowseFilter(_uiState.value)
+        if (previous.sort != filter.sort || previous.order != filter.order || previous.facetSelection != filter.facetSelection) {
+            saveBrowseFilter(_uiState.value)
+        }
         if (_uiState.value.selectedTab == TvLibraryTab.Browse || loadedBrowse) {
             loadBrowse(reset = true)
         }

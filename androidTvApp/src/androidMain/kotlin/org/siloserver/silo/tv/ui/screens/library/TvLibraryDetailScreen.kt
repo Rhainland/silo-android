@@ -486,8 +486,7 @@ private fun LibraryTab(
             initial = state.browseFilter.facetSelection,
             onApply = onFacetSelectionApplied,
             onClose = { openPanel = null },
-            preserveEnabled = state.preserveFilters,
-            onPreserveChange = onPreserveFiltersChanged,
+            preserve = onPreserveFiltersChanged?.let { TvBrowsePreserveToggle(state.preserveFilters, it) },
         )
         null -> Unit
     }
