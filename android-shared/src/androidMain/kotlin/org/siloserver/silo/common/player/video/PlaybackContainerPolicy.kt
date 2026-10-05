@@ -7,9 +7,11 @@ package org.siloserver.silo.common.player.video
  * 192-byte BDAV packets, and Media3's `TsExtractor` reads only 188-byte
  * transport-stream packets, so no extractor recognizes them and direct play
  * fails with `ERROR_CODE_PARSING_CONTAINER_UNSUPPORTED`. Leaving them out
- * makes the server remux these files instead, which also keeps a download
- * from fetching original bytes this player cannot open. Add them back only
- * once Media3 supports 192-byte packets and a device test passes.
+ * makes the server remux these files for playback and for single-title and
+ * season downloads. A whole-series download at Original quality still fetches
+ * the original bytes, because the server does not check device capabilities
+ * for that batch. Add them back only once Media3 supports 192-byte packets
+ * and a device test passes.
  */
 val media3OriginalVideoContainers: List<String> =
     listOf(
