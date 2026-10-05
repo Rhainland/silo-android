@@ -883,6 +883,18 @@ fun AppNavigation(
 
         // ---- Profile selection ----
         composable(Route.ProfileSelection.route) {
+            // Switch Profile opens the picker above Main so Back can cancel it.
+            // Once profile recovery has cleared the selection (a stale PIN
+            // proof), Main has no profile to return to and every request there
+            // would fail, so Back leaves the app, as it does when the picker is
+            // the first screen.
+            val pickerActivity = androidx.activity.compose.LocalActivity.current
+            val selectedProfileId = serverRegistry.activeEntry.collectAsState().value?.profileId
+            androidx.activity.compose.BackHandler(
+                enabled = selectedProfileId.isNullOrBlank() && navController.previousBackStackEntry != null,
+            ) {
+                pickerActivity?.finish()
+            }
             ProfileSelectionScreen(
                 onNavigateToHome = {
                     // The switch-profile paths dropped the per-profile card

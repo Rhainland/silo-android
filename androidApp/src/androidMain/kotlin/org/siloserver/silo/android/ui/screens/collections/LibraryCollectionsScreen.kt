@@ -84,6 +84,9 @@ class LibraryCollectionsViewModel(
     private val sectionRepository: SectionRepository,
     savedStateHandle: SavedStateHandle,
 ) : ViewModel() {
+    /** Access changes this ViewModel has applied, kept while its screen is away. */
+    val accessChanges = org.siloserver.silo.network.AccessChangeCursor()
+
     private val libraryId: Int? = savedStateHandle.get<String>("libraryId")?.toIntOrNull()
     private val _uiState = MutableStateFlow(LibraryCollectionsUiState())
     val uiState: StateFlow<LibraryCollectionsUiState> = _uiState.asStateFlow()
@@ -202,7 +205,7 @@ fun LibraryCollectionsScreen(
     viewModel: LibraryCollectionsViewModel = koinViewModel(),
 ) {
     val state by viewModel.uiState.collectAsState()
-    OnViewerAccessChanged(koinInject<AccessChangeSignals>()) { viewModel.refresh() }
+    OnViewerAccessChanged(koinInject<AccessChangeSignals>(), viewModel.accessChanges) { viewModel.refresh() }
 
     androidx.compose.material3.Scaffold(
         topBar = {

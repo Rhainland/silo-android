@@ -51,7 +51,7 @@ fun CollectionsScreen(
     viewModel: CollectionsViewModel = koinViewModel(),
 ) {
     val state by viewModel.uiState.collectAsState()
-    OnViewerAccessChanged(koinInject<AccessChangeSignals>()) { viewModel.refresh() }
+    OnViewerAccessChanged(koinInject<AccessChangeSignals>(), viewModel.accessChanges) { viewModel.refresh() }
 
     Scaffold(
         topBar = {

@@ -263,7 +263,7 @@ fun TvItemDetailScreen(
     // The same quiet refresh when the server reports an access change, so
     // availability, versions, and quality limits follow the new policy; a
     // title the viewer can no longer see shows the unavailable state.
-    OnViewerAccessChanged(koinInject<AccessChangeSignals>()) { viewModel.refreshAfterAccessChange() }
+    OnViewerAccessChanged(koinInject<AccessChangeSignals>(), viewModel.accessChanges) { viewModel.refreshAfterAccessChange() }
     val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
     androidx.compose.runtime.DisposableEffect(lifecycleOwner) {
         val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->

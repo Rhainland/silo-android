@@ -12,7 +12,7 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.update
 import kotlin.time.TimeSource
@@ -69,13 +69,28 @@ class AccessChangeSignals(
      * that far apart: the first report refreshes at once, and reports within
      * [ACCESS_CHANGE_COALESCE_MS] of it are taken as the same change.
      */
-    val changes: Flow<Unit> = flow {
-        var lastEmitted: Long? = null
-        revision.drop(1).collect {
+    val changes: Flow<Unit> = flow { emitAll(changes(AccessChangeCursor())) }
+
+    /**
+     * [changes] for a holder that outlives its screen, such as a ViewModel
+     * whose screen leaves composition while another destination is in front.
+     * The [cursor] remembers which revision the holder has applied, so when
+     * collection resumes, a change reported while nothing was collecting
+     * refreshes at once instead of being skipped. Coalescing follows the
+     * cursor as well, so the second socket's report of a change already
+     * applied does not refresh again on return.
+     */
+    fun changes(cursor: AccessChangeCursor): Flow<Unit> = flow {
+        revision.collect { current ->
+            val applied = cursor.appliedRevision
+            if (applied != null && current <= applied) return@collect
+            cursor.appliedRevision = current
+            // The first collection starts from whatever the holder loaded.
+            if (applied == null) return@collect
             val now = nowMillis()
-            val last = lastEmitted
+            val last = cursor.lastRefreshAt
             if (last == null || now - last >= ACCESS_CHANGE_COALESCE_MS) {
-                lastEmitted = now
+                cursor.lastRefreshAt = now
                 emit(Unit)
             }
         }
@@ -99,6 +114,16 @@ class AccessChangeSignals(
         /** Frame `type` of the access-change notice on the events socket. */
         const val ACCESS_CHANGED_FRAME_TYPE = "access_changed"
     }
+}
+
+/**
+ * The access changes one holder has already applied; see
+ * [AccessChangeSignals.changes]. Keep one per ViewModel and collect it from one
+ * place at a time (the screen's main-thread effect).
+ */
+class AccessChangeCursor {
+    internal var appliedRevision: Long? = null
+    internal var lastRefreshAt: Long? = null
 }
 
 private fun monotonicMillis(): () -> Long {

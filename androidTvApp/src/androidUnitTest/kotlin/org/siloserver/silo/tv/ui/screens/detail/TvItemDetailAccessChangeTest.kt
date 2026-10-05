@@ -10,6 +10,7 @@ import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.headersOf
 import io.ktor.serialization.kotlinx.json.json
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.cancel
@@ -94,6 +95,42 @@ class TvItemDetailAccessChangeTest {
         assertTrue(viewModel.uiState.value.error != null)
     }
 
+    @Test
+    fun `an access change during the first load replaces it`() = runDetailTest {
+        var available = true
+        val firstResponse = CompletableDeferred<Unit>()
+        val viewModel = createViewModel(available = { available }, holdFirst = firstResponse)
+        viewModel.loadAll()
+        // The first request is answered under the old policy but held back.
+        advanceUntilIdle()
+        assertTrue(viewModel.uiState.value.isLoading)
+
+        available = false
+        viewModel.refreshAfterAccessChange()
+        firstResponse.complete(Unit)
+        advanceUntilIdle()
+
+        assertEquals(null, viewModel.uiState.value.detail)
+        assertTrue(viewModel.uiState.value.error != null)
+    }
+
+    @Test
+    fun `an access change during the first load brings back a restored title`() = runDetailTest {
+        var available = false
+        val firstResponse = CompletableDeferred<Unit>()
+        val viewModel = createViewModel(available = { available }, holdFirst = firstResponse)
+        viewModel.loadAll()
+        advanceUntilIdle()
+
+        available = true
+        viewModel.refreshAfterAccessChange()
+        firstResponse.complete(Unit)
+        advanceUntilIdle()
+
+        assertEquals(CONTENT_ID, viewModel.uiState.value.detail?.contentId)
+        assertEquals(null, viewModel.uiState.value.error)
+    }
+
     // ------------------------------------------------------------------
 
     private val createdViewModels = mutableListOf<androidx.lifecycle.ViewModel>()
@@ -112,23 +149,32 @@ class TvItemDetailAccessChangeTest {
         }
     }
 
+    /**
+     * With [holdFirst], the first detail request reads [available] when it
+     * arrives but answers only once [holdFirst] completes.
+     */
     private fun TestScope.createViewModel(
         available: () -> Boolean,
         cached: ItemDetail? = null,
+        holdFirst: CompletableDeferred<Unit>? = null,
     ): TvItemDetailViewModel {
         val dispatcher = StandardTestDispatcher(testScheduler)
+        var detailRequests = 0
         val client = HttpClient(
             MockEngine(
                 MockEngineConfig().apply {
                     this.dispatcher = dispatcher
                     addHandler { request ->
+                        val isDetail = request.url.encodedPath == "/api/v2/catalog/items/$CONTENT_ID"
+                        val allowed = isDetail && available()
+                        if (isDetail && ++detailRequests == 1) holdFirst?.await()
                         when {
-                            request.url.encodedPath != "/api/v2/catalog/items/$CONTENT_ID" -> respond(
+                            !isDetail -> respond(
                                 """{"type":"about:blank","title":"not_found","status":404,"detail":"not found"}""",
                                 HttpStatusCode.NotFound,
                                 PROBLEM_HEADERS,
                             )
-                            available() -> respond(
+                            allowed -> respond(
                                 """{"content_id":"$CONTENT_ID","type":"movie","title":"Movie","cast":[],"crew":[],"versions":[],"subtitles":[]}""",
                                 HttpStatusCode.OK,
                                 headersOf(HttpHeaders.ContentType, "application/json"),

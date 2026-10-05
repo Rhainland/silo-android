@@ -63,7 +63,7 @@ fun TvCollectionsScreen(
     viewModel: CollectionsViewModel = koinViewModel(),
 ) {
     val state by viewModel.uiState.collectAsState()
-    OnViewerAccessChanged(koinInject<AccessChangeSignals>()) { viewModel.refresh() }
+    OnViewerAccessChanged(koinInject<AccessChangeSignals>(), viewModel.accessChanges) { viewModel.refresh() }
     val firstCollectionFocusRequester = remember { FocusRequester() }
     val firstCollectionId = state.sections.firstNotNullOfOrNull { it.collections.firstOrNull()?.id }
 

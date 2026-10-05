@@ -184,11 +184,13 @@ fun MainScreen(
         headerViewModel.refresh()
     }
     // An access change can add or remove whole libraries: re-derive the tabs
-    // and reload the Libraries hub under the new policy.
+    // and reload the Libraries hub under the new policy. The hub's ViewModel
+    // outlives tab switches and pushed routes, so its cursor catches up on a
+    // change reported while another tab or route was showing.
     val accessChangeSignals: AccessChangeSignals = koinInject()
     val viewerAccessKey = rememberViewerAccessKey(accessChangeSignals)
     librariesViewModel?.let { viewModel ->
-        OnViewerAccessChanged(accessChangeSignals) { viewModel.refresh() }
+        OnViewerAccessChanged(accessChangeSignals, viewModel.accessChanges) { viewModel.refreshAfterAccessChange() }
     }
     val mediaCapabilities by produceState(
         initialValue = MediaModeCapabilities(

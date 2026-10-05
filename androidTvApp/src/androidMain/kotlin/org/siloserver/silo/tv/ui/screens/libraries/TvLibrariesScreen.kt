@@ -34,7 +34,7 @@ fun TvLibrariesScreen(
     viewModel: TvLibrariesViewModel = koinViewModel(),
 ) {
     val state by viewModel.uiState.collectAsState()
-    OnViewerAccessChanged(koinInject<AccessChangeSignals>()) { viewModel.load() }
+    OnViewerAccessChanged(koinInject<AccessChangeSignals>(), viewModel.accessChanges) { viewModel.load() }
     val selectedLibrary = state.libraries.firstOrNull { it.id == state.selectedLibraryId }
         ?: state.libraries.firstOrNull()
 

@@ -128,6 +128,8 @@ data class SearchUiState(
 class SearchViewModel(
     private val catalogRepository: CatalogRepository,
 ) : ViewModel() {
+    /** Access changes this ViewModel has applied, kept while its screen is away. */
+    val accessChanges = org.siloserver.silo.network.AccessChangeCursor()
 
     private val _uiState = MutableStateFlow(SearchUiState())
     val uiState: StateFlow<SearchUiState> = _uiState.asStateFlow()

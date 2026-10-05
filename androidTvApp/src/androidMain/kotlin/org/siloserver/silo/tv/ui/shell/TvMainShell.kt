@@ -641,7 +641,15 @@ fun TvMainShell(
         if (libraries.isEmpty()) return@LaunchedEffect
         val ids = mutableSetOf<Int>()
         libraries.forEach { lib ->
-            val result = runCatching { sectionRepository.getLibraryCollections(lib.id) }.getOrNull()
+            // Rethrow cancellation: a restarted probe must stop here, not
+            // finish the loop and publish a partial set.
+            val result = try {
+                sectionRepository.getLibraryCollections(lib.id)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                null
+            }
             if (result is ApiResult.Success && result.data.isNotEmpty()) ids += lib.id
         }
         librariesWithCollections = ids

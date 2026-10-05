@@ -118,7 +118,7 @@ fun TvSearchScreen(
     requestSearchViewModel: RequestSearchViewModel = koinViewModel(),
 ) {
     val state by viewModel.uiState.collectAsState()
-    OnViewerAccessChanged(koinInject<AccessChangeSignals>()) { viewModel.refreshForAccessChange() }
+    OnViewerAccessChanged(koinInject<AccessChangeSignals>(), viewModel.accessChanges) { viewModel.refreshForAccessChange() }
     val requestState by requestSearchViewModel.uiState.collectAsState()
     val requestsFeatureStore: RequestsFeatureStore = koinInject()
     val requestsEnabled by requestsFeatureStore.isEnabled.collectAsState()

@@ -16,6 +16,7 @@ import org.siloserver.silo.model.catalog.initialSeasonDisplayPlan
 import org.siloserver.silo.model.catalog.sortedForDisplay
 import org.siloserver.silo.model.download.DownloadCapability
 import org.siloserver.silo.model.download.DownloadRecord
+import org.siloserver.silo.model.download.DownloadStatus
 import org.siloserver.silo.model.download.statusEnum
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.errorMessage
@@ -142,9 +143,12 @@ class ItemDetailViewModel(
     private val userItemState: org.siloserver.silo.repository.port.UserItemStatePort =
         org.siloserver.silo.repository.port.NoOpUserItemStatePort,
 ) : ViewModel() {
+    /** Access changes this ViewModel has applied, kept while its screen is away. */
+    val accessChanges = org.siloserver.silo.network.AccessChangeCursor()
 
     private var similarGeneration = 0L
     private var similarJob: kotlinx.coroutines.Job? = null
+    private var detailLoadJob: Job? = null
     private val libraryId: Int? = savedStateHandle.get<String>("libraryId")?.toIntOrNull()
     private val contentId: String = savedStateHandle.get<String>("contentId") ?: ""
     private val initialSeasonNumber: Int? =
@@ -389,8 +393,11 @@ class ItemDetailViewModel(
     fun loadDetail() {
         val similarRun = ++similarGeneration
         similarJob?.cancel()
+        // A newer load replaces an unfinished one, so a response the server
+        // gave under an older access policy never lands after it.
+        detailLoadJob?.cancel()
         _uiState.update { it.copy(similarItems = emptyList()) }
-        viewModelScope.launch {
+        detailLoadJob = viewModelScope.launch {
             val similarOwner = recommendationRepository.captureSimilarAuthority()
             _uiState.update { it.copy(isLoading = true, error = null) }
             // Start the live request immediately. The durable cache read can
@@ -445,7 +452,7 @@ class ItemDetailViewModel(
                             // The durable cache still holds a title the server
                             // now refuses; drop the copy seedCachedDetail painted
                             // so the screen shows the error, not stale actions.
-                            detail = if (result.isAccessRefusal()) null else it.detail,
+                            detail = if (dropsDetailOn(result)) null else it.detail,
                             error = result.message.ifBlank { "Failed to load details" },
                         )
                     }
@@ -484,15 +491,26 @@ class ItemDetailViewModel(
      * initial load shows. Transient failures still keep the current detail.
      * With no detail on screen (an earlier change refused it, or the first
      * load failed), it runs the full load again, as Retry does, so a title the
-     * viewer regains access to comes back.
+     * viewer regains access to comes back. A load still in flight is replaced
+     * the same way, because its answer may predate the change.
      */
     fun refreshAfterAccessChange() {
         val state = _uiState.value
-        when {
-            state.detail != null -> quietRefresh(showAccessRefusal = true)
-            !state.isLoading -> loadDetail()
-        }
+        // A load still in flight may have been answered under the old policy:
+        // replace it rather than letting the change pass unapplied.
+        if (state.isLoading || state.detail == null) loadDetail() else quietRefresh(showAccessRefusal = true)
     }
+
+    /**
+     * Whether a failed read should clear the page: an access refusal, unless
+     * the title has a completed download. The page's local play and delete
+     * actions stay usable for a file the server has since deleted or renamed.
+     */
+    private fun dropsDetailOn(result: ApiResult.Error): Boolean =
+        result.isAccessRefusal() && downloads.value.none { record ->
+            record.statusEnum() == DownloadStatus.Completed &&
+                (record.contentId == contentId || record.episodeId == contentId)
+        }
 
     /**
      * [afterWatchedChange] reads the season list and episodes fresh from the
@@ -519,7 +537,7 @@ class ItemDetailViewModel(
                         )
                     }
                 }
-                is ApiResult.Error -> if (showAccessRefusal && result.isAccessRefusal()) {
+                is ApiResult.Error -> if (showAccessRefusal && dropsDetailOn(result)) {
                     _uiState.update {
                         it.copy(
                             isLoading = false,

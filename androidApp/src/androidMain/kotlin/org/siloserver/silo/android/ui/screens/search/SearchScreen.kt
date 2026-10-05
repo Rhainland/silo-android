@@ -76,7 +76,7 @@ fun SearchScreen(
     // media modes and re-run the current query under the new policy.
     val accessChangeSignals: AccessChangeSignals = koinInject()
     val viewerAccessKey = rememberViewerAccessKey(accessChangeSignals)
-    OnViewerAccessChanged(accessChangeSignals) { viewModel.retry() }
+    OnViewerAccessChanged(accessChangeSignals, viewModel.accessChanges) { viewModel.retry() }
     val availableModes by produceState(
         initialValue = MediaModeCapabilities(
             listOf(

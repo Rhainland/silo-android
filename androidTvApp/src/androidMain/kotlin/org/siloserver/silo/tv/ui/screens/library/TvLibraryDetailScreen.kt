@@ -138,7 +138,7 @@ fun TvLibraryDetailScreen(
     } else {
         null
     }
-    OnViewerAccessChanged(koinInject<AccessChangeSignals>()) { viewModel.refreshAfterAccessChange() }
+    OnViewerAccessChanged(koinInject<AccessChangeSignals>(), viewModel.accessChanges) { viewModel.refreshAfterAccessChange() }
 
     // Apply the committed cascade section on entry / whenever the commit
     // changes it. Keyed on sectionRequestNonce (bumped on every commit) AND the

@@ -159,6 +159,8 @@ class TvLibraryDetailViewModel(
     private val libraryTitle: String,
     private val libraryType: String,
 ) : ViewModel() {
+    /** Access changes this ViewModel has applied, kept while its screen is away. */
+    val accessChanges = org.siloserver.silo.network.AccessChangeCursor()
 
     data class UiState(
         val title: String,

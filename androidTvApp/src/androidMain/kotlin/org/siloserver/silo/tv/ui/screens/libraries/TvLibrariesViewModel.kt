@@ -24,6 +24,8 @@ class TvLibrariesViewModel(
     private val librarySelectionStore: TvLibrarySelectionStore,
     private val legacyTvPrefsMigration: LegacyTvPrefsMigration,
 ) : ViewModel() {
+    /** Access changes this ViewModel has applied, kept while its screen is away. */
+    val accessChanges = org.siloserver.silo.network.AccessChangeCursor()
 
     data class UiState(
         val isLoading: Boolean = true,

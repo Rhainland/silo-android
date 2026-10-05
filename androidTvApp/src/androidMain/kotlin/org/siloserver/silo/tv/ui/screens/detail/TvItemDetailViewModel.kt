@@ -374,6 +374,9 @@ class TvItemDetailViewModel(
     private val identityTransitions: IdentityTransitionBarrier,
     private val capabilityDetector: PlaybackCapabilityDetector? = null,
 ) : ViewModel() {
+    /** Access changes this ViewModel has applied, kept while its screen is away. */
+    val accessChanges = org.siloserver.silo.network.AccessChangeCursor()
+
     private var similarGeneration = 0L
 
     private val _uiState = MutableStateFlow(TvItemDetailUiState())
@@ -604,8 +607,11 @@ class TvItemDetailViewModel(
     private fun loadDetail() {
         val similarRun = ++similarGeneration
         moreLikeThisJob?.cancel()
+        // A newer load replaces an unfinished one, so a response the server
+        // gave under an older access policy never lands after it.
+        detailLoadJob?.cancel()
         _uiState.update { it.copy(moreLikeThis = emptyList(), moreLikeThisLoading = false) }
-        viewModelScope.launch {
+        detailLoadJob = viewModelScope.launch {
             val similarOwner = recommendationRepository?.captureSimilarAuthority()
             when (val result = catalogRepository.getItemDetail(contentId, libraryId = libraryId)) {
                 is ApiResult.Success -> {
@@ -700,13 +706,17 @@ class TvItemDetailViewModel(
      * initial load shows. Transient failures still keep the current detail.
      * With no detail on screen (an earlier change refused it, or the first
      * load failed), it runs the full load again, as Retry does, so a title the
-     * viewer regains access to comes back.
+     * viewer regains access to comes back. A load still in flight is replaced
+     * the same way, because its answer may predate the change.
      */
     fun refreshAfterAccessChange() {
         val state = _uiState.value
         when {
-            state.detail != null -> quietRefresh(showAccessRefusal = true)
-            !state.isLoading -> loadAll()
+            // A load still in flight may have been answered under the old
+            // policy: replace its request rather than letting the change pass.
+            state.isLoading -> loadDetail()
+            state.detail == null -> loadAll()
+            else -> quietRefresh(showAccessRefusal = true)
         }
     }
 
@@ -1474,6 +1484,7 @@ class TvItemDetailViewModel(
      */
     private var favoritesRevalidatedThrough: Long = TvFavoriteRevalidationSession.currentVersion()
     private var moreLikeThisJob: Job? = null
+    private var detailLoadJob: Job? = null
     private var nextUpDetailJob: Job? = null
     private var activeSeriesEpisodeContentId: String? = null
     // A seasons refresh may complete after the viewer has already changed the

@@ -69,6 +69,8 @@ internal fun buildCollectionSections(
 class CollectionsViewModel(
     private val collectionRepository: CollectionRepository,
 ) : ViewModel() {
+    /** Access changes this ViewModel has applied, kept while its screen is away. */
+    val accessChanges = org.siloserver.silo.network.AccessChangeCursor()
 
     private val _uiState = MutableStateFlow(CollectionsUiState())
     val uiState: StateFlow<CollectionsUiState> = _uiState.asStateFlow()

@@ -52,6 +52,8 @@ class TvSearchViewModel(
     private val personalDataRepository: PersonalDataRepository,
     private val libraryScopeStore: TvLibraryScopeStore,
 ) : ViewModel() {
+    /** Access changes this ViewModel has applied, kept while its screen is away. */
+    val accessChanges = org.siloserver.silo.network.AccessChangeCursor()
 
     data class UiState(
         val query: String = "",
