@@ -604,7 +604,11 @@ class TvItemDetailViewModel(
         return true
     }
 
-    private fun loadDetail() {
+    /**
+     * [afterAccessChange] skips joining a Home warm-up still in flight, whose
+     * answer may predate the change.
+     */
+    private fun loadDetail(afterAccessChange: Boolean = false) {
         val similarRun = ++similarGeneration
         moreLikeThisJob?.cancel()
         // A newer load replaces an unfinished one, so a response the server
@@ -613,7 +617,7 @@ class TvItemDetailViewModel(
         _uiState.update { it.copy(moreLikeThis = emptyList(), moreLikeThisLoading = false) }
         detailLoadJob = viewModelScope.launch {
             val similarOwner = recommendationRepository?.captureSimilarAuthority()
-            when (val result = catalogRepository.getItemDetail(contentId, libraryId = libraryId)) {
+            when (val result = catalogRepository.getItemDetail(contentId, libraryId = libraryId, joinWarmup = !afterAccessChange)) {
                 is ApiResult.Success -> {
                     val detail = withLocalProgress(result.data)
                     if (isTvHiddenMediaType(detail.type)) {
@@ -714,7 +718,7 @@ class TvItemDetailViewModel(
         when {
             // A load still in flight may have been answered under the old
             // policy: replace its request rather than letting the change pass.
-            state.isLoading -> loadDetail()
+            state.isLoading -> loadDetail(afterAccessChange = true)
             state.detail == null -> loadAll()
             else -> quietRefresh(showAccessRefusal = true)
         }
@@ -752,7 +756,12 @@ class TvItemDetailViewModel(
             if (overlaid != current) {
                 _uiState.update { it.copy(detail = overlaid) }
             }
-            when (val result = catalogRepository.getItemDetail(contentId, libraryId = libraryId)) {
+            when (val result = catalogRepository.getItemDetail(
+                contentId,
+                libraryId = libraryId,
+                // An access-change refresh must not reuse a pre-change warm-up.
+                joinWarmup = !showAccessRefusal,
+            )) {
                 is ApiResult.Success -> {
                     val detail = withLocalProgress(result.data)
                         .let { refreshed -> playbackReturn?.let(refreshed::withPlaybackReturn) ?: refreshed }

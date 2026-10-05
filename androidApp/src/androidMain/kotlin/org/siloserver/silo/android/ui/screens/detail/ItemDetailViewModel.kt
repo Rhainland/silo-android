@@ -390,7 +390,13 @@ class ItemDetailViewModel(
         }
     }
 
-    fun loadDetail() {
+    fun loadDetail() = loadDetail(afterAccessChange = false)
+
+    /**
+     * [afterAccessChange] skips joining a Home warm-up still in flight, whose
+     * answer may predate the change.
+     */
+    private fun loadDetail(afterAccessChange: Boolean) {
         val similarRun = ++similarGeneration
         similarJob?.cancel()
         // A newer load replaces an unfinished one, so a response the server
@@ -403,7 +409,9 @@ class ItemDetailViewModel(
             // Start the live request immediately. The durable cache read can
             // still paint an instant first frame, but it no longer delays the
             // network request that supplies fresh movie/series metadata.
-            val liveDetail = async { catalogRepository.getItemDetail(contentId, libraryId = libraryId) }
+            val liveDetail = async {
+                catalogRepository.getItemDetail(contentId, libraryId = libraryId, joinWarmup = !afterAccessChange)
+            }
             seedCachedDetail()
 
             when (val result = liveDetail.await()) {
@@ -498,7 +506,11 @@ class ItemDetailViewModel(
         val state = _uiState.value
         // A load still in flight may have been answered under the old policy:
         // replace it rather than letting the change pass unapplied.
-        if (state.isLoading || state.detail == null) loadDetail() else quietRefresh(showAccessRefusal = true)
+        if (state.isLoading || state.detail == null) {
+            loadDetail(afterAccessChange = true)
+        } else {
+            quietRefresh(showAccessRefusal = true)
+        }
     }
 
     /**
@@ -527,7 +539,12 @@ class ItemDetailViewModel(
             if (overlaid != current) {
                 _uiState.update { it.copy(detail = overlaid) }
             }
-            when (val result = catalogRepository.getItemDetail(contentId, libraryId = libraryId)) {
+            when (val result = catalogRepository.getItemDetail(
+                contentId,
+                libraryId = libraryId,
+                // An access-change refresh must not reuse a pre-change warm-up.
+                joinWarmup = !showAccessRefusal,
+            )) {
                 is ApiResult.Success -> {
                     val detail = withLocalProgress(result.data)
                     _uiState.update {

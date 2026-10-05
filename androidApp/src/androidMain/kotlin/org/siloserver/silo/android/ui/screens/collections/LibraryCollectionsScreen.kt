@@ -91,6 +91,10 @@ class LibraryCollectionsViewModel(
     private val _uiState = MutableStateFlow(LibraryCollectionsUiState())
     val uiState: StateFlow<LibraryCollectionsUiState> = _uiState.asStateFlow()
 
+    // A newer load or refresh supersedes an unfinished one, so an answer from
+    // before an access change can't land after the refresh it triggered.
+    private var loadJob: kotlinx.coroutines.Job? = null
+
     init {
         loadCollections()
     }
@@ -107,7 +111,8 @@ class LibraryCollectionsViewModel(
             return
         }
 
-        viewModelScope.launch {
+        loadJob?.cancel()
+        loadJob = viewModelScope.launch {
             _uiState.update {
                 it.copy(
                     isLoading = true,
@@ -121,7 +126,8 @@ class LibraryCollectionsViewModel(
 
     fun refresh() {
         val currentLibraryId = libraryId ?: return
-        viewModelScope.launch {
+        loadJob?.cancel()
+        loadJob = viewModelScope.launch {
             _uiState.update { it.copy(isRefreshing = true, error = null) }
             applyResult(sectionRepository.getLibraryCollectionsGrouped(currentLibraryId))
         }

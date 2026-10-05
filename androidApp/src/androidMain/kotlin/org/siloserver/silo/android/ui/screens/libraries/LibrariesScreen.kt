@@ -214,6 +214,7 @@ class LibrariesViewModel(
     private var recommendedLoadedLibraryId: Int? = null
     private var browseLoadedLibraryId: Int? = null
     private var collectionsLoadedLibraryId: Int? = null
+    private var librariesRefreshJob: kotlinx.coroutines.Job? = null
     private var recommendedRequestGeneration = 0L
     private var catalogContinuation: CatalogContinuationV2? = null
     private var catalogRequestGeneration = 0L
@@ -237,7 +238,11 @@ class LibrariesViewModel(
         !showAudiobooks && library.type.trim().lowercase() in setOf("audiobook", "audiobooks")
 
     fun refresh() {
-        viewModelScope.launch {
+        // A newer refresh supersedes an unfinished one (for example the
+        // initial load when an access change arrives), so the older library
+        // list can't land after it.
+        librariesRefreshJob?.cancel()
+        librariesRefreshJob = viewModelScope.launch {
             _uiState.update {
                 it.copy(
                     isLoadingLibraries = true,
