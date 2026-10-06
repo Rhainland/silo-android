@@ -199,6 +199,42 @@ object PlaybackSettingsKeys {
     )
 
     /**
+     * The device settings that also have a profile layer (`profile` is among
+     * their allowed scopes), so clearing this device's value falls back to the
+     * profile's rather than straight to the contract default. These are the
+     * ones that offer "Use profile setting". Pinned to the manifest by
+     * `PlaybackSettingsKeysContractTest`.
+     */
+    val ProfileLayeredDeviceSettings: Set<String> = setOf(
+        PreferredQuality,
+        MaxBitrateKbps,
+        AudioLanguage,
+        AutoSkipIntro,
+        IntroSkipMode,
+        AutoSkipCredits,
+        AutoPlayNext,
+        NextUpPromptSeconds,
+        SubtitleAppearance,
+    )
+
+    /**
+     * The keys one control writes together, so going back to the profile's
+     * value has to clear them together. Quality is one picker over two axes,
+     * and the intro-skip enum has the deprecated boolean the server mirrors
+     * beside it; clearing only one of a pair would leave half a device choice
+     * behind.
+     */
+    fun deviceOverrideGroup(key: String): List<String> = when (key) {
+        PreferredQuality, MaxBitrateKbps -> listOf(PreferredQuality, MaxBitrateKbps)
+        IntroSkipMode, AutoSkipIntro -> listOf(IntroSkipMode, AutoSkipIntro)
+        else -> listOf(key)
+    }
+
+    /** Whether this device holds its own value for [key]'s control. */
+    fun hasDeviceOverride(overrides: Set<String>, key: String): Boolean =
+        deviceOverrideGroup(key).any { it in overrides }
+
+    /**
      * `old local slot -> current key`, for the two keys the settings cutover
      * renamed.
      *

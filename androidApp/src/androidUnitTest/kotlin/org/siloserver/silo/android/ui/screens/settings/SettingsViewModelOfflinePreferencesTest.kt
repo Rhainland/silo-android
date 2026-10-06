@@ -37,6 +37,7 @@ import org.siloserver.silo.model.feature.RequestsFeatureStore
 import org.siloserver.silo.repository.MetadataAiRepository
 import org.siloserver.silo.repository.RequestsRepository
 import org.siloserver.silo.common.settings.CardPresentationUiState
+import org.siloserver.silo.common.settings.PlayerSettingsStore
 import org.siloserver.silo.domain.settings.ProfileSettingsController
 import org.siloserver.silo.model.profile.ActiveProfileStore
 import org.siloserver.silo.model.profile.Profile
@@ -62,6 +63,7 @@ import org.siloserver.silo.repository.ProfileRepository
 import org.siloserver.silo.repository.SettingsRepository
 import java.lang.reflect.Proxy
 import kotlin.test.assertEquals
+import kotlin.test.assertNull
 
 @OptIn(ExperimentalCoroutinesApi::class)
 @RunWith(RobolectricTestRunner::class)
@@ -127,7 +129,37 @@ class SettingsViewModelOfflinePreferencesTest {
         assertEquals("always", profiles.activeProfile.value?.subtitleMode)
     }
 
+    @Test
+    fun useProfileSettingsReportsWhetherTheClearsLanded() {
+        var landed = true
+        val cleared = mutableListOf<String>()
+        val store = object : PlayerSettingsStore by idleStore<PlayerSettingsStore>() {
+            override suspend fun resetAllDeviceSettings() = landed
+            override suspend fun resetDeviceSetting(key: String) {
+                cleared += key
+            }
+        }
+        scenario(playerSettingsStore = store) { vm, _, _ ->
+            vm.resetPlaybackOverrides()
+            runCurrent()
+            assertEquals(true, vm.uiState.value.playbackOverridesReset)
+            vm.onPlaybackOverridesResetShown()
+            assertNull(vm.uiState.value.playbackOverridesReset)
+
+            // Offline: the clears are queued, and the notice must say so.
+            landed = false
+            vm.resetPlaybackOverrides()
+            runCurrent()
+            assertEquals(false, vm.uiState.value.playbackOverridesReset)
+
+            vm.useProfileSetting(SettingKeys.PLAYBACK_AUTO_SKIP_CREDITS)
+            runCurrent()
+            assertEquals(listOf(SettingKeys.PLAYBACK_AUTO_SKIP_CREDITS), cleared)
+        }
+    }
+
     private fun scenario(
+        playerSettingsStore: PlayerSettingsStore = idleStore(),
         block: suspend TestScope.(SettingsViewModel, PendingSettingsApi, ActiveProfileStore) -> Unit,
     ) = runTest {
         Dispatchers.setMain(StandardTestDispatcher(testScheduler))
@@ -142,7 +174,7 @@ class SettingsViewModelOfflinePreferencesTest {
         val authRepository = AuthRepository(AuthApi(client, ApiV2Gate.Unrestricted), tokens)
         val vm = SettingsViewModel(
             authRepository = authRepository,
-            playerSettingsStore = idleStore(),
+            playerSettingsStore = playerSettingsStore,
             activeProfileStore = profiles,
             notificationsRepository = NotificationsRepository(NotificationsV2Api(client, tokens, ApiV2Gate.Unrestricted)),
             profileSettings = ProfileSettingsController(SettingsRepository(api)),

@@ -774,6 +774,131 @@ class AndroidPlayerSettingsStoreTest {
     }
 
     @Test
+    fun `using the profile setting deletes the device value through the scoped queue`() = runTest {
+        val api = FakeSettingsApi()
+        val store = newStore(repository = SettingsRepository(api), deviceId = "device")
+        store.setAutoSkipCredits(true)
+        assertEquals(setOf(PlaybackSettingsKeys.AutoSkipCredits), store.deviceOverrideKeysFlow.first())
+
+        // The server now resolves the profile's value.
+        api.effective = mapOf(
+            stored(PlaybackSettingsKeys.AutoSkipCredits, JsonPrimitive(false), scope = SettingScope.PROFILE.wire),
+        )
+        val flushesBefore = fakeFlusher.flushNowCount
+        store.resetDeviceSetting(PlaybackSettingsKeys.AutoSkipCredits)
+
+        val delete = fakeFlusher.calls.last()
+        assertTrue(delete.isDelete)
+        assertEquals(PlaybackSettingsKeys.AutoSkipCredits, delete.key)
+        // Stamped with the profile and server it was made under, like a set,
+        // so a profile or server switch before it lands drops it rather than
+        // clearing someone else's value.
+        assertEquals(activeProfileId, delete.profileId)
+        assertEquals(serverUrl, delete.serverUrl)
+        assertTrue(fakeFlusher.flushNowCount > flushesBefore, "the clear is pushed right away")
+        assertEquals(emptySet(), store.deviceOverrideKeysFlow.first())
+        assertFalse(store.autoSkipCreditsFlow.first())
+    }
+
+    @Test
+    fun `using the profile setting clears every key the control writes`() = runTest {
+        val store = newStore(repository = SettingsRepository(FakeSettingsApi()))
+        store.setQuality("1080p", 8000)
+        store.setIntroSkipMode(IntroSkipMode.NEVER)
+
+        store.resetDeviceSetting(PlaybackSettingsKeys.PreferredQuality)
+        store.resetDeviceSetting(PlaybackSettingsKeys.IntroSkipMode)
+
+        val deleted = fakeFlusher.calls.filter { it.isDelete }.map { it.key }.toSet()
+        assertEquals(
+            setOf(
+                PlaybackSettingsKeys.PreferredQuality,
+                PlaybackSettingsKeys.MaxBitrateKbps,
+                PlaybackSettingsKeys.IntroSkipMode,
+                PlaybackSettingsKeys.AutoSkipIntro,
+            ),
+            deleted,
+        )
+        assertEquals(emptySet(), store.deviceOverrideKeysFlow.first())
+    }
+
+    @Test
+    fun `no audio language preference clears the device value instead of storing null`() = runTest {
+        val store = newStore(repository = SettingsRepository(FakeSettingsApi()))
+        store.setAudioLanguage("ja")
+        assertTrue(PlaybackSettingsKeys.AudioLanguage in store.deviceOverrideKeysFlow.first())
+
+        store.setAudioLanguage("")
+
+        val audio = fakeFlusher.calls.filter { it.key == PlaybackSettingsKeys.AudioLanguage }
+        assertEquals(listOf(false, true), audio.map { it.isDelete }, "a PUT for ja, then a DELETE")
+        assertFalse(PlaybackSettingsKeys.AudioLanguage in store.deviceOverrideKeysFlow.first())
+    }
+
+    @Test
+    fun `a refresh records which values this device holds itself`() = runTest {
+        val api = FakeSettingsApi(
+            effective = mapOf(
+                stored(PlaybackSettingsKeys.AutoPlayNext, JsonPrimitive(false)),
+                stored(PlaybackSettingsKeys.AutoSkipCredits, JsonPrimitive(true), scope = SettingScope.PROFILE.wire),
+                defaulted(PlaybackSettingsKeys.IntroSkipMode, JsonPrimitive("ask")),
+            ),
+        )
+        val store = newStore(repository = SettingsRepository(api))
+        store.setIntroSkipMode(IntroSkipMode.NEVER)
+        store.refreshFromServer()
+        // Answered from the device scope only for auto-play; the intro-skip
+        // write has landed (nothing pending), so the server's answer wins.
+        assertEquals(setOf(PlaybackSettingsKeys.AutoPlayNext), store.deviceOverrideKeysFlow.first())
+
+        // A write still queued keeps its marker: the response predates it.
+        store.setAutoSkipCredits(false)
+        fakeFlusher.pending = setOf(PlaybackSettingsKeys.AutoSkipCredits)
+        store.refreshFromServer()
+        assertEquals(
+            setOf(PlaybackSettingsKeys.AutoPlayNext, PlaybackSettingsKeys.AutoSkipCredits),
+            store.deviceOverrideKeysFlow.first(),
+        )
+    }
+
+    @Test
+    fun `device values are tracked per profile`() = runTest {
+        var profile = "profile-a"
+        val stores = mutableMapOf<String, DataStore<Preferences>>()
+        val store = AndroidPlayerSettingsStore(
+            context = mockContextStub(), legacyCache = fakeLegacyCache,
+            getActiveProfileId = { profile }, getServerUrl = { serverUrl },
+            getDeviceId = { "device" }, serverSettingsFlusher = fakeFlusher,
+            dataStoreFactory = { id -> stores.getOrPut(id) {
+                PreferenceDataStoreFactory.create(
+                    produceFile = { File(tempFolder.root, "overrides_$id.preferences_pb") },
+                )
+            } },
+        )
+        store.setAutoSkipCredits(true)
+        assertEquals(setOf(PlaybackSettingsKeys.AutoSkipCredits), store.deviceOverrideKeysFlow.first())
+        profile = "profile-b"
+        assertEquals(emptySet(), store.deviceOverrideKeysFlow.first())
+        store.resetDeviceSetting(PlaybackSettingsKeys.AutoSkipCredits)
+        assertEquals("profile-b", fakeFlusher.calls.last().profileId)
+        profile = "profile-a"
+        assertEquals(setOf(PlaybackSettingsKeys.AutoSkipCredits), store.deviceOverrideKeysFlow.first())
+    }
+
+    @Test
+    fun `resetAllDeviceSettings clears the markers and reports whether the clears landed`() = runTest {
+        val store = newStore(repository = SettingsRepository(FakeSettingsApi()))
+        store.setAutoSkipCredits(true)
+        assertTrue(store.resetAllDeviceSettings())
+        assertEquals(emptySet(), store.deviceOverrideKeysFlow.first())
+
+        // Offline: the deletes stay queued, and the caller must not claim the
+        // profile's settings already apply.
+        fakeFlusher.pending = setOf(PlaybackSettingsKeys.AutoSkipCredits)
+        assertFalse(store.resetAllDeviceSettings())
+    }
+
+    @Test
     fun `setSubtitleDeviceOverrideEnabled false enqueues delete and clears local flag`() = runTest {
         val repo = SettingsRepository(FakeSettingsApi())
         val store = newStore(repository = repo)
@@ -1021,6 +1146,10 @@ private class FakeServerSettingsFlusher : ServerSettingsFlusher {
     override suspend fun flushNow() {
         flushNowCount++
     }
+
+    /** Keys whose write is still queued after a flush, as offline would leave them. */
+    var pending: Set<String> = emptySet()
+    override fun pendingKeys(profileId: String): Set<String> = pending
 }
 
 /**

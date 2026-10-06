@@ -8,6 +8,7 @@ import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
+import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStoreFile
 import org.siloserver.silo.domain.player.IntroSkipMode
 import org.siloserver.silo.model.download.DownloadQuality
@@ -391,6 +392,9 @@ class AndroidPlayerSettingsStore(
     override val subtitleMatchesDeviceFlow: Flow<Boolean> =
         profileScopedFlow(false) { p, s -> p.boolFor(s, PlaybackSettingsKeys.SubtitleMatchesDevice, false) }
 
+    override val deviceOverrideKeysFlow: Flow<Set<String>> =
+        profileScopedFlow(emptySet()) { p, s -> p[deviceOverridesKey(s)].orEmpty() }
+
     override val showAudiobooksFlow: Flow<Boolean> =
         profileScopedFlow(false) { p, s -> p.boolFor(s, PlaybackSettingsKeys.NavShowAudiobooks, false) }
 
@@ -480,7 +484,10 @@ class AndroidPlayerSettingsStore(
     override suspend fun setPlaybackSpeed(value: Double) {
         val clamped = value.coerceIn(0.25, 4.0)
         withScope { scope, store ->
-            store.edit { it[stringPreferencesKey(scope.keyPrefix + PlaybackSettingsKeys.PlaybackSpeed)] = clamped.toString() }
+            store.edit {
+                it[stringPreferencesKey(scope.keyPrefix + PlaybackSettingsKeys.PlaybackSpeed)] = clamped.toString()
+                markDeviceOverride(it, scope, PlaybackSettingsKeys.PlaybackSpeed)
+            }
             serverSettingsFlusher.enqueue(
                 scope.profileId,
                 PlaybackSettingsKeys.PlaybackSpeed,
@@ -521,6 +528,7 @@ class AndroidPlayerSettingsStore(
             store.edit {
                 it[stringPreferencesKey(scope.keyPrefix + PlaybackSettingsKeys.PreferredQuality)] = normalized
                 it[intPreferencesKey(scope.keyPrefix + PlaybackSettingsKeys.MaxBitrateKbps)] = capped
+                markDeviceOverride(it, scope, PlaybackSettingsKeys.PreferredQuality, PlaybackSettingsKeys.MaxBitrateKbps)
             }
             serverSettingsFlusher.enqueue(
                 scope.profileId,
@@ -539,8 +547,20 @@ class AndroidPlayerSettingsStore(
         }
     }
 
-    override suspend fun setAudioLanguage(value: String) =
-        writeString(PlaybackSettingsKeys.AudioLanguage, value)
+    /**
+     * `""` (no preference) clears this device's value instead of storing an
+     * explicit null over the profile's language. The legacy endpoint spelled
+     * "no preference" as `""` and its migration turned that into no stored
+     * row; sending JSON null at device scope would instead pin "no
+     * preference" here and hide the profile's choice.
+     */
+    override suspend fun setAudioLanguage(value: String) {
+        if (value.isEmpty()) {
+            resetDeviceSetting(PlaybackSettingsKeys.AudioLanguage)
+        } else {
+            writeString(PlaybackSettingsKeys.AudioLanguage, value)
+        }
+    }
 
     override suspend fun setVideoGravity(value: String) {
         val safe = if (value in VALID_VIDEO_GRAVITY) value else "fit"
@@ -581,6 +601,7 @@ class AndroidPlayerSettingsStore(
                 // Setting an explicit appearance implicitly enables the
                 // device override (matches iOS `setSubtitleAppearance`).
                 prefs[booleanPreferencesKey(scope.keyPrefix + PlaybackSettingsKeys.SubtitleUsesDeviceOverride)] = true
+                markDeviceOverride(prefs, scope, PlaybackSettingsKeys.SubtitleAppearance)
                 serverSettingsFlusher.enqueue(scope.profileId, PlaybackSettingsKeys.SubtitleAppearance, json, scope.serverUrl, scope.authority)
             }
         }
@@ -605,6 +626,7 @@ class AndroidPlayerSettingsStore(
                 if (prefs.stringFor(scope, PlaybackSettingsKeys.SubtitleAppearance, "") == json) return@edit
                 prefs[stringPreferencesKey(scope.keyPrefix + PlaybackSettingsKeys.SubtitleAppearance)] = json
                 prefs[stringPreferencesKey(scope.keyPrefix + SAVED_CUSTOM_SUBTITLE_APPEARANCE)] = json
+                markDeviceOverride(prefs, scope, PlaybackSettingsKeys.SubtitleAppearance)
                 serverSettingsFlusher.enqueue(scope.profileId, PlaybackSettingsKeys.SubtitleAppearance, json, scope.serverUrl, scope.authority)
             }
         }
@@ -682,6 +704,7 @@ class AndroidPlayerSettingsStore(
                     // otherwise the fields left by whatever resolved while the
                     // override was off win right back over it.
                     writeGranularAppearance(it, scope, sanitized)
+                    markDeviceOverride(it, scope, PlaybackSettingsKeys.SubtitleAppearance)
                     // In the transaction, so it enqueues in commit order.
                     serverSettingsFlusher.enqueue(scope.profileId, PlaybackSettingsKeys.SubtitleAppearance, json, scope.serverUrl, scope.authority)
                 }
@@ -695,6 +718,7 @@ class AndroidPlayerSettingsStore(
                             ?.let { value -> it[savedCustomKey] = value }
                     }
                     it[booleanPreferencesKey(scope.keyPrefix + PlaybackSettingsKeys.SubtitleUsesDeviceOverride)] = false
+                    clearDeviceOverride(it, scope, PlaybackSettingsKeys.SubtitleAppearance)
                 }
                 serverSettingsFlusher.enqueueDelete(scope.profileId, PlaybackSettingsKeys.SubtitleAppearance, scope.serverUrl, scope.authority)
                 serverSettingsFlusher.flushNow()
@@ -703,15 +727,35 @@ class AndroidPlayerSettingsStore(
         }
     }
 
+    /**
+     * Goes back to the profile's value for [key] on this device: deletes the
+     * device-scoped row through the same scoped queue every write uses, so a
+     * profile switch or an offline spell treats the clear exactly like a set.
+     *
+     * Keys one control writes together ([PlaybackSettingsKeys.deviceOverrideGroup])
+     * are cleared together. The override marker is dropped right away, so the
+     * picker shows the choice at once; the value itself follows from the
+     * refresh once the delete has landed. Until then the device keeps playing
+     * with the value it had, because the refresh leaves a key with an unsent
+     * write alone.
+     */
     override suspend fun resetDeviceSetting(key: String) {
-        withScope { scope, _ ->
-            serverSettingsFlusher.enqueueDelete(scope.profileId, key, scope.serverUrl, scope.authority)
+        val keys = PlaybackSettingsKeys.deviceOverrideGroup(key).filter { it in RemoteDeviceSettings }
+        if (keys.isEmpty()) return
+        withScope { scope, store ->
+            store.edit {
+                clearDeviceOverride(it, scope, *keys.toTypedArray())
+                for (cleared in keys) {
+                    serverSettingsFlusher.enqueueDelete(scope.profileId, cleared, scope.serverUrl, scope.authority)
+                }
+            }
             serverSettingsFlusher.flushNow()
             refreshFromServer()
         }
     }
 
-    override suspend fun resetAllDeviceSettings() {
+    override suspend fun resetAllDeviceSettings(): Boolean {
+        var landed = false
         withScope { scope, store ->
             // Only the server-stored keys have rows to delete; the granular
             // subtitle.* fields live inside playback.subtitle_appearance.
@@ -719,6 +763,7 @@ class AndroidPlayerSettingsStore(
                 serverSettingsFlusher.enqueueDelete(scope.profileId, key, scope.serverUrl, scope.authority)
             }
             store.edit {
+                it.remove(deviceOverridesKey(scope))
                 it[booleanPreferencesKey(scope.keyPrefix + PlaybackSettingsKeys.SubtitleUsesDeviceOverride)] = false
                 // The local-only playback keys have no server row to delete, so
                 // the refresh below can never restore their defaults. Removing
@@ -733,8 +778,10 @@ class AndroidPlayerSettingsStore(
                 it.remove(intPreferencesKey(scope.keyPrefix + PlaybackSettingsKeys.PassOutThreshold))
             }
             serverSettingsFlusher.flushNow()
+            landed = serverSettingsFlusher.pendingKeys(scope.profileId).none { it in RemoteDeviceSettings }
             refreshFromServer()
         }
+        return landed
     }
 
     override suspend fun flushPendingDeviceSettings() {
@@ -751,6 +798,7 @@ class AndroidPlayerSettingsStore(
         unlandedKeys: Set<String> = emptySet(),
     ) {
         store.edit { prefs ->
+            val overrides = prefs[deviceOverridesKey(scope)].orEmpty().toMutableSet()
             for (key in RemoteDeviceSettings) {
                 if (key in unlandedKeys) continue
                 // The canonical endpoint answers every known key, including
@@ -763,7 +811,12 @@ class AndroidPlayerSettingsStore(
                 // guessed at.
                 val entry = effective[key] ?: continue
                 writeJsonValue(prefs, scope, key, entry.value)
+                // Where the value resolved from is the truth about whether
+                // this device holds its own, including one set elsewhere (the
+                // web admin, a previous install) or cleared out-of-band.
+                if (entry.scope == SettingScope.PROFILE_DEVICE.wire) overrides += key else overrides -= key
             }
+            prefs[deviceOverridesKey(scope)] = overrides
             // An appearance whose write has not landed leaves the flag and the
             // granular overlay alone too: they describe where the composite
             // resolved from, and the response predates the queued edit.
@@ -849,14 +902,20 @@ class AndroidPlayerSettingsStore(
 
     private suspend fun writeBool(key: String, value: Boolean) {
         withScope { scope, store ->
-            store.edit { it[booleanPreferencesKey(scope.keyPrefix + key)] = value }
+            store.edit {
+                it[booleanPreferencesKey(scope.keyPrefix + key)] = value
+                markDeviceOverride(it, scope, key)
+            }
             serverSettingsFlusher.enqueue(scope.profileId, key, value.toString(), scope.serverUrl, scope.authority)
         }
     }
 
     private suspend fun writeInt(key: String, value: Int) {
         withScope { scope, store ->
-            store.edit { it[intPreferencesKey(scope.keyPrefix + key)] = value }
+            store.edit {
+                it[intPreferencesKey(scope.keyPrefix + key)] = value
+                markDeviceOverride(it, scope, key)
+            }
             serverSettingsFlusher.enqueue(scope.profileId, key, value.toString(), scope.serverUrl, scope.authority)
         }
     }
@@ -887,7 +946,10 @@ class AndroidPlayerSettingsStore(
 
     private suspend fun writeString(key: String, value: String) {
         withScope { scope, store ->
-            store.edit { it[stringPreferencesKey(scope.keyPrefix + key)] = value }
+            store.edit {
+                it[stringPreferencesKey(scope.keyPrefix + key)] = value
+                markDeviceOverride(it, scope, key)
+            }
             serverSettingsFlusher.enqueue(scope.profileId, key, value, scope.serverUrl, scope.authority)
         }
     }
@@ -925,6 +987,28 @@ class AndroidPlayerSettingsStore(
             }
         }
         return current()
+    }
+
+    private fun deviceOverridesKey(scope: Scope): Preferences.Key<Set<String>> =
+        stringSetPreferencesKey(scope.keyPrefix + DEVICE_OVERRIDE_KEYS)
+
+    /** Records that this device now holds its own value for [keys]. */
+    private fun markDeviceOverride(
+        prefs: androidx.datastore.preferences.core.MutablePreferences,
+        scope: Scope,
+        vararg keys: String,
+    ) {
+        val remote = keys.filter { it in RemoteDeviceSettings }
+        if (remote.isEmpty()) return
+        prefs[deviceOverridesKey(scope)] = prefs[deviceOverridesKey(scope)].orEmpty() + remote
+    }
+
+    private fun clearDeviceOverride(
+        prefs: androidx.datastore.preferences.core.MutablePreferences,
+        scope: Scope,
+        vararg keys: String,
+    ) {
+        prefs[deviceOverridesKey(scope)] = prefs[deviceOverridesKey(scope)].orEmpty() - keys.toSet()
     }
 
     private suspend inline fun withScope(
@@ -992,6 +1076,12 @@ class AndroidPlayerSettingsStore(
 
     private companion object {
         const val SAVED_CUSTOM_SUBTITLE_APPEARANCE = "subtitle_appearance.saved_custom"
+        /**
+         * Local-only: the server-stored keys this device holds its own value
+         * for. Set by every write from here and corrected by every refresh,
+         * which says where each value resolved from.
+         */
+        const val DEVICE_OVERRIDE_KEYS = "device_override_keys"
         const val MIGRATION_SENTINEL_LEGACY = "migration_v1"
         const val MISSING_SENTINEL = "__missing__"
         // F1/F2 local-only defaults (mirror DefaultResumeRewindSeconds=7.0 and

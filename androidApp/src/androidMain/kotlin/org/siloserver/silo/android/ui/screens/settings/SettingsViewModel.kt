@@ -102,6 +102,17 @@ data class SettingsUiState(
     // many seconds before the end to surface the card (0 = only at end).
     val autoPlayNext: Boolean = true,
     val nextUpPromptSeconds: Int = 30,
+    /**
+     * Keys this device holds its own value for. A profile-layered control
+     * whose key is absent shows "Use profile setting" as its choice.
+     */
+    val deviceOverrides: Set<String> = emptySet(),
+    /**
+     * Outcome of the last "Use Profile Settings", until the screen has told the
+     * user: true when every clear reached the server, false when some are
+     * queued until the device reconnects.
+     */
+    val playbackOverridesReset: Boolean? = null,
     // Seconds to skip back on resume (0 = off); consecutive auto-advances
     // before the "Still watching?" prompt (0 = off).
     val resumeRewindSeconds: Int = 7,
@@ -311,7 +322,11 @@ class SettingsViewModel(
         }.launchIn(viewModelScope)
         playerSettingsStore.subtitleTextOpacitySupportedFlow.onEach { supported ->
             _uiState.update { it.copy(subtitleTextOpacitySupported = supported) }
-        }.launchIn(viewModelScope)    }
+        }.launchIn(viewModelScope)
+        playerSettingsStore.deviceOverrideKeysFlow.onEach { keys ->
+            _uiState.update { it.copy(deviceOverrides = keys) }
+        }.launchIn(viewModelScope)
+    }
 
     fun setDownloadsWifiOnly(value: Boolean) {
         viewModelScope.launch { playerSettingsStore.setDownloadsWifiOnly(value) }
@@ -562,8 +577,21 @@ class SettingsViewModel(
         }
     }
 
+    /** "Use Profile Settings": clears every setting this device holds its own value for. */
     fun resetPlaybackOverrides() {
-        viewModelScope.launch { playerSettingsStore.resetAllDeviceSettings() }
+        viewModelScope.launch {
+            val landed = playerSettingsStore.resetAllDeviceSettings()
+            _uiState.update { it.copy(playbackOverridesReset = landed) }
+        }
+    }
+
+    fun onPlaybackOverridesResetShown() {
+        _uiState.update { it.copy(playbackOverridesReset = null) }
+    }
+
+    /** Goes back to the profile's value for one setting's control on this device. */
+    fun useProfileSetting(key: String) {
+        viewModelScope.launch { playerSettingsStore.resetDeviceSetting(key) }
     }
 
     /** Lifecycle hook — call from ON_STOP so debounced writes survive. */

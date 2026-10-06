@@ -1,5 +1,6 @@
 package org.siloserver.silo.tv.ui.screens.settings
 
+import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.annotation.StringRes
 import androidx.compose.foundation.background
@@ -77,6 +78,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
@@ -97,6 +99,8 @@ import org.siloserver.silo.common.network.clientVersionLabel
 import org.siloserver.silo.common.settings.CardPresentationSource
 import org.siloserver.silo.common.settings.CardPresentationSupport
 import org.siloserver.silo.common.settings.TitleArtStore
+import org.siloserver.silo.common.settings.UseProfileSettingsCopy
+import org.siloserver.silo.model.settings.PlaybackSettingsKeys
 import org.siloserver.silo.model.settings.CardCaption
 import org.siloserver.silo.model.settings.CardPosterSize
 import org.siloserver.silo.model.settings.CardPresentation
@@ -176,6 +180,12 @@ fun TvSettingsScreen(
     var categoryColumnHasFocus by remember { mutableStateOf(false) }
     var detailFocusRequest by remember { mutableStateOf(0) }
     var showSignOutConfirm by remember { mutableStateOf(false) }
+
+    LaunchedEffect(state.playbackOverridesReset) {
+        val landed = state.playbackOverridesReset ?: return@LaunchedEffect
+        Toast.makeText(context, UseProfileSettingsCopy.notice(landed), Toast.LENGTH_SHORT).show()
+        viewModel.onPlaybackOverridesResetShown()
+    }
 
     LaunchedEffect(Unit) {
         // Was four attempts judged on requestFocus() returning true — that is
@@ -288,6 +298,7 @@ fun TvSettingsScreen(
         onPassOutThresholdChanged = viewModel::onPassOutThresholdChanged,
         onNextUpPromptSecondsChanged = viewModel::onNextUpPromptSecondsChanged,
         onResetPlaybackOverrides = viewModel::resetPlaybackOverrides,
+        onUseProfileSetting = viewModel::onUseProfileSetting,
         seekIntervals = viewModel.seekIntervals,
         onSubtitleModeChanged = viewModel::onSubtitleModeChanged,
         onSubtitleLanguageChanged = viewModel::onSubtitleLanguageChanged,
@@ -436,6 +447,7 @@ private fun SettingsSplitLayout(
     onPassOutThresholdChanged: (Int) -> Unit,
     onNextUpPromptSecondsChanged: (Int) -> Unit,
     onResetPlaybackOverrides: () -> Unit,
+    onUseProfileSetting: (String) -> Unit,
     seekIntervals: SeekIntervalSettingsModel? = null,
     onSubtitleModeChanged: (SubtitleMode) -> Unit,
     onSubtitleLanguageChanged: (String) -> Unit,
@@ -516,6 +528,7 @@ private fun SettingsSplitLayout(
             onPassOutThresholdChanged = onPassOutThresholdChanged,
             onNextUpPromptSecondsChanged = onNextUpPromptSecondsChanged,
             onResetPlaybackOverrides = onResetPlaybackOverrides,
+            onUseProfileSetting = onUseProfileSetting,
             seekIntervals = seekIntervals,
             onSubtitleModeChanged = onSubtitleModeChanged,
             onSubtitleLanguageChanged = onSubtitleLanguageChanged,
@@ -798,6 +811,7 @@ private fun SettingsDetailPane(
     onPassOutThresholdChanged: (Int) -> Unit,
     onNextUpPromptSecondsChanged: (Int) -> Unit,
     onResetPlaybackOverrides: () -> Unit,
+    onUseProfileSetting: (String) -> Unit,
     seekIntervals: SeekIntervalSettingsModel? = null,
     onSubtitleModeChanged: (SubtitleMode) -> Unit,
     onSubtitleLanguageChanged: (String) -> Unit,
@@ -853,6 +867,7 @@ private fun SettingsDetailPane(
                 onPassOutThresholdChanged = onPassOutThresholdChanged,
                 onNextUpPromptSecondsChanged = onNextUpPromptSecondsChanged,
                 onResetPlaybackOverrides = onResetPlaybackOverrides,
+                onUseProfileSetting = onUseProfileSetting,
                 seekIntervals = seekIntervals,
             )
             TvSettingsCategory.Subtitles -> TvSubtitleSettingsPane(
@@ -1141,16 +1156,33 @@ private fun TvPlaybackSettingsPane(
     onPassOutThresholdChanged: (Int) -> Unit,
     onNextUpPromptSecondsChanged: (Int) -> Unit,
     onResetPlaybackOverrides: () -> Unit,
+    /** Receives the key of the control going back to the profile's value. */
+    onUseProfileSetting: (String) -> Unit,
     seekIntervals: SeekIntervalSettingsModel? = null,
 ) {
     var activePicker by remember { mutableStateOf<PlaybackPicker?>(null) }
+    var confirmingReset by remember { mutableStateOf(false) }
+    fun overridden(key: String) = PlaybackSettingsKeys.hasDeviceOverride(state.deviceOverrides, key)
+    // "Use profile setting" leads every profile-layered picker and is the
+    // checked choice while the device has no value of its own.
+    fun profileLayered(key: String, options: List<PickerOption>, selectedId: String) =
+        Pair(
+            listOf(PickerOption(UseProfileSettingId, UseProfileSettingsCopy.OPTION)) + options,
+            if (overridden(key)) selectedId else UseProfileSettingId,
+        )
+    // A switch's "Use Profile Setting" row leaves once used, so focus is
+    // handed back to the switch above it rather than lost.
+    val autoPlayNextFocus = remember { FocusRequester() }
+    val skipCreditsFocus = remember { FocusRequester() }
     val seekState = seekIntervals?.state?.collectAsState()?.value
     var seekPicker by remember { mutableStateOf<Pair<SeekMedia, SeekDirection>?>(null) }
     // Where focus goes when a skip-interval group drops the focused row and
     // has no row of its own left to take it (the row just above the groups).
     val seekFallbackFocus = remember { FocusRequester() }
+    // No "No preference" entry: on a device that means going back to the
+    // profile's language, which "Use profile setting" already says.
     val audioLanguages = remember(state.audioLanguage, state.audioLanguageSuggestions) {
-        LanguageOptions.options(
+        LanguageOptions.namedOptions(
             key = SettingKeys.PLAYBACK_AUDIO_LANGUAGE,
             currentValue = state.audioLanguage,
             runtimeValues = state.audioLanguageSuggestions,
@@ -1234,7 +1266,17 @@ private fun TvPlaybackSettingsPane(
                     label = "Auto-Play Next Episode",
                     checked = state.autoPlayNext,
                     onCheckedChange = onAutoPlayNextChanged,
+                    focusRequester = autoPlayNextFocus,
                 )
+                if (overridden(PlaybackSettingsKeys.AutoPlayNext)) {
+                    UseProfileSettingRow(
+                        setting = "Auto-Play Next Episode",
+                        onClick = {
+                            autoPlayNextFocus.requestFocus()
+                            onUseProfileSetting(PlaybackSettingsKeys.AutoPlayNext)
+                        },
+                    )
+                }
                 SettingsValueRow(
                     label = "Show Next Up",
                     value = nextUpPromptLabel(state.nextUpPromptSeconds),
@@ -1252,7 +1294,17 @@ private fun TvPlaybackSettingsPane(
                     label = "Skip Credits",
                     checked = state.autoSkipCredits,
                     onCheckedChange = onAutoSkipCreditsChanged,
+                    focusRequester = skipCreditsFocus,
                 )
+                if (overridden(PlaybackSettingsKeys.AutoSkipCredits)) {
+                    UseProfileSettingRow(
+                        setting = "Skip Credits",
+                        onClick = {
+                            skipCreditsFocus.requestFocus()
+                            onUseProfileSetting(PlaybackSettingsKeys.AutoSkipCredits)
+                        },
+                    )
+                }
                 SettingsValueRow(
                     label = "Rewind on Resume",
                     value = resumeRewindLabel(state.resumeRewindSeconds),
@@ -1296,13 +1348,11 @@ private fun TvPlaybackSettingsPane(
         item {
             SettingsGroup(title = "Reset") {
                 SettingsActionRow(
-                    label = "Reset Playback Overrides",
-                    onClick = onResetPlaybackOverrides,
+                    label = UseProfileSettingsCopy.RESET_ALL_ROW,
+                    onClick = { confirmingReset = true },
                     destructive = true,
                 )
-                SettingsFooterText(
-                    text = "Resets playback choices for this Android TV and profile back to the server fallback.",
-                )
+                SettingsFooterText(text = UseProfileSettingsCopy.FOOTER)
             }
         }
     }
@@ -1311,46 +1361,92 @@ private fun TvPlaybackSettingsPane(
         // The picker offers presets; a stored pair no preset covers (set
         // through the API, or left by a legacy compound value) selects
         // nothing rather than silently highlighting the wrong entry.
-        PlaybackPicker.Quality -> TvSettingsPickerSheet(
-            title = "Quality",
-            options = QualityPresets.ALL.map { PickerOption(it.id, it.label) },
-            selectedId = QualityPresets.presetFor(state.qualityResolution, state.maxBitrateKbps)?.id
-                ?: "",
-            onSelect = { id ->
-                onQualityPresetSelected(id)
-                activePicker = null
-            },
-            onDismiss = { activePicker = null },
-        )
-        PlaybackPicker.AudioLanguage -> TvSettingsPickerSheet(
-            title = "Audio Language",
-            options = audioLanguages.map { PickerOption(it.first, it.second) },
-            selectedId = state.audioLanguage,
-            onSelect = { onAudioLanguageChanged(it); activePicker = null },
-            onDismiss = { activePicker = null },
-        )
-        PlaybackPicker.NextUpPrompt -> TvSettingsPickerSheet(
-            title = "Show Next Up",
-            options = NextUpPromptOptions.map { PickerOption(it.toString(), nextUpPromptLabel(it)) },
-            selectedId = state.nextUpPromptSeconds.toString(),
-            onSelect = { id ->
-                id.toIntOrNull()?.let(onNextUpPromptSecondsChanged)
-                activePicker = null
-            },
-            onDismiss = { activePicker = null },
-        )
-        PlaybackPicker.IntroSkipMode -> TvSettingsPickerSheet(
-            title = "Skip Intros",
-            options = IntroSkipMode.entries.map { mode ->
-                PickerOption(mode.wireValue, stringResource(introSkipModeLabel(mode)))
-            },
-            selectedId = state.introSkipMode.wireValue,
-            onSelect = { id ->
-                IntroSkipMode.entries.firstOrNull { it.wireValue == id }?.let(onIntroSkipModeChanged)
-                activePicker = null
-            },
-            onDismiss = { activePicker = null },
-        )
+        PlaybackPicker.Quality -> {
+            val (options, selectedId) = profileLayered(
+                PlaybackSettingsKeys.PreferredQuality,
+                QualityPresets.ALL.map { PickerOption(it.id, it.label) },
+                QualityPresets.presetFor(state.qualityResolution, state.maxBitrateKbps)?.id ?: "",
+            )
+            TvSettingsPickerSheet(
+                title = "Quality",
+                options = options,
+                selectedId = selectedId,
+                onSelect = { id ->
+                    if (id == UseProfileSettingId) {
+                        onUseProfileSetting(PlaybackSettingsKeys.PreferredQuality)
+                    } else {
+                        onQualityPresetSelected(id)
+                    }
+                    activePicker = null
+                },
+                onDismiss = { activePicker = null },
+            )
+        }
+        PlaybackPicker.AudioLanguage -> {
+            val (options, selectedId) = profileLayered(
+                PlaybackSettingsKeys.AudioLanguage,
+                audioLanguages.map { PickerOption(it.first, it.second) },
+                state.audioLanguage,
+            )
+            TvSettingsPickerSheet(
+                title = "Audio Language",
+                options = options,
+                selectedId = selectedId,
+                onSelect = { id ->
+                    if (id == UseProfileSettingId) {
+                        onUseProfileSetting(PlaybackSettingsKeys.AudioLanguage)
+                    } else {
+                        onAudioLanguageChanged(id)
+                    }
+                    activePicker = null
+                },
+                onDismiss = { activePicker = null },
+            )
+        }
+        PlaybackPicker.NextUpPrompt -> {
+            val (options, selectedId) = profileLayered(
+                PlaybackSettingsKeys.NextUpPromptSeconds,
+                NextUpPromptOptions.map { PickerOption(it.toString(), nextUpPromptLabel(it)) },
+                state.nextUpPromptSeconds.toString(),
+            )
+            TvSettingsPickerSheet(
+                title = "Show Next Up",
+                options = options,
+                selectedId = selectedId,
+                onSelect = { id ->
+                    if (id == UseProfileSettingId) {
+                        onUseProfileSetting(PlaybackSettingsKeys.NextUpPromptSeconds)
+                    } else {
+                        id.toIntOrNull()?.let(onNextUpPromptSecondsChanged)
+                    }
+                    activePicker = null
+                },
+                onDismiss = { activePicker = null },
+            )
+        }
+        PlaybackPicker.IntroSkipMode -> {
+            val (options, selectedId) = profileLayered(
+                PlaybackSettingsKeys.IntroSkipMode,
+                IntroSkipMode.entries.map { mode ->
+                    PickerOption(mode.wireValue, stringResource(introSkipModeLabel(mode)))
+                },
+                state.introSkipMode.wireValue,
+            )
+            TvSettingsPickerSheet(
+                title = "Skip Intros",
+                options = options,
+                selectedId = selectedId,
+                onSelect = { id ->
+                    if (id == UseProfileSettingId) {
+                        onUseProfileSetting(PlaybackSettingsKeys.IntroSkipMode)
+                    } else {
+                        IntroSkipMode.entries.firstOrNull { it.wireValue == id }?.let(onIntroSkipModeChanged)
+                    }
+                    activePicker = null
+                },
+                onDismiss = { activePicker = null },
+            )
+        }
         PlaybackPicker.ResumeRewind -> TvSettingsPickerSheet(
             title = "Rewind on Resume",
             options = ResumeRewindOptions.map { PickerOption(it.toString(), resumeRewindLabel(it)) },
@@ -1389,6 +1485,37 @@ private fun TvPlaybackSettingsPane(
             onDismiss = { seekPicker = null },
         )
     }
+
+    if (confirmingReset) {
+        TvSettingsConfirmDialog(
+            title = UseProfileSettingsCopy.CONFIRM_TITLE,
+            message = UseProfileSettingsCopy.CONFIRM_MESSAGE,
+            confirmLabel = UseProfileSettingsCopy.CONFIRM_BUTTON,
+            onConfirm = {
+                confirmingReset = false
+                onResetPlaybackOverrides()
+            },
+            onDismiss = { confirmingReset = false },
+        )
+    }
+}
+
+/** Picker id for the synthetic "Use profile setting" row (never on the wire). */
+private const val UseProfileSettingId = "use_profile_setting"
+
+/**
+ * The action under a profile-layered switch while this device holds its own
+ * value. A switch has no picker to lead with "Use profile setting", so it gets
+ * a row of its own, as Cards & Posters' "Use Profile Default" does.
+ */
+@Composable
+private fun UseProfileSettingRow(setting: String, onClick: () -> Unit) {
+    val description = UseProfileSettingsCopy.rowDescription(setting)
+    SettingsActionRow(
+        label = UseProfileSettingsCopy.ROW,
+        onClick = onClick,
+        modifier = Modifier.semantics { contentDescription = description },
+    )
 }
 
 private fun seekIntervalGroupTitle(media: SeekMedia): String = when (media) {
@@ -2079,7 +2206,11 @@ fun TvSettingsPickerSheet(
 
     val initialFocus = remember { FocusRequester() }
     val selectedIndex = options.indexOfFirst { it.id == selectedId }.coerceAtLeast(0)
-    var pickerHasFocus by remember { mutableStateOf(false) }
+    // The target row's own focus, not the sheet's: the dialog hands focus to
+    // its first row as it opens, so "something in the sheet is focused" was
+    // already true before the request landed, and focus stayed on the first
+    // row instead of the current choice.
+    var targetHasFocus by remember { mutableStateOf(false) }
     val focusTargetIndex = if (options.isEmpty()) -1 else selectedIndex
     val listState: LazyListState = rememberLazyListState()
 
@@ -2090,7 +2221,7 @@ fun TvSettingsPickerSheet(
                 maxAttempts = TvContentInitialFocusMaxAttempts,
                 awaitAttempt = { withFrameNanos { } },
                 requestFocus = initialFocus::requestFocus,
-                isFocused = { pickerHasFocus },
+                isFocused = { targetHasFocus },
             )
         }
     }
@@ -2105,7 +2236,6 @@ fun TvSettingsPickerSheet(
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .onFocusChanged { pickerHasFocus = it.hasFocus }
                 .background(Color.Black.copy(alpha = 0.88f)),
             contentAlignment = Alignment.Center,
         ) {
@@ -2175,7 +2305,9 @@ fun TvSettingsPickerSheet(
                             selected = option.id == selectedId,
                             onClick = { onSelect(option.id) },
                             modifier = if (isFocusTarget) {
-                                Modifier.focusRequester(initialFocus)
+                                Modifier
+                                    .focusRequester(initialFocus)
+                                    .onFocusChanged { targetHasFocus = it.isFocused }
                             } else {
                                 Modifier
                             },
