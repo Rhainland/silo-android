@@ -162,7 +162,7 @@ fun MainScreen(
     val metadataAiFeatureStore: MetadataAiFeatureStore = koinInject()
     val shuffleFeatureStore: org.siloserver.silo.model.feature.ShuffleFeatureStore = koinInject()
     val signOutTeardown: org.siloserver.silo.android.auth.SignOutTeardown = koinInject()
-    val profileSwitchTeardown: org.siloserver.silo.android.auth.ProfileSwitchTeardown = koinInject()
+    val switchProfile = org.siloserver.silo.android.ui.navigation.LocalProfileSwitch.current
     val reachabilityState by reachabilityMonitor.state.collectAsState()
     val requestsEnabled by requestsFeatureStore.isEnabled.collectAsState()
     val reachabilityScope = rememberCoroutineScope()
@@ -299,14 +299,9 @@ fun MainScreen(
      * Profile-menu "Switch Profile": pushes pending settings while this
      * profile is still active, then leaves the shell and drops the per-profile
      * caches (see [org.siloserver.silo.android.auth.ProfileSwitchTeardown]).
+     * Runs in the navigation host's scope ([org.siloserver.silo.android.ui.navigation.LocalProfileSwitch]).
      */
-    fun switchProfileFromMenu() {
-        reachabilityScope.launch {
-            profileSwitchTeardown.switchProfile {
-                navController.navigate(Route.ProfileSelection.route)
-            }
-        }
-    }
+    fun switchProfileFromMenu() = switchProfile()
     val requestsMenuAction: (() -> Unit)? = if (requestsEnabled) {
         { navController.navigate(Route.Requests.route) }
     } else {

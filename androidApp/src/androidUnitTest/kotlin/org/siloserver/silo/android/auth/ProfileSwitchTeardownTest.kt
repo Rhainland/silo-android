@@ -4,10 +4,13 @@ import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.respond
 import io.ktor.http.HttpStatusCode
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.test.currentTime
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.siloserver.silo.common.settings.PlayerSettingsStore
 import org.siloserver.silo.common.settings.SeekIntervalStore
@@ -21,6 +24,8 @@ import java.lang.reflect.Proxy
 import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 
 /**
  * A settings write waits out the flusher's debounce, and the flusher drops it
@@ -63,6 +68,31 @@ class ProfileSwitchTeardownTest {
 
         assertEquals(true, left)
         assertEquals(5_000, currentTime)
+    }
+
+    @Test
+    fun aSecondRequestWhileSwitchingIsIgnored() = runTest {
+        val flushGate = CompletableDeferred<Unit>()
+        val settings = object : PlayerSettingsStore by idle<PlayerSettingsStore>() {
+            override suspend fun flushPendingDeviceSettings() = flushGate.await()
+        }
+        val teardown = teardown(settings)
+        var left = 0
+
+        val first = async { teardown.switchProfile { left++ } }
+        runCurrent()
+        assertTrue(teardown.switching.value, "the first switch is still pushing settings")
+        // A second tap during the push must not open a second profile picker.
+        assertFalse(teardown.switchProfile { left++ })
+
+        flushGate.complete(Unit)
+        assertTrue(first.await())
+        assertEquals(1, left)
+        assertFalse(teardown.switching.value)
+
+        // Once finished, the next switch runs normally.
+        assertTrue(teardown.switchProfile { left++ })
+        assertEquals(2, left)
     }
 
     private fun teardown(
