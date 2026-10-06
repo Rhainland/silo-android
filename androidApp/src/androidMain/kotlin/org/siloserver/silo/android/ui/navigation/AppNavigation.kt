@@ -181,6 +181,7 @@ fun AppNavigation(
     val seekIntervalStore: org.siloserver.silo.common.settings.SeekIntervalStore = koinInject()
     val titleArtStore: TitleArtStore = koinInject()
     val signOutTeardown: org.siloserver.silo.android.auth.SignOutTeardown = koinInject()
+    val profileSwitchTeardown: org.siloserver.silo.android.auth.ProfileSwitchTeardown = koinInject()
     val siloCastController: SiloCastController = koinInject()
     // Lives as long as the nav host, so work started from a destination that is
     // popped in the same gesture (re-hydrating after a profile switch) is not
@@ -952,14 +953,13 @@ fun AppNavigation(
                     navController.navigate(Route.PairDevice().route)
                 },
                 onSwitchProfile = {
-                    // Leave the shell first, then drop the per-profile caches
-                    // (see the profile-menu path in MainScreen).
-                    navController.navigate(Route.ProfileSelection.route)
-                    overlayPrefsStore.clear()
-                    activeProfileStore.reset()
-                    cardPresentationStore.clear()
-                    seekIntervalStore.clear()
-                    titleArtStore.clear()
+                    // Same switch as the profile menu: push pending settings,
+                    // leave the shell, then drop the per-profile caches.
+                    navScope.launch {
+                        profileSwitchTeardown.switchProfile {
+                            navController.navigate(Route.ProfileSelection.route)
+                        }
+                    }
                 },
                 onNavigateToWatchlist = { navController.navigate(Route.Watchlist.route) },
                 onNavigateToFavorites = { navController.navigate(Route.Favorites.route) },
