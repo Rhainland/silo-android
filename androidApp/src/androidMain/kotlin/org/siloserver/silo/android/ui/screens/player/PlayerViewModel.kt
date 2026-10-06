@@ -4949,7 +4949,10 @@ class PlayerViewModel(
         shuffleNextPartFileId = null
         val contentId = _uiState.value.contentId
         val shuffle = shufflePlayback
-        fun stillCurrent() = shufflePlayback === shuffle && _uiState.value.contentId == contentId
+        // Every load moves this counter, so a reload of the same item during the stop also ends the part change.
+        val loadGeneration = aiPlaybackGeneration
+        fun stillCurrent() = loadGeneration == aiPlaybackGeneration &&
+            shufflePlayback === shuffle && _uiState.value.contentId == contentId
         shuffleAdvanceJob = viewModelScope.launch {
             val outgoingSession = retainedOwnedSessionId ?: _uiState.value.sessionId
             if (!sessionLifecycle.stop(expectedSessionId = outgoingSession)) {

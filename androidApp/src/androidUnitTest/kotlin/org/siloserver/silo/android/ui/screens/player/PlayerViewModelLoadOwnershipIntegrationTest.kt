@@ -1006,6 +1006,48 @@ class PlayerViewModelLoadOwnershipIntegrationTest {
         }
     }
 
+    @Test
+    fun aReplacementLoadDuringThePartChangeStopKeepsThePartChangeFromLoading() = runTest(dispatcher) {
+        val server = FakeShuffleServer()
+        val starter = DeferredNonCooperativeStarter()
+        val fixture = playerViewModel(starter, backgroundScope, server.api)
+        val store = ViewModelStore().also { it.put("player", fixture.viewModel) }
+        try {
+            val viewModel = fixture.viewModel
+            startShuffledEpisode(starter, viewModel)
+            // Part 1 of a two-part pick is playing; part 2 is queued.
+            PlayerViewModel::class.java.getDeclaredField("shuffleNextPartFileId").let {
+                it.isAccessible = true
+                it.set(viewModel, 2)
+            }
+            fixture.lifecycle.adoptActiveSession(
+                params = StartParams(
+                    contentId = "episode-a", fileId = 1, capabilities = ClientCodecCapabilities(),
+                    clientPlaybackContext = ClientPlaybackContext(formFactor = "mobile", appVersion = "test"),
+                ),
+                session = allocatedReady("session-a").session,
+                manageProgress = false,
+            )
+            fixture.manager.sequenced = true
+            val stopGate = kotlinx.coroutines.CompletableDeferred<Unit>()
+            fixture.manager.stopGate = stopGate
+
+            // Part 1 ends: the part change stops the session and is held there.
+            viewModel.onApproachingEnd(videoEnded = true)
+            fixture.manager.awaitStopped("session-a")
+            // A replacement load of the same item starts while that stop is pending.
+            viewModel.loadContent("episode-a", preferredFileId = 1, preserveRouteIntent = true)
+            stopGate.complete(Unit)
+            starter.awaitRequestCount(2)
+            runCurrent()
+
+            assertEquals(2, starter.startedRequestCount)
+            assertEquals(1, starter.request(1).preferredFileId)
+        } finally {
+            store.clear()
+        }
+    }
+
     private fun ready(
         request: VideoPlaybackStartRequest,
         sessionId: String,
@@ -1512,6 +1554,8 @@ private class RecordingPlaybackSessionManager(
 ) {
     var sequenced = false
     var stopResult: ApiResult<Unit> = ApiResult.Success(Unit)
+    /** Holds every stop until completed, to model a slow stop request. */
+    var stopGate: kotlinx.coroutines.CompletableDeferred<Unit>? = null
     override fun isSequenced(sessionId: String): Boolean = sequenced
 
     private val stopped = mutableListOf<String>()
@@ -1531,6 +1575,7 @@ private class RecordingPlaybackSessionManager(
             stopActiveContexts += contextActive
         }
         stoppedSignal.update { it + sessionId }
+        stopGate?.await()
         return stopResult
     }
 
