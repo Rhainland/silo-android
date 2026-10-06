@@ -806,8 +806,10 @@ fun LibrariesScreen(
 ) {
     val state by viewModel.uiState.collectAsState()
     val selectedLibrary = state.libraries.firstOrNull { it.id == state.selectedLibraryId }
-    // Movie, TV, and mixed libraries shuffle when the server offers it.
+    // Movie, TV, and mixed libraries shuffle from the Browse tab when the
+    // server offers it.
     val onShuffle = selectedLibrary
+        ?.takeIf { state.selectedTab == LibrariesSubtab.Browse }
         ?.takeIf { org.siloserver.silo.model.shuffle.isShuffleLibraryType(it.type) }
         ?.takeIf { shuffleLauncher?.supports(org.siloserver.silo.model.shuffle.ShuffleScopeKind.LIBRARY) == true }
         ?.let { library ->
@@ -1528,6 +1530,21 @@ private fun LibrarySubtabRow(
         modifier = modifier.horizontalScroll(rememberScrollState()),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
+        LibrarySubtabChip(
+            label = "Recommended",
+            selected = selectedTab == LibrariesSubtab.Recommended,
+            onClick = onRecommendedClick,
+        )
+        LibrarySubtabChip(
+            label = "Library",
+            selected = selectedTab == LibrariesSubtab.Browse,
+            onClick = onBrowseClick,
+        )
+        LibrarySubtabChip(
+            label = "Collections",
+            selected = selectedTab == LibrariesSubtab.Collections,
+            onClick = onCollectionsClick,
+        )
         if (onShuffleClick != null) {
             // Starts a shuffle of the whole library; drawn as a chip so it
             // matches the tabs beside it.
@@ -1552,21 +1569,6 @@ private fun LibrarySubtabRow(
                 }
             }
         }
-        LibrarySubtabChip(
-            label = "Recommended",
-            selected = selectedTab == LibrariesSubtab.Recommended,
-            onClick = onRecommendedClick,
-        )
-        LibrarySubtabChip(
-            label = "Library",
-            selected = selectedTab == LibrariesSubtab.Browse,
-            onClick = onBrowseClick,
-        )
-        LibrarySubtabChip(
-            label = "Collections",
-            selected = selectedTab == LibrariesSubtab.Collections,
-            onClick = onCollectionsClick,
-        )
     }
 }
 
