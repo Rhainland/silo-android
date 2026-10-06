@@ -521,7 +521,8 @@ class TvItemDetailViewModel(
         }
     }
 
-    fun loadAll() {
+    /** [afterAccessChange] is passed to [loadDetail]. */
+    fun loadAll(afterAccessChange: Boolean = false) {
         viewModelScope.launch {
             runCatching { playerSettingsStore.refreshFromServer() }
         }
@@ -533,7 +534,7 @@ class TvItemDetailViewModel(
             // the detail must succeed before we render, but favorite/watchlist
             // state can trickle in afterward.
             loadUserState()
-            loadDetail()
+            loadDetail(afterAccessChange)
         }
     }
 
@@ -719,7 +720,7 @@ class TvItemDetailViewModel(
             // A load still in flight may have been answered under the old
             // policy: replace its request rather than letting the change pass.
             state.isLoading -> loadDetail(afterAccessChange = true)
-            state.detail == null -> loadAll()
+            state.detail == null -> loadAll(afterAccessChange = true)
             else -> quietRefresh(showAccessRefusal = true)
         }
     }
