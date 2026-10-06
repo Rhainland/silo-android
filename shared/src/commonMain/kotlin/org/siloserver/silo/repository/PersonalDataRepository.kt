@@ -52,6 +52,25 @@ open class PersonalDataRepository(
         return result
     }
 
+    /**
+     * Fetches the library list and says whether its set of libraries differs
+     * from the cached list, which is the one the screens last loaded. The
+     * fresh list replaces the cached one. False when there is no cached list,
+     * the request fails, or the identity changed while it ran.
+     */
+    suspend fun libraryListChangedSinceCached(): Boolean {
+        val requestIdentityGeneration = identityTransitions.generation.value
+        val cached = catalogCache.getCachedLibraries() ?: return false
+        val result = personalDataApi.listUserLibraries()
+        if (result !is ApiResult.Success || requestIdentityGeneration != identityTransitions.generation.value) {
+            return false
+        }
+        writeIfIdentityUnchanged(requestIdentityGeneration) { cacheWriteLease ->
+            catalogCache.cacheLibraries(result.data, cacheWriteLease)
+        }
+        return cached.mapTo(HashSet()) { it.id } != result.data.mapTo(HashSet()) { it.id }
+    }
+
     // -- Favorites --
 
     suspend fun isFavorite(itemId: String): ApiResult<Boolean> =

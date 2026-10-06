@@ -58,6 +58,7 @@ class SiloTvApplication : Application(), Configuration.Provider, SingletonImageL
             org.siloserver.silo.tv.home.HomeRealtimeForegroundStarter(
                 coordinator = koinApp.koin.get(),
                 profileRepository = koinApp.koin.get(),
+                accessCheck = koinApp.koin.getOrNull(),
             ).register()
         }.onFailure {
             android.util.Log.w("SiloTvApplication", "Home realtime starter init failed", it)

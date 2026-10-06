@@ -108,6 +108,7 @@ class SiloApplication : Application(), Configuration.Provider, SingletonImageLoa
             org.siloserver.silo.android.home.HomeRealtimeForegroundStarter(
                 coordinator = koinApp.koin.get(),
                 profileRepository = koinApp.koin.get(),
+                accessCheck = koinApp.koin.getOrNull(),
             ).register()
         }.onFailure {
             android.util.Log.w("SiloApplication", "Home realtime starter init failed", it)
