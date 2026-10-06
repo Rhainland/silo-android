@@ -4581,7 +4581,15 @@ class PlayerViewModel(
         upNextCountdownJob?.cancel()
         upNextCountdownJob = null
         // An On Deck item is outside the shuffle: playback leaves it, but the
-        // shuffle stays on the server for another device to continue.
+        // shuffle stays on the server for another device to continue. An
+        // advance, part change, or Pick Another still running must not move
+        // the shuffle or load over the On Deck item.
+        if (shuffleAdvanceJob?.isActive == true) {
+            shuffleAdvanceJob?.cancel()
+            // An advance may already hold the transition for its pick.
+            nextUpTransitionGate.cancel()
+        }
+        shufflePickJob?.cancel()
         shufflePlayback = null
         _uiState.update { it.copy(showUpNext = false, upNextCountdownSeconds = null, shuffle = null) }
         viewModelScope.launch {
@@ -4940,9 +4948,16 @@ class PlayerViewModel(
         if (shuffleAdvanceJob?.isActive == true) return
         shuffleNextPartFileId = null
         val contentId = _uiState.value.contentId
+        val shuffle = shufflePlayback
+        fun stillCurrent() = shufflePlayback === shuffle && _uiState.value.contentId == contentId
         shuffleAdvanceJob = viewModelScope.launch {
             val outgoingSession = retainedOwnedSessionId ?: _uiState.value.sessionId
-            if (!sessionLifecycle.stop(expectedSessionId = outgoingSession)) return@launch
+            if (!sessionLifecycle.stop(expectedSessionId = outgoingSession)) {
+                // Nothing played, so the part is still next when playback ends.
+                if (stillCurrent() && shuffleNextPartFileId == null) shuffleNextPartFileId = fileId
+                return@launch
+            }
+            if (!stillCurrent()) return@launch
             loadContent(
                 contentId = contentId,
                 preferredFileId = fileId,
