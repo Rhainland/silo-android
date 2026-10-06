@@ -148,6 +148,36 @@ class ShufflePlaybackTest {
         }
     }
 
+    @Test fun aReadStartedDuringPickAnotherCannotPutBackTheReplacedPick() = runTest {
+        val skipGate = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val readGate = kotlinx.coroutines.CompletableDeferred<Unit>()
+        var reads = 0
+        val client = HttpClient(MockEngine {
+            val skipped = it.url.encodedPath.endsWith("/skip")
+            if (skipped) skipGate.await() else if (reads++ == 1) readGate.await()
+            val next = if (skipped) """{"content_id":"mv-3","type":"movie","title":"Other"}""" else movieCard
+            respond(shuffleJson(current = episodeCard, next = next), HttpStatusCode.OK, headersOf(HttpHeaders.ContentType, "application/json"))
+        }) { install(ContentNegotiation) { json(SiloJson) } }
+        try {
+            val playback = ShufflePlayback(ShufflesV2Api(client, tokens, ApiV2Gate.Unrestricted), "sh1")
+            playback.refresh()
+            val skip = async { playback.pickAnother() }
+            kotlinx.coroutines.yield()
+            // The read starts while the skip waits for the server, which
+            // answers it with the pick the skip is replacing.
+            val slowRead = async { playback.refresh() }
+            kotlinx.coroutines.yield()
+            skipGate.complete(Unit)
+            skip.await()
+            assertEquals("mv-3", playback.nextPickAfter("ep-1")?.contentId)
+            readGate.complete(Unit)
+            assertIs<ApiResult.Success<*>>(slowRead.await())
+            assertEquals("mv-3", playback.nextPickAfter("ep-1")?.contentId)
+        } finally {
+            client.close()
+        }
+    }
+
     @Test fun pickAnotherSkipsTheAnnouncedPickAndAdvanceNamesTheItemThatPlayed() = runTest {
         val server = FakeServer()
         val (playback, client) = session(server)

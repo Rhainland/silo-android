@@ -84,34 +84,35 @@ class ShufflePlayback(
     fun nextPickAfter(playingContentId: String): ShuffleNextPick? =
         if (exhausted) null else latest?.nextPickAfter(playingContentId)
 
-    // Counts advance and skip calls. A read that a mutation overtook would
-    // put back the state that mutation replaced, so its answer is dropped.
+    // Counts advance and skip calls, and how many are still waiting for the
+    // server. A read that overlaps a mutation may answer with the state that
+    // mutation replaced, so its answer is dropped.
     private var mutations = 0
+    private var mutationsInFlight = 0
 
     /**
      * Re-reads the shuffle; the server may replace a `next` that can no longer
-     * play. The answer is ignored when an advance or skip started meanwhile.
+     * play. The answer is ignored when an advance or skip was in flight when
+     * the read started or started while it ran.
      */
     suspend fun refresh(): ApiResult<Shuffle> {
         val startedAfter = mutations
+        val overlapped = mutationsInFlight > 0
         val result = api.get(shuffleId)
-        return if (mutations == startedAfter) record(result) else result
+        return if (!overlapped && mutations == startedAfter) record(result) else result
     }
 
     /**
      * Moves the shuffle past [fromContentId], the item that finished. Play the
      * returned `current`. A retry for the same item changes nothing.
      */
-    suspend fun advance(fromContentId: String): ApiResult<Shuffle> {
-        mutations++
-        return record(api.advance(shuffleId, fromContentId))
-    }
+    suspend fun advance(fromContentId: String): ApiResult<Shuffle> =
+        mutate { api.advance(shuffleId, fromContentId) }
 
     /** Pick Another: replaces the announced next item with another pick. */
     suspend fun pickAnother(): ApiResult<Shuffle> {
         val next = latest?.next ?: return ApiResult.Error(0, "not_loaded", "The shuffle has not loaded yet.")
-        mutations++
-        return record(api.skip(shuffleId, next.contentId))
+        return mutate { api.skip(shuffleId, next.contentId) }
     }
 
     /** Stop shuffling. */
@@ -124,6 +125,16 @@ class ShufflePlayback(
      */
     fun stopInBackground() {
         detachedScope.launch { stop() }
+    }
+
+    private suspend fun mutate(call: suspend () -> ApiResult<Shuffle>): ApiResult<Shuffle> {
+        mutations++
+        mutationsInFlight++
+        try {
+            return record(call())
+        } finally {
+            mutationsInFlight--
+        }
     }
 
     private fun record(result: ApiResult<Shuffle>): ApiResult<Shuffle> {
