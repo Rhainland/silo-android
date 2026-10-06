@@ -1242,6 +1242,7 @@ fun TvMainShell(
                         onLibraryCollectionClick = openLibraryCollectionDetail,
                         onUserCollectionClick = openCollectionDetail,
                         onInitialContentFocus = { focusState.closeProfileMenuForContent() },
+                        onPlayShuffle = onPlayShuffle,
                     )
                 }
                 shellComposable(TvMainRoute.Libraries.route) {
@@ -1250,6 +1251,7 @@ fun TvMainShell(
                         onLibraryCollectionClick = openLibraryCollectionDetail,
                         onUserCollectionClick = openCollectionDetail,
                         onInitialContentFocus = { focusState.closeProfileMenuForContent() },
+                        onPlayShuffle = onPlayShuffle,
                     )
                 }
                 // Content-type tabs (Skyline §3.1). Each renders the library
