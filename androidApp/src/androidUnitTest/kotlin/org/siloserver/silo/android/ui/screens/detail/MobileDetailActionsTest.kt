@@ -589,16 +589,73 @@ class MobileDetailActionsTest {
         assertTrue(viewModel.uiState.value.error != null)
     }
 
+    @Test
+    fun anOlderQuietRefreshDoesNotRestoreATitleAnAccessChangeRefused() = runItemDetailTest {
+        var available = true
+        val returnResponse = CompletableDeferred<Unit>()
+        val viewModel = itemDetailViewModel(
+            personalDataRepository = RecordingPersonalDataRepository(mutableListOf()),
+            catalogRepository = switchableCatalogRepository(
+                available = { available },
+                holdFirst = returnResponse,
+                holdRequest = 2,
+            ),
+            contentId = "movie-1",
+        )
+        advanceUntilIdle()
+        // Back from the player: this read is answered under the old policy but held back.
+        viewModel.refreshOnReturn()
+        advanceUntilIdle()
+
+        available = false
+        viewModel.refreshAfterAccessChange()
+        advanceUntilIdle()
+        returnResponse.complete(Unit)
+        advanceUntilIdle()
+
+        assertEquals(null, viewModel.uiState.value.detail)
+        assertTrue(viewModel.uiState.value.error != null)
+    }
+
+    @Test
+    fun aQuietRefreshReplacingAnAccessChangeRefreshStillShowsTheRefusal() = runItemDetailTest {
+        var available = true
+        val accessResponse = CompletableDeferred<Unit>()
+        val viewModel = itemDetailViewModel(
+            personalDataRepository = RecordingPersonalDataRepository(mutableListOf()),
+            catalogRepository = switchableCatalogRepository(
+                available = { available },
+                holdFirst = accessResponse,
+                holdRequest = 2,
+            ),
+            contentId = "movie-1",
+        )
+        advanceUntilIdle()
+
+        available = false
+        viewModel.refreshAfterAccessChange()
+        advanceUntilIdle()
+        // A return refresh replaces the unfinished access-change read.
+        viewModel.refreshOnReturn()
+        advanceUntilIdle()
+        accessResponse.complete(Unit)
+        advanceUntilIdle()
+
+        assertEquals(null, viewModel.uiState.value.detail)
+        assertTrue(viewModel.uiState.value.error != null)
+    }
+
     /**
      * Serves `movie-1` while [available] is true and a 404 problem otherwise.
      * [cached] stands in for the durable detail cache, which a refusal does
-     * not evict. With [holdFirst], the first detail request reads [available]
-     * when it arrives but answers only once [holdFirst] completes.
+     * not evict. With [holdFirst], detail request number [holdRequest] reads
+     * [available] when it arrives but answers only once [holdFirst] completes.
      */
     private fun kotlinx.coroutines.test.TestScope.switchableCatalogRepository(
         available: () -> Boolean,
         cached: ItemDetail? = null,
         holdFirst: CompletableDeferred<Unit>? = null,
+        holdRequest: Int = 1,
     ): CatalogRepository {
         val dispatcher = StandardTestDispatcher(testScheduler)
         var detailRequests = 0
@@ -609,7 +666,7 @@ class MobileDetailActionsTest {
                     addHandler { request ->
                         val isDetail = request.url.encodedPath == "/api/v2/catalog/items/movie-1"
                         val allowed = isDetail && available()
-                        if (isDetail && ++detailRequests == 1) holdFirst?.await()
+                        if (isDetail && ++detailRequests == holdRequest) holdFirst?.await()
                         when {
                             !isDetail -> respond("{}")
                             allowed -> respond(

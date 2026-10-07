@@ -149,6 +149,9 @@ class ItemDetailViewModel(
     private var similarGeneration = 0L
     private var similarJob: kotlinx.coroutines.Job? = null
     private var detailLoadJob: Job? = null
+    private var quietDetailJob: Job? = null
+    /** Whether [quietDetailJob] clears the page on a refusal (an access-change refresh). */
+    private var quietDetailShowsRefusal = false
     private val libraryId: Int? = savedStateHandle.get<String>("libraryId")?.toIntOrNull()
     private val contentId: String = savedStateHandle.get<String>("contentId") ?: ""
     private val initialSeasonNumber: Int? =
@@ -402,6 +405,7 @@ class ItemDetailViewModel(
         // A newer load replaces an unfinished one, so a response the server
         // gave under an older access policy never lands after it.
         detailLoadJob?.cancel()
+        quietDetailJob?.cancel()
         _uiState.update { it.copy(similarItems = emptyList()) }
         detailLoadJob = viewModelScope.launch {
             val similarOwner = recommendationRepository.captureSimilarAuthority()
@@ -532,7 +536,14 @@ class ItemDetailViewModel(
      */
     private fun quietRefresh(afterWatchedChange: Boolean = false, showAccessRefusal: Boolean = false) {
         val current = _uiState.value.detail ?: return
-        viewModelScope.launch {
+        // A newer detail read replaces an unfinished one, so an older answer
+        // cannot land after it, for example restoring a title the newer read
+        // found refused. The replacement inherits an access-change refresh's
+        // refusal handling, so a return refresh cannot drop it.
+        val showRefusal = showAccessRefusal || (quietDetailShowsRefusal && quietDetailJob?.isActive == true)
+        quietDetailJob?.cancel()
+        quietDetailShowsRefusal = showRefusal
+        quietDetailJob = viewModelScope.launch {
             // Local overlay first: the player's final position write is already
             // on disk, so the label corrects before the server round-trip.
             val overlaid = withLocalProgress(current)
@@ -543,7 +554,7 @@ class ItemDetailViewModel(
                 contentId,
                 libraryId = libraryId,
                 // An access-change refresh must not reuse a pre-change warm-up.
-                joinWarmup = !showAccessRefusal,
+                joinWarmup = !showRefusal,
             )) {
                 is ApiResult.Success -> {
                     val detail = withLocalProgress(result.data)
@@ -554,7 +565,7 @@ class ItemDetailViewModel(
                         )
                     }
                 }
-                is ApiResult.Error -> if (showAccessRefusal && dropsDetailOn(result)) {
+                is ApiResult.Error -> if (showRefusal && dropsDetailOn(result)) {
                     _uiState.update {
                         it.copy(
                             isLoading = false,

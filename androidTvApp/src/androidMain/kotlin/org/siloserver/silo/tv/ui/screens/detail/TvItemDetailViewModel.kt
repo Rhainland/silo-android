@@ -615,6 +615,7 @@ class TvItemDetailViewModel(
         // A newer load replaces an unfinished one, so a response the server
         // gave under an older access policy never lands after it.
         detailLoadJob?.cancel()
+        quietDetailJob?.cancel()
         _uiState.update { it.copy(moreLikeThis = emptyList(), moreLikeThisLoading = false) }
         detailLoadJob = viewModelScope.launch {
             val similarOwner = recommendationRepository?.captureSimilarAuthority()
@@ -733,8 +734,8 @@ class TvItemDetailViewModel(
      */
     private fun quietRefresh(afterWatchedChange: Boolean = false, showAccessRefusal: Boolean = false) {
         val current = _uiState.value.detail ?: return
-        val playbackReturn = TvDetailTrackSelectionSession.consumePlaybackReturn(contentId)
-        playbackReturn?.let { saved ->
+        val consumedPlaybackReturn = TvDetailTrackSelectionSession.consumePlaybackReturn(contentId)
+        consumedPlaybackReturn?.let { saved ->
             _uiState.update {
                 val returnedDetail = it.detail?.withPlaybackReturn(saved)
                 val resolvedFileId = returnedDetail?.let { detail ->
@@ -749,7 +750,18 @@ class TvItemDetailViewModel(
                 )
             }
         }
-        viewModelScope.launch {
+        // A newer detail read replaces an unfinished one, so an older answer
+        // cannot land after it, for example restoring a title the newer read
+        // found refused. The replacement inherits an access-change refresh's
+        // refusal handling, so a return refresh cannot drop it.
+        val replacing = quietDetailJob?.isActive == true
+        val showRefusal = showAccessRefusal || (replacing && quietDetailShowsRefusal)
+        // The replaced read may still owe the player's saved position to its answer.
+        val playbackReturn = consumedPlaybackReturn ?: quietPlaybackReturn.takeIf { replacing }
+        quietDetailJob?.cancel()
+        quietDetailShowsRefusal = showRefusal
+        quietPlaybackReturn = playbackReturn
+        quietDetailJob = viewModelScope.launch {
             // Local overlay first: the player's final position write is already
             // on disk, so the label corrects before the server round-trip.
             val overlaid = withLocalProgress(current)
@@ -761,7 +773,7 @@ class TvItemDetailViewModel(
                 contentId,
                 libraryId = libraryId,
                 // An access-change refresh must not reuse a pre-change warm-up.
-                joinWarmup = !showAccessRefusal,
+                joinWarmup = !showRefusal,
             )) {
                 is ApiResult.Success -> {
                     val detail = withLocalProgress(result.data)
@@ -776,7 +788,7 @@ class TvItemDetailViewModel(
                         }
                     }
                 }
-                is ApiResult.Error -> if (showAccessRefusal && result.isAccessRefusal()) {
+                is ApiResult.Error -> if (showRefusal && result.isAccessRefusal()) {
                     _uiState.update {
                         it.copy(
                             isLoading = false,
@@ -1495,6 +1507,11 @@ class TvItemDetailViewModel(
     private var favoritesRevalidatedThrough: Long = TvFavoriteRevalidationSession.currentVersion()
     private var moreLikeThisJob: Job? = null
     private var detailLoadJob: Job? = null
+    private var quietDetailJob: Job? = null
+    /** Whether [quietDetailJob] clears the page on a refusal (an access-change refresh). */
+    private var quietDetailShowsRefusal = false
+    /** The playback return [quietDetailJob] overlays on its answer. */
+    private var quietPlaybackReturn: TvDetailTrackSelectionSession.Saved? = null
     private var nextUpDetailJob: Job? = null
     private var activeSeriesEpisodeContentId: String? = null
     // A seasons refresh may complete after the viewer has already changed the

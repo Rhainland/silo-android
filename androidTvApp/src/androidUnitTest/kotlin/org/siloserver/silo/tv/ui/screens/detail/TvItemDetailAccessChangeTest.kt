@@ -131,6 +131,47 @@ class TvItemDetailAccessChangeTest {
         assertEquals(null, viewModel.uiState.value.error)
     }
 
+    @Test
+    fun `an older quiet refresh does not restore a title an access change refused`() = runDetailTest {
+        var available = true
+        val returnResponse = CompletableDeferred<Unit>()
+        val viewModel = createViewModel(available = { available }, holdFirst = returnResponse, holdRequest = 2)
+        viewModel.loadAll()
+        advanceUntilIdle()
+        // A return refresh answered under the old policy but held back.
+        viewModel.refreshOnReturn()
+        advanceUntilIdle()
+
+        available = false
+        viewModel.refreshAfterAccessChange()
+        advanceUntilIdle()
+        returnResponse.complete(Unit)
+        advanceUntilIdle()
+
+        assertEquals(null, viewModel.uiState.value.detail)
+        assertTrue(viewModel.uiState.value.error != null)
+    }
+
+    @Test
+    fun `a quiet refresh replacing an access change refresh still shows the refusal`() = runDetailTest {
+        var available = true
+        val accessResponse = CompletableDeferred<Unit>()
+        val viewModel = createViewModel(available = { available }, holdFirst = accessResponse, holdRequest = 2)
+        viewModel.loadAll()
+        advanceUntilIdle()
+
+        available = false
+        viewModel.refreshAfterAccessChange()
+        advanceUntilIdle()
+        viewModel.refreshOnReturn()
+        advanceUntilIdle()
+        accessResponse.complete(Unit)
+        advanceUntilIdle()
+
+        assertEquals(null, viewModel.uiState.value.detail)
+        assertTrue(viewModel.uiState.value.error != null)
+    }
+
     // ------------------------------------------------------------------
 
     private val createdViewModels = mutableListOf<androidx.lifecycle.ViewModel>()
@@ -150,13 +191,14 @@ class TvItemDetailAccessChangeTest {
     }
 
     /**
-     * With [holdFirst], the first detail request reads [available] when it
-     * arrives but answers only once [holdFirst] completes.
+     * With [holdFirst], detail request number [holdRequest] reads [available]
+     * when it arrives but answers only once [holdFirst] completes.
      */
     private fun TestScope.createViewModel(
         available: () -> Boolean,
         cached: ItemDetail? = null,
         holdFirst: CompletableDeferred<Unit>? = null,
+        holdRequest: Int = 1,
     ): TvItemDetailViewModel {
         val dispatcher = StandardTestDispatcher(testScheduler)
         var detailRequests = 0
@@ -167,7 +209,7 @@ class TvItemDetailAccessChangeTest {
                     addHandler { request ->
                         val isDetail = request.url.encodedPath == "/api/v2/catalog/items/$CONTENT_ID"
                         val allowed = isDetail && available()
-                        if (isDetail && ++detailRequests == 1) holdFirst?.await()
+                        if (isDetail && ++detailRequests == holdRequest) holdFirst?.await()
                         when {
                             !isDetail -> respond(
                                 """{"type":"about:blank","title":"not_found","status":404,"detail":"not found"}""",
