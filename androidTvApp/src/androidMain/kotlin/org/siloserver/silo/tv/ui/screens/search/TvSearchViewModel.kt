@@ -20,6 +20,7 @@ import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -89,13 +90,17 @@ class TvSearchViewModel(
      * unavailable it falls back to All.
      */
     private fun loadAvailableMediaTypes() {
-        viewModelScope.launch {
+        // A reload after an access change replaces an unfinished one, so the
+        // older library list cannot land after it.
+        mediaTypesJob?.cancel()
+        mediaTypesJob = viewModelScope.launch {
             val libraries = when (val result = personalDataRepository.listUserLibraries()) {
                 is ApiResult.Success -> result.data
                 else -> return@launch
             }
             val caps = libraries.tvMediaModeCapabilities()
             val showAudiobooks = libraryScopeStore.getShowAudiobooksTab()
+            ensureActive()
             // The "Audiobooks" chip sends type=audiobook, so gate it on an
             // actual audiobook-like library — hasAudio also covers music, which
             // wouldn't match the audiobook filter.
@@ -132,6 +137,7 @@ class TvSearchViewModel(
     }
 
     private var searchJob: Job? = null
+    private var mediaTypesJob: Job? = null
     private var loadMoreJob: Job? = null
     private var peopleJob: Job? = null
     private var continuation: CatalogContinuationV2? = null

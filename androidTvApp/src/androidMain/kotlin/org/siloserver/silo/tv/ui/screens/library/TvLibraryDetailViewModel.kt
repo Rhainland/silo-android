@@ -15,8 +15,10 @@ import org.siloserver.silo.repository.CatalogRepository
 import org.siloserver.silo.repository.SectionRepository
 import org.siloserver.silo.tv.ui.util.tvCatalogMediaTypeFor
 import org.siloserver.silo.tv.ui.util.visibleOnTv
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -444,6 +446,8 @@ class TvLibraryDetailViewModel(
     }
 
     private var recommendedGeneration = 0L
+    private var filtersJob: Job? = null
+    private var collectionsJob: Job? = null
 
     private fun loadRecommended() {
         val run = ++recommendedGeneration
@@ -537,12 +541,17 @@ class TvLibraryDetailViewModel(
 
     private fun loadFilters() {
         loadedFilters = true
-        viewModelScope.launch {
+        // A reload after an access change replaces an unfinished load, so the
+        // older answer cannot land after it.
+        filtersJob?.cancel()
+        filtersJob = viewModelScope.launch {
             _uiState.update { it.copy(filtersLoading = true) }
             // include_technical adds the resolution / audio-language /
             // subtitle-language vocabularies the filter panel offers (tvOS
             // FacetLoader always requests them).
-            when (val filters = catalogRepository.getFilters(libraryId, includeTechnical = true)) {
+            val filters = catalogRepository.getFilters(libraryId, includeTechnical = true)
+            ensureActive()
+            when (filters) {
                 is ApiResult.Success -> _uiState.update {
                     it.copy(
                         genres = filters.data.genres.sorted(),
@@ -746,9 +755,13 @@ class TvLibraryDetailViewModel(
 
     private fun loadCollections() {
         loadedCollections = true
-        viewModelScope.launch {
+        // As in loadFilters: the newest load is the only one that publishes.
+        collectionsJob?.cancel()
+        collectionsJob = viewModelScope.launch {
             _uiState.update { it.copy(collectionsLoading = true, collectionsError = null) }
-            when (val result = sectionRepository.getLibraryCollectionsGrouped(libraryId)) {
+            val result = sectionRepository.getLibraryCollectionsGrouped(libraryId)
+            ensureActive()
+            when (result) {
                 is ApiResult.Success -> {
                     val sections = buildCollectionSections(result.data)
                     _uiState.update {
