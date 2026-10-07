@@ -333,6 +333,13 @@ class ProfileSelectionViewModel(
                 is ApiResult.Success -> {
                     val token = result.data.authorizedProfileToken()
                     if (token != null && forManagement) {
+                        // An account or server change during the round trip
+                        // voids this answer; the reload shows the new identity.
+                        if (!profileRepository.identityScopeUnchanged(scope)) {
+                            dismissPinDialog()
+                            loadProfiles()
+                            return@launch
+                        }
                         // Kept for manage mode only; the device's selection is untouched.
                         profileRepository.householdManagement.begin(profile, token, scope)
                         _uiState.update { it.copy(pinIsVerifying = false, pinDialogProfile = null, pinForManagement = false) }

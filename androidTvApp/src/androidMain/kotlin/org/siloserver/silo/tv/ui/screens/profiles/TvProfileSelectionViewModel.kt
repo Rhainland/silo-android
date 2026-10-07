@@ -326,6 +326,13 @@ class TvProfileSelectionViewModel(
                     // a bare 200, nor on a valid=true carrying no proof.
                     val token = r.data.authorizedProfileToken()
                     if (token != null && forManagement) {
+                        // An account or server change during the round trip
+                        // voids this answer; the reload shows the new identity.
+                        if (!profileRepository.identityScopeUnchanged(scope)) {
+                            onPinDialogDismissed()
+                            loadProfiles()
+                            return@launch
+                        }
                         // Kept for manage mode only; the device's selection is untouched.
                         profileRepository.householdManagement.begin(profile, token, scope)
                         _uiState.update { it.copy(pinProfile = null, pinForManagement = false, isVerifyingPin = false) }

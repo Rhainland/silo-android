@@ -13,6 +13,7 @@ import org.siloserver.silo.model.profile.authorizedProfileToken
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.AuthScopeSnapshot
 import org.siloserver.silo.network.api.HouseholdManager
+import org.siloserver.silo.network.api.isSameAccountAs
 
 /**
  * The profile picker's manage mode: household management acting as the
@@ -69,10 +70,14 @@ class HouseholdManagementSession internal constructor(
         setHeld(Held(primary, HouseholdManager(primary.id, profileToken, scope)))
     }
 
-    /** Ends the session, abandoning any open re-prompt. */
+    /**
+     * Ends the session, abandoning any open re-prompt. The null entry is sent
+     * unconditionally: a re-prompt that is about to open (its held check
+     * already passed) reads it and closes instead of waiting for input.
+     */
     fun end() {
         setHeld(null)
-        if (_reverify.value != null) pinEntries.trySend(null)
+        pinEntries.trySend(null)
     }
 
     /** A PIN typed into the [reverify] prompt. */
@@ -80,9 +85,13 @@ class HouseholdManagementSession internal constructor(
         if (_reverify.value?.isVerifying == false) pinEntries.trySend(pin)
     }
 
-    /** Cancel on the [reverify] prompt: ends the session without retrying. */
+    /**
+     * Cancel on the [reverify] prompt: ends the session without retrying. The
+     * session ends at once, so a verification already in flight cannot renew
+     * the manager and retry the call after the user cancelled.
+     */
     fun cancelReverify() {
-        if (_reverify.value != null) pinEntries.trySend(null)
+        if (_reverify.value != null) end()
     }
 
     /**
@@ -100,10 +109,12 @@ class HouseholdManagementSession internal constructor(
     }
 
     private suspend fun renew(failed: HouseholdManager): HouseholdManager? = renewLock.withLock {
+        // Drain before the held check: an end() after this point leaves its
+        // null in the channel, so the prompt below closes on it.
+        while (pinEntries.tryReceive().isSuccess) Unit
         val current = held.value ?: return@withLock null
         // Another call already asked for the PIN while this one waited.
         if (current.manager !== failed) return@withLock current.manager
-        while (pinEntries.tryReceive().isSuccess) Unit
         _reverify.value = Reverify(current.primary)
         try {
             askUntilVerified(current)
@@ -121,8 +132,11 @@ class HouseholdManagementSession internal constructor(
             }
             _reverify.update { it?.copy(isVerifying = true, error = null) }
             val scope = captureScope()
+            if (!current.isSameAccountAs(scope)) return endFor(current)
             val result = verifyPin(current.primary.id, pin)
             if (held.value !== current) return null
+            // The new token must come from the account the session began on.
+            if (!current.isSameAccountAs(captureScope())) return endFor(current)
             val token = (result as? ApiResult.Success)?.data?.authorizedProfileToken()
             if (token != null) {
                 val renewed = Held(current.primary, HouseholdManager(current.primary.id, token, scope))
@@ -136,6 +150,14 @@ class HouseholdManagementSession internal constructor(
             }
             _reverify.update { it?.copy(isVerifying = false, error = message, errorCount = it.errorCount + 1) }
         }
+    }
+
+    private fun Held.isSameAccountAs(scope: AuthScopeSnapshot?): Boolean =
+        manager.scope?.isSameAccountAs(scope) ?: true
+
+    private fun endFor(current: Held): HouseholdManager? {
+        if (held.value === current) setHeld(null)
+        return null
     }
 
     private fun setHeld(value: Held?) {

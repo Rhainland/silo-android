@@ -1,11 +1,13 @@
 package org.siloserver.silo.repository
 
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.siloserver.silo.model.profile.Profile
 import org.siloserver.silo.model.profile.VerifyPinResponse
 import org.siloserver.silo.network.ApiResult
+import org.siloserver.silo.network.AuthScopeSnapshot
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -64,5 +66,46 @@ class HouseholdManagementSessionTest {
         assertFalse(session.isActive.value)
         assertNull(session.manager)
         assertNull(session.reverify.value)
+    }
+
+    @Test fun cancelWhileCheckingDoesNotRenewOrRetry() = runTest {
+        val answer = CompletableDeferred<ApiResult<VerifyPinResponse>>()
+        val slow = HouseholdManagementSession(verifyPin = { _, _ -> answer.await() }, captureScope = { null })
+        slow.begin(primary, "old", null)
+        var calls = 0
+        val result = async { slow.run<Unit> { calls++; stale } }
+        runCurrent()
+        slow.submitPin("1234")
+        runCurrent()
+        assertTrue(assertNotNull(slow.reverify.value).isVerifying)
+        slow.cancelReverify()
+        answer.complete(ApiResult.Success(VerifyPinResponse(valid = true, profileToken = "fresh")))
+        runCurrent()
+        assertIs<ApiResult.Error>(result.await())
+        assertEquals(1, calls)
+        assertFalse(slow.isActive.value)
+        assertNull(slow.reverify.value)
+    }
+
+    @Test fun accountChangeDuringVerificationEndsTheSession() = runTest {
+        val accountA = AuthScopeSnapshot(serverId = "s1", profileId = null, serverUrl = "https://a", profileToken = null)
+        var current: AuthScopeSnapshot? = accountA
+        val switching = HouseholdManagementSession(
+            verifyPin = { _, _ ->
+                current = accountA.copy(serverId = "s2", serverUrl = "https://b")
+                ApiResult.Success(VerifyPinResponse(valid = true, profileToken = "fresh"))
+            },
+            captureScope = { current },
+        )
+        switching.begin(primary, "old", accountA)
+        var calls = 0
+        val result = async { switching.run<Unit> { calls++; stale } }
+        runCurrent()
+        switching.submitPin("1234")
+        runCurrent()
+        assertIs<ApiResult.Error>(result.await())
+        assertEquals(1, calls)
+        assertFalse(switching.isActive.value)
+        assertNull(switching.reverify.value)
     }
 }
