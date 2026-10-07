@@ -899,6 +899,26 @@ class AndroidPlayerSettingsStoreTest {
     }
 
     @Test
+    fun `resetAllDeviceSettings does not report success when the server still has a device value`() = runTest {
+        // The flusher drops a delete it cannot retry (a 401/403, a replaced
+        // owner), so the queue comes back empty while the row survives.
+        val api = FakeSettingsApi(
+            effective = mapOf(
+                PlaybackSettingsKeys.AutoSkipCredits to EffectiveSettingValue(
+                    key = PlaybackSettingsKeys.AutoSkipCredits,
+                    value = JsonPrimitive(true),
+                    source = SettingScope.PROFILE_DEVICE.wire,
+                    scope = SettingScope.PROFILE_DEVICE.wire,
+                ),
+            ),
+        )
+        val store = newStore(repository = SettingsRepository(api))
+        store.setAutoSkipCredits(true)
+        assertFalse(store.resetAllDeviceSettings())
+        assertEquals(setOf(PlaybackSettingsKeys.AutoSkipCredits), store.deviceOverrideKeysFlow.first())
+    }
+
+    @Test
     fun `setSubtitleDeviceOverrideEnabled false enqueues delete and clears local flag`() = runTest {
         val repo = SettingsRepository(FakeSettingsApi())
         val store = newStore(repository = repo)

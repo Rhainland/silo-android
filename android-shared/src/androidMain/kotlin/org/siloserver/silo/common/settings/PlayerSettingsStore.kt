@@ -267,8 +267,9 @@ interface PlayerSettingsStore {
      * and resets the local-only playback keys, which have no profile value, to
      * their defaults.
      *
-     * Returns true when every clear reached the server; false when some are
-     * still queued (offline) and will apply once they land.
+     * Returns true when every clear reached the server and the server's
+     * answer no longer resolves any setting from this device; false when some
+     * are still queued (offline) or the server could not confirm it.
      */
     suspend fun resetAllDeviceSettings(): Boolean
 

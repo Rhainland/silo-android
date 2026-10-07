@@ -645,7 +645,13 @@ class AndroidPlayerSettingsStore(
     // ---- Server-sync surface ------------------------------------------
 
     override suspend fun refreshFromServer() {
-        val repo = settingsRepository ?: return
+        refreshFromServerConfirmed()
+    }
+
+    /** [refreshFromServer], answering whether the server's effective values were read and applied. */
+    private suspend fun refreshFromServerConfirmed(): Boolean {
+        val repo = settingsRepository ?: return false
+        var applied = false
         // Push before pull. Local writes sit in the flusher's debounce for
         // ~750ms; a refresh inside that window read the server's OLD value and
         // wrote it back over the change the user had just made. The player
@@ -679,7 +685,9 @@ class AndroidPlayerSettingsStore(
                 effective = result.data,
                 unlandedKeys = serverSettingsFlusher.pendingKeys(scope.profileId),
             )
+            applied = true
         }
+        return applied
     }
 
     override suspend fun setSubtitleDeviceOverrideEnabled(enabled: Boolean) {
@@ -778,8 +786,14 @@ class AndroidPlayerSettingsStore(
                 it.remove(intPreferencesKey(scope.keyPrefix + PlaybackSettingsKeys.PassOutThreshold))
             }
             serverSettingsFlusher.flushNow()
-            landed = serverSettingsFlusher.pendingKeys(scope.profileId).none { it in RemoteDeviceSettings }
-            refreshFromServer()
+            val unsent = serverSettingsFlusher.pendingKeys(scope.profileId).any { it in RemoteDeviceSettings }
+            // An empty queue is not proof: the flusher also drops deletes it
+            // cannot retry (a 401/403, a replaced owner). Only the server's
+            // own answer, with nothing left resolving from this device,
+            // confirms the profile's settings apply.
+            val confirmed = refreshFromServerConfirmed()
+            val remaining = store.data.first()[deviceOverridesKey(scope)].orEmpty()
+            landed = !unsent && confirmed && remaining.none { it in RemoteDeviceSettings }
         }
         return landed
     }
