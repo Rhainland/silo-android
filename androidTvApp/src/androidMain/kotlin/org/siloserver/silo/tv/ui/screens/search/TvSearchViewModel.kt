@@ -81,6 +81,9 @@ class TvSearchViewModel(
     private val _uiState = MutableStateFlow(UiState())
     val uiState: StateFlow<UiState> = _uiState.asStateFlow()
 
+    // Declared before init, which starts the first load and stores its job here.
+    private var mediaTypesJob: Job? = null
+
     init { loadAvailableMediaTypes() }
 
     /**
@@ -137,7 +140,6 @@ class TvSearchViewModel(
     }
 
     private var searchJob: Job? = null
-    private var mediaTypesJob: Job? = null
     private var loadMoreJob: Job? = null
     private var peopleJob: Job? = null
     private var continuation: CatalogContinuationV2? = null

@@ -756,8 +756,10 @@ class TvItemDetailViewModel(
         // refusal handling, so a return refresh cannot drop it.
         val replacing = quietDetailJob?.isActive == true
         val showRefusal = showAccessRefusal || (replacing && quietDetailShowsRefusal)
-        // The replaced read may still owe the player's saved position to its answer.
-        val playbackReturn = consumedPlaybackReturn ?: quietPlaybackReturn.takeIf { replacing }
+        // The replaced read may still owe the player's saved position to its
+        // answer, unless a watched change has since replaced that position.
+        val playbackReturn = consumedPlaybackReturn
+            ?: quietPlaybackReturn.takeIf { replacing && !afterWatchedChange }
         quietDetailJob?.cancel()
         quietDetailShowsRefusal = showRefusal
         quietPlaybackReturn = playbackReturn
