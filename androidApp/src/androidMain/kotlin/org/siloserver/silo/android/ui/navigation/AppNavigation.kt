@@ -1701,6 +1701,7 @@ fun AppNavigation(
         org.siloserver.silo.android.ui.screens.pairing.CompanionPairingHost(
             enabled = currentRoute != null && currentRoute !in companionHiddenRoutes,
         )
+        org.siloserver.silo.android.ui.screens.profiles.HouseholdReverifyHost()
 
         // While a profile switch pushes pending settings (bounded at a few
         // seconds), show that it is under way and take input, so nothing else
