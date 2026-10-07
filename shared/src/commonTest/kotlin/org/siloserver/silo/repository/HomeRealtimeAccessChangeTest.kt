@@ -73,6 +73,37 @@ class HomeRealtimeAccessChangeTest {
     }
 
     @Test
+    fun `a second change reported by a reconnected socket inside the window refreshes`() = runTest {
+        val signals = AccessChangeSignals { testScheduler.currentTime }
+        val changes = mutableListOf<Long>()
+        backgroundScope.launch(start = CoroutineStart.UNDISPATCHED) {
+            signals.changes.collect { changes += testScheduler.currentTime }
+        }
+        testScheduler.runCurrent()
+        val homeOpened = signals.connectionTime()
+        val notificationsOpened = signals.connectionTime()
+
+        // Home reports the first edit and reconnects under the new policy.
+        testScheduler.advanceTimeBy(3_000L)
+        signals.reportAccessChanged(homeOpened)
+        testScheduler.runCurrent()
+        testScheduler.advanceTimeBy(1_500L)
+        val homeReopened = signals.connectionTime()
+
+        // Notifications reports the same edit from its older connection.
+        testScheduler.advanceTimeBy(7_500L)
+        signals.reportAccessChanged(notificationsOpened)
+        testScheduler.runCurrent()
+        assertEquals(1, changes.size, "the older connection's report is the change already loaded")
+
+        // A second edit, seen by the reconnected Home socket 15 s after it opened.
+        testScheduler.advanceTimeBy(4_000L)
+        signals.reportAccessChanged(homeReopened)
+        testScheduler.runCurrent()
+        assertEquals(2, changes.size, "a connection opened after the refresh reports a new change")
+    }
+
+    @Test
     fun `nothing refreshes without an access change`() = runTest {
         val signals = AccessChangeSignals()
         val coordinator = HomeRealtimeCoordinator(ScriptedClient { flow { awaitCancellation() } }, TokenManagerImpl(), signals)

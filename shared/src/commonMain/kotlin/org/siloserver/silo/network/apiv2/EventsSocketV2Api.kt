@@ -47,6 +47,8 @@ class EventsSocketV2Api(
             is ApiResult.NetworkError -> throw EventsTicketFailure(0)
         }
         if (!current(scope) || mintedAt.elapsedNow().inWholeMilliseconds >= proof.expiresIn * 1000L) return@flow
+        // Taken after the mint, so the ticket's policy is no newer than this.
+        val connectedAt = accessChanges?.connectionTime()
         // Do not retry this upgrade, even on a lost handshake response: its
         // single-use proof may already be consumed. Reconnect collects afresh.
         withTimeoutOrNull(proof.maxConnectionSeconds * 1000L) {
@@ -70,7 +72,7 @@ class EventsSocketV2Api(
                 suspend fun reportAccessChange() {
                     if (accessChangeReported || !current(scope)) return
                     accessChangeReported = true
-                    accessChanges?.reportAccessChanged()
+                    accessChanges?.reportAccessChanged(connectedAt)
                 }
                 try {
                     send(Frame.Text(SiloJson.encodeToString(WsSubscribe.serializer(),WsSubscribe(channels = channels))))

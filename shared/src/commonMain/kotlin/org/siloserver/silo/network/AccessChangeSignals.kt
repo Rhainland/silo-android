@@ -56,6 +56,8 @@ class AccessChangeSignals(
     /** Every request the server refused because its profile proof is stale. */
     val staleProfileReports: SharedFlow<StaleProfileReport> = _staleProfileReports.asSharedFlow()
 
+    /** Recent reports, newest last; [revision] moves only after a report is logged here. */
+    private val reports = MutableStateFlow(emptyList<AccessChangeReport>())
     private val _revision = MutableStateFlow(0L)
 
     /** Raised once per events-socket connection that reports an access change. */
@@ -67,7 +69,11 @@ class AccessChangeSignals(
      * each detect the same change on their own server-side check, which runs
      * every 15 seconds from each connection's start, so their reports can be
      * that far apart: the first report refreshes at once, and reports within
-     * [ACCESS_CHANGE_COALESCE_MS] of it are taken as the same change.
+     * [ACCESS_CHANGE_COALESCE_MS] of it are taken as the same change. The
+     * exception is a report from a connection opened after that refresh. Each
+     * connection reports once and then reconnects, and a new connection
+     * compares against the policy its own ticket was minted under, so its
+     * report is a change the refresh did not load, and it refreshes again.
      */
     val changes: Flow<Unit> = flow { emitAll(changes(AccessChangeCursor())) }
 
@@ -89,7 +95,12 @@ class AccessChangeSignals(
             if (applied == null) return@collect
             val now = nowMillis()
             val last = cursor.lastRefreshAt
-            if (last == null || now - last >= ACCESS_CHANGE_COALESCE_MS) {
+            val pending = reports.value.filter { it.revision in (applied + 1)..current }
+            // Reports older than the log reach are unknown; refresh for them.
+            val complete = pending.size.toLong() == current - applied
+            val covered = last != null && complete && now - last < ACCESS_CHANGE_COALESCE_MS &&
+                pending.all { report -> report.connectedAt == null || report.connectedAt < last }
+            if (!covered) {
                 cursor.lastRefreshAt = now
                 emit(Unit)
             }
@@ -100,13 +111,28 @@ class AccessChangeSignals(
         _staleProfileReports.tryEmit(report)
     }
 
-    fun reportAccessChanged() {
-        _revision.update { it + 1 }
+    /** The time to pass to [reportAccessChanged] for a connection whose ticket was just minted. */
+    fun connectionTime(): Long = nowMillis()
+
+    /**
+     * Records one access-change report. [connectedAt] is the [connectionTime]
+     * taken after the reporting socket's ticket was minted; null for a report
+     * that does not come from an events socket, which coalesces by time only.
+     */
+    fun reportAccessChanged(connectedAt: Long? = null) {
+        var logged = 0L
+        reports.update { log ->
+            logged = (log.lastOrNull()?.revision ?: 0L) + 1
+            (log + AccessChangeReport(logged, connectedAt)).takeLast(REPORT_LOG_SIZE)
+        }
+        _revision.update { maxOf(it, logged) }
     }
 
     companion object {
         /** Longer than the server's 15-second socket access check. */
         const val ACCESS_CHANGE_COALESCE_MS = 20_000L
+
+        private const val REPORT_LOG_SIZE = 32
 
         /** Close code the events socket uses after an `access_changed` frame. */
         const val ACCESS_CHANGED_CLOSE_CODE: Short = 4001
@@ -125,6 +151,8 @@ class AccessChangeCursor {
     internal var appliedRevision: Long? = null
     internal var lastRefreshAt: Long? = null
 }
+
+private class AccessChangeReport(val revision: Long, val connectedAt: Long?)
 
 private fun monotonicMillis(): () -> Long {
     val start = TimeSource.Monotonic.markNow()
