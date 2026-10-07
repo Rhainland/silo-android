@@ -317,7 +317,10 @@ class AndroidPlayerSettingsStore(
     // ---- Doubles -------------------------------------------------------
     override val playbackSpeedFlow: Flow<Double> =
         profileScopedFlow(1.0) { p, s ->
-            p.stringFor(s, PlaybackSettingsKeys.PlaybackSpeed, "1.0").toDoubleOrNull() ?: 1.0
+            // Normalized on read too, so a value an older build stored outside
+            // the contract range (up to 4.0) is not played back as is.
+            p.stringFor(s, PlaybackSettingsKeys.PlaybackSpeed, "1.0").toDoubleOrNull()
+                ?.let(PlaybackSpeedRange::normalize) ?: 1.0
         }
 
     // ---- Ints ----------------------------------------------------------

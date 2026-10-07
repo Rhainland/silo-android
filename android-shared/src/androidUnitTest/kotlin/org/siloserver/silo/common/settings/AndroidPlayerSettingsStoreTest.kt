@@ -484,6 +484,16 @@ class AndroidPlayerSettingsStoreTest {
     }
 
     @Test
+    fun `a playback speed stored by an older build is normalized on read`() = runTest {
+        // Older builds clamped to 4.0, so a stored speed can sit outside the
+        // contract range until the next server refresh, or forever offline.
+        val store = newStoreSeededWith { prefs ->
+            prefs[stringPreferencesKey(PlaybackSettingsKeys.PlaybackSpeed)] = "3.5"
+        }
+        assertEquals(3.0, store.playbackSpeedFlow.first(), 0.0)
+    }
+
+    @Test
     fun `Profile 7 HDR10 fallback defaults off before the first refresh`() = runTest {
         // The contract default is false; reading true before hydration (or
         // offline) sent Profile 7 sources down the HDR10 path.
