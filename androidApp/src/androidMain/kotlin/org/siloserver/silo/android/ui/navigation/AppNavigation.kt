@@ -22,6 +22,7 @@ import org.siloserver.silo.android.cast.GOOGLE_CAST_LEGACY_SEEK_INTERVALS
 import org.siloserver.silo.android.ui.screens.auth.DevicePairingWrongServerScreen
 import org.siloserver.silo.android.ui.screens.auth.DevicePairingUnknownServerScreen
 import androidx.compose.runtime.collectAsState
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
@@ -1705,6 +1706,10 @@ fun AppNavigation(
         // seconds), show that it is under way and take input, so nothing else
         // can be opened over a switch that is about to leave the shell.
         if (profileSwitching) {
+            // System Back too: composed after the NavHost, this handler wins, so
+            // Back can neither pop the screen under the switch nor close the
+            // app and cancel it.
+            BackHandler {}
             Box(
                 modifier = Modifier
                     .fillMaxSize()
