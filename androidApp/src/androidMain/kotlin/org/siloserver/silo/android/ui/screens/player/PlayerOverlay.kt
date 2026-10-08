@@ -49,6 +49,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import org.siloserver.silo.common.ui.LanguageNames
+import org.siloserver.silo.common.player.video.markerSkipTarget
+import org.siloserver.silo.common.player.video.ManualMarkerKind
+import androidx.compose.ui.res.stringResource
+import org.siloserver.silo.android.R
 import org.siloserver.silo.common.player.SessionState
 import org.siloserver.silo.common.player.SleepTimerState
 import org.siloserver.silo.model.playback.PlaybackQualityOption
@@ -483,6 +487,18 @@ fun PlayerOverlay(
                     countdownRun = introSkipCountdownRun,
                     timerRunning = introSkipTimerRunning,
                 )
+            }
+        }
+
+        if (!state.showUpNext && !introSkipState.isVisible && seekEnabled && !state.isLoading) {
+            val target = markerSkipTarget(state.position, state.recap, state.credits)
+            if (target != null) {
+                Box(modifier = bottomEndSlotModifier, contentAlignment = Alignment.BottomEnd) {
+                    MarkerSkipPill(
+                        label = stringResource(if (target.kind == ManualMarkerKind.Recap) R.string.marker_skip_recap else R.string.marker_skip_credits),
+                        onClick = { gatedSeek(target.endSeconds) },
+                    )
+                }
             }
         }
 

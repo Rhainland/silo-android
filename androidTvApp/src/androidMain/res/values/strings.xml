@@ -169,4 +169,6 @@
     <string name="tv_setup_phone_pill">RECOMMENDED · USE YOUR PHONE</string>
     <string name="tv_setup_phone_looking">Looking for a phone or tablet…</string>
     <string name="tv_setup_phone_detail">Open Silo on a phone or tablet on the same Wi‑Fi. Accept the setup card and Silo will securely bring over the server and account.</string>
+    <string name="marker_skip_recap">Skip Recap</string>
+    <string name="marker_skip_credits">Skip Credits</string>
 </resources>

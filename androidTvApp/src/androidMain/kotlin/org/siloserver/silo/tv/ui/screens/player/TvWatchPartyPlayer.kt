@@ -1,5 +1,6 @@
 package org.siloserver.silo.tv.ui.screens.player
 
+import org.siloserver.silo.common.player.video.MarkerSkipTarget
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
@@ -266,6 +267,17 @@ internal fun TvPlaybackSpeedEffect(
     LaunchedEffect(player, speed) {
         player?.playbackParameters = PlaybackParameters(speed.toFloat())
     }
+}
+
+/** Keep the marker pill and hidden-controls OK action behind the visible quality offer. */
+internal fun tvManualMarkerSkipTarget(
+    active: MarkerSkipTarget?,
+    canSeek: Boolean,
+    introVisible: Boolean,
+    loading: Boolean,
+    qualityOfferVisible: Boolean,
+): MarkerSkipTarget? = active?.takeIf {
+    canSeek && !introVisible && !loading && !qualityOfferVisible
 }
 
 /** Whether the viewer dismissed the current lower-quality offer. */

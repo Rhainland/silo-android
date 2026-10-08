@@ -22,13 +22,22 @@ class WatchDetailV2Api(private val client: HttpClient, private val tokens: Token
 }
 
 /** Adapt only fields consumed by WatchDetail; do not change the legacy model wire contract. */
-private fun decodeWatchDetail(body: JsonObject, id: String): WatchDetail {
+internal fun decodeWatchDetail(body: JsonObject, id: String): WatchDetail {
     val content = body["content_id"] as? JsonPrimitive
     check(content?.isString == true && content.content == id)
     fun numericId(value: JsonElement): JsonPrimitive {
         val text = value as? JsonPrimitive ?: error("Missing file identity")
         check(text.isString)
         return JsonPrimitive(checkedPositiveId(text.content))
+    }
+    fun adaptMarkers(row: MutableMap<String, JsonElement>) {
+        for (key in listOf("intro", "credits", "recap", "preview")) {
+            val marker = row[key]?.takeUnless { it is JsonNull }?.jsonObject ?: continue
+            row[key] = buildJsonObject {
+                put("start", marker.getValue("start_seconds"))
+                put("end", marker.getValue("end_seconds"))
+            }
+        }
     }
     val versions = body["versions"] as? JsonArray ?: error("Missing versions")
     val adapted = body.toMutableMap()
@@ -38,15 +47,10 @@ private fun decodeWatchDetail(body: JsonObject, id: String): WatchDetail {
         val duration = row["duration_seconds"] as? JsonPrimitive ?: error("Missing duration")
         check(!duration.isString && duration.double.isFinite() && duration.double >= 0)
         row["duration"] = duration
+        adaptMarkers(row)
         JsonObject(row)
     })
-    for (key in listOf("intro", "credits", "recap", "preview")) {
-        val marker = body[key]?.takeUnless { it is JsonNull }?.jsonObject ?: continue
-        adapted[key] = buildJsonObject {
-            put("start", marker.getValue("start_seconds"))
-            put("end", marker.getValue("end_seconds"))
-        }
-    }
+    adaptMarkers(adapted)
     body["user_data"]?.takeUnless { it is JsonNull }?.jsonObject?.let { data ->
         val row = data.toMutableMap()
         row["last_file_id"]?.takeUnless { it is JsonNull }?.let { row["last_file_id"] = numericId(it) }

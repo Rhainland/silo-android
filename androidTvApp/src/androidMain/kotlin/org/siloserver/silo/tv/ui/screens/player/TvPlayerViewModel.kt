@@ -1185,6 +1185,12 @@ class TvPlayerViewModel(
             started = SharingStarted.Eagerly,
             initialValue = _uiState.value.toPlaybackClock(),
         )
+    // Marker controls use source time; presentationState deliberately omits the clock.
+    val manualMarkerSkipTarget: StateFlow<org.siloserver.silo.common.player.video.MarkerSkipTarget?> = uiState
+        .map { org.siloserver.silo.common.player.video.markerSkipTarget(it.position, it.recap, it.credits) }
+        .distinctUntilChanged()
+        .stateIn(viewModelScope, SharingStarted.Eagerly, null)
+
     private var subtitleMountGeneration = 0L
     private var lastAdapterMountIdentity: SubtitleIdentity? = null
     private var lastAdapterMountGeneration: Long? = null
@@ -4339,7 +4345,32 @@ class TvPlayerViewModel(
      * Skip-intro and the credits-based F2 trigger read these from UiState, so the
      * update takes effect immediately; `null` clears a marker the server dropped.
      */
+    private val markerReconciliationFence = org.siloserver.silo.common.player.video.MarkerReconciliationFence()
+    private var markerReconcileJob: kotlinx.coroutines.Job? = null
+
+    /** Read effective file markers after every control connection, including on-demand mode. */
+    fun reconcileMarkersAfterRealtimeConnect(expectedSessionId: String) {
+        val state = _uiState.value
+        val fileId = state.mediaFileId ?: return
+        if (state.sessionId != expectedSessionId) return
+        val ticket = markerReconciliationFence.begin()
+        markerReconcileJob?.cancel()
+        markerReconcileJob = viewModelScope.launch {
+            val owner = catalogRepository.captureWatchAuthority() ?: return@launch
+            val detail = (catalogRepository.getWatchDetail(state.contentId, owner, launchArgs.libraryId) as? ApiResult.Success)
+                ?.data ?: return@launch
+            if (!catalogRepository.isWatchAuthorityCurrent(owner)) return@launch
+            val current = _uiState.value
+            if (!markerReconciliationFence.isCurrent(ticket) || current.sessionId != expectedSessionId ||
+                current.contentId != state.contentId || current.mediaFileId != fileId) return@launch
+            val version = detail.versions.firstOrNull { it.fileId == fileId } ?: return@launch
+            applyUpdatedMarkers(version.intro, version.credits,
+                version.recap, version.preview)
+        }
+    }
+
     fun applyUpdatedMarkers(intro: TimeRange?, credits: TimeRange?, recap: TimeRange?, preview: TimeRange?) {
+        markerReconciliationFence.invalidate()
         _uiState.update { it.copy(intro = intro, credits = credits, recap = recap, preview = preview) }
     }
 

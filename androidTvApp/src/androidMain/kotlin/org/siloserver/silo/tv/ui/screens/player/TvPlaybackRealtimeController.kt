@@ -51,7 +51,10 @@ class TvPlaybackRealtimeController(
                 try {
                     client.connect(sessionId).collect { event ->
                         when (event) {
-                            is PlaybackRealtimeEvent.Opened -> client.sendHello(sessionId)
+                            is PlaybackRealtimeEvent.Opened -> {
+                                client.sendHello(sessionId)
+                                viewModel.reconcileMarkersAfterRealtimeConnect(sessionId)
+                            }
                             is PlaybackRealtimeEvent.Command -> handleCommand(event)
                             is PlaybackRealtimeEvent.ServerEvent -> handleServerEvent(event)
                             is PlaybackRealtimeEvent.Closed -> { /* fall through to reconnect */ }

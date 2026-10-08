@@ -3675,7 +3675,32 @@ class PlayerViewModel(
      * from UiState, so updating them takes effect immediately. Passing `null`
      * clears a marker the server says no longer applies.
      */
+    private val markerReconciliationFence = org.siloserver.silo.common.player.video.MarkerReconciliationFence()
+    private var markerReconcileJob: kotlinx.coroutines.Job? = null
+
+    /** Read effective file markers after every control connection, including on-demand mode. */
+    fun reconcileMarkersAfterRealtimeConnect(expectedSessionId: String) {
+        val state = _uiState.value
+        val fileId = state.mediaFileId ?: return
+        if (state.sessionId != expectedSessionId) return
+        val ticket = markerReconciliationFence.begin()
+        markerReconcileJob?.cancel()
+        markerReconcileJob = viewModelScope.launch {
+            val owner = catalogRepository.captureWatchAuthority() ?: return@launch
+            val detail = (catalogRepository.getWatchDetail(state.contentId, owner, browseLibraryId) as? ApiResult.Success)
+                ?.data ?: return@launch
+            if (!catalogRepository.isWatchAuthorityCurrent(owner)) return@launch
+            val current = _uiState.value
+            if (!markerReconciliationFence.isCurrent(ticket) || current.sessionId != expectedSessionId ||
+                current.contentId != state.contentId || current.mediaFileId != fileId) return@launch
+            val version = detail.versions.firstOrNull { it.fileId == fileId } ?: return@launch
+            applyUpdatedMarkers(version.intro, version.credits,
+                version.recap, version.preview)
+        }
+    }
+
     fun applyUpdatedMarkers(intro: TimeRange?, credits: TimeRange?, recap: TimeRange?, preview: TimeRange?) {
+        markerReconciliationFence.invalidate()
         _uiState.update { it.copy(intro = intro, credits = credits, recap = recap, preview = preview) }
     }
 
