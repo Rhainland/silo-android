@@ -890,7 +890,10 @@ fun TvSkylineSectionFeed(
             TvFocusMarquee(
                 content = marquee.content,
                 detailLine = marquee.enrichment?.detailLine,
-                translation = rememberTvMarqueeTranslation(marquee.content?.source),
+                translation = rememberTvMarqueeTranslation(
+                    item = marquee.content?.source,
+                    autoTranslate = isFeaturedMarqueeContent(marquee.content, rows),
+                ),
                 startPadding = TvSkyline.safeAreaX,
                 // Keep the marquee out of the top-menu-bar zone: the block is
                 // bottom-anchored and grows upward, and the raised typography

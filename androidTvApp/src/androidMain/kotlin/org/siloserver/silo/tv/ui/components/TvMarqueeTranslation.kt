@@ -17,6 +17,7 @@ import org.siloserver.silo.metadata.DescriptionTranslationPhase
 import org.siloserver.silo.model.catalog.hasMachineTranslation
 import org.siloserver.silo.model.feature.MetadataAiFeatureStore
 import org.siloserver.silo.model.metadata.MetadataAiOnView
+import org.siloserver.silo.model.section.ResolvedSection
 import org.siloserver.silo.model.section.SectionItem
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.repository.MetadataAiRepository
@@ -36,8 +37,8 @@ data class TvMarqueeTranslation(
 
 /**
  * On-view description translation for the focus marquee, the Android TV
- * counterpart of the web Featured hero: in `auto` mode the item the viewer
- * rests on translates once per (item, language), then its detail is re-read
+ * counterpart of the web Featured hero: in `auto` mode a Featured-section item
+ * the viewer rests on translates once per (item, language), then its detail is re-read
  * until the server reports the description available. The marquee is never
  * focusable, so `button` mode leaves the action to the item's detail page.
  */
@@ -107,6 +108,18 @@ internal class TvMarqueeTranslationState(
     }
 }
 
+/**
+ * Whether the marquee's item came from a Featured section (the section's
+ * `featured` flag). Only those translate on view, matching the web client,
+ * which translates the visible Featured slide only; cards in ordinary rows
+ * keep their text and marker but never start a job when focus rests on them.
+ * [TvMarqueeContent.id] is `"<section id>#<content id>"`.
+ */
+internal fun isFeaturedMarqueeContent(content: TvMarqueeContent?, sections: List<ResolvedSection>): Boolean =
+    content != null && sections.any { section ->
+        section.featured && content.id == "${section.id}#${content.contentId}"
+    }
+
 /** How long focus rests on a card before `auto` mode counts it as viewed. */
 private const val TvMarqueeTranslateDwellMs = 1_000L
 
@@ -115,7 +128,11 @@ private const val TvMarqueeTranslateDwellMs = 1_000L
  * returns what the marquee should render for it.
  */
 @Composable
-internal fun rememberTvMarqueeTranslation(item: SectionItem?): TvMarqueeTranslation? {
+internal fun rememberTvMarqueeTranslation(
+    item: SectionItem?,
+    /** Start on-view translation for this item; false only displays it. */
+    autoTranslate: Boolean,
+): TvMarqueeTranslation? {
     val repository: MetadataAiRepository = koinInject()
     val metadataAiStore: MetadataAiFeatureStore = koinInject()
     val status by metadataAiStore.status.collectAsState()
@@ -127,8 +144,10 @@ internal fun rememberTvMarqueeTranslation(item: SectionItem?): TvMarqueeTranslat
     val busy = phase == DescriptionTranslationPhase.Translating
     // Re-run when a running translation ends, so an item skipped meanwhile
     // gets its turn while the viewer is still resting on it.
-    LaunchedEffect(item?.contentId, pending, status.onView, busy) {
-        if (item == null || pending == null || status.onView != MetadataAiOnView.Auto) return@LaunchedEffect
+    LaunchedEffect(item?.contentId, pending, status.onView, busy, autoTranslate) {
+        if (!autoTranslate || item == null || pending == null || status.onView != MetadataAiOnView.Auto) {
+            return@LaunchedEffect
+        }
         delay(TvMarqueeTranslateDwellMs)
         state.translateOnView(item)
     }
