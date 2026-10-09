@@ -546,8 +546,10 @@ fun TvAppNavigation(
     }
 
     LaunchedEffect(siloCastReceiver) {
-        siloCastReceiver.launchRequests.collect { request ->
-            val playback = request.playback
+        siloCastReceiver.launchRequests.collect { launch ->
+            // An expired launch, or one whose identity changed, never opens.
+            if (!siloCastReceiver.confirmLaunch(launch.id)) return@collect
+            val playback = launch.request.playback
             val destination = TvRoute.Player(
                 contentId = playback.contentId,
                 libraryId = playback.libraryId,
@@ -555,6 +557,7 @@ fun TvAppNavigation(
                 resumePositionSeconds = if (playback.startFromBeginning) 0.0 else playback.resumePosition,
                 audioTrackIndex = playback.audioTrackIndex,
                 subtitleTrackIndex = playback.subtitleTrackIndex,
+                castLaunchId = launch.id,
             ).route
             // Replace whichever player is on top, not just the video one. This
             // only knew about TvRoute.Player, so a cast launch during an
@@ -1383,8 +1386,31 @@ fun TvAppNavigation(
                     nullable = true
                     defaultValue = null
                 },
+                navArgument(TvRoute.Player.ARG_CAST_LAUNCH) {
+                    type = NavType.StringType
+                    nullable = true
+                    defaultValue = null
+                },
             ),
         ) { backStack ->
+            val castLaunchId = backStack.arguments?.getString(TvRoute.Player.ARG_CAST_LAUNCH)
+            // Acts only while this entry is on top: once a newer launch has
+            // replaced it, that navigation already tears this player down.
+            val leaveStaleCastLaunch: (stopPlayback: () -> Unit) -> Unit = { stopPlayback ->
+                if (navController.currentBackStackEntry?.id == backStack.id) {
+                    stopPlayback()
+                    navController.popBackStack()
+                }
+            }
+            // A phone's launch that went stale after navigation took it never
+            // creates its player, so nothing starts loading under another identity.
+            val castLaunchCurrent = remember(backStack.id) {
+                castLaunchId == null || siloCastReceiver.confirmLaunch(castLaunchId)
+            }
+            if (!castLaunchCurrent) {
+                LaunchedEffect(backStack.id) { leaveStaleCastLaunch {} }
+                return@composable
+            }
             val contentId = backStack.arguments
                 ?.getString(TvRoute.Player.ARG_CONTENT_ID)
                 .orEmpty()
@@ -1467,6 +1493,8 @@ fun TvAppNavigation(
                 episodeSelectionHandoff = episodeSelectionHandoff,
                 navigationSettled = !transition.isRunning,
                 shuffleId = backStack.arguments?.getString(TvRoute.Player.ARG_SHUFFLE_ID),
+                castLaunchId = castLaunchId,
+                onStaleCastLaunch = leaveStaleCastLaunch,
                 onExit = { navController.popBackStack() },
                 // Host Stop: back to the room's lobby in place of the player.
                 // The membership is kept, so the lobby follows the next Start.

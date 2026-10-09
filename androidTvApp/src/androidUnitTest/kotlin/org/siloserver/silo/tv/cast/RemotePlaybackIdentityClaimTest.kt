@@ -2,13 +2,21 @@ package org.siloserver.silo.tv.cast
 
 import android.app.Application
 import kotlin.test.*
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.async
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import org.siloserver.silo.cast.SiloCastHandoffOffer
+import org.siloserver.silo.model.auth.DeviceLoginStartResponse
 import org.siloserver.silo.network.AndroidServerRegistry
+import org.siloserver.silo.network.ApiResult
+import org.siloserver.silo.network.AuthScopeSnapshot
 import org.siloserver.silo.network.TokenManagerImpl
+import org.siloserver.silo.network.api.DeviceLoginApi
 
 /**
  * The receiver's stop() ends the temporary identity only after the player's
@@ -78,6 +86,33 @@ class RemotePlaybackIdentityClaimTest {
         assertTrue(tokens.hasTemporaryScope())
     }
 
+    @Test fun anIdentityBeingEndedIsNeverReused() = runTest {
+        val gated = GatedLogoutApi(api)
+        val manager = RemotePlaybackIdentityManager(gated, tokens, deviceNameProvider = { "TV" })
+        suspend fun prepareOn(run: Long) =
+            manager.prepare(offer(), CONTROLLER, controllerDeviceName = null, receiverRun = run) {}
+
+        prepareOn(STOPPED_RUN)
+        val ending = assertNotNull(manager.activeIdentity)
+        val logout = CompletableDeferred<Unit>()
+        gated.logoutGate = logout
+
+        val end = launch { manager.end(ending.generationId) }
+        runCurrent()
+        // The logout is in flight: nothing outside the lock may launch on it.
+        assertNull(manager.activeIdentity)
+
+        val sameOffer = async { prepareOn(NEXT_RUN) }
+        runCurrent()
+        logout.complete(Unit)
+        end.join()
+        val ready = sameOffer.await()
+
+        assertFalse(ready.reused)
+        assertEquals(2, gated.startCalls)
+        assertNotEquals(ending.generationId, manager.activeIdentity?.generationId)
+    }
+
     private suspend fun prepare(offer: SiloCastHandoffOffer, run: Long) =
         manager.prepare(offer, CONTROLLER, controllerDeviceName = null, receiverRun = run) {}
 
@@ -87,6 +122,26 @@ class RemotePlaybackIdentityClaimTest {
         serverURL = SERVER_URL,
         profileId = profileId,
     )
+
+    /** Counts handoff starts and can hold a logout open; the rest is [FakeRemotePlaybackApi]. */
+    private class GatedLogoutApi(private val inner: FakeRemotePlaybackApi) : DeviceLoginApi by inner {
+        var startCalls = 0
+        var logoutGate: CompletableDeferred<Unit>? = null
+
+        override suspend fun startRemotePlaybackAt(
+            serverUrl: String,
+            deviceName: String?,
+            devicePlatform: String?,
+        ): ApiResult<DeviceLoginStartResponse> {
+            startCalls += 1
+            return inner.startRemotePlaybackAt(serverUrl, deviceName, devicePlatform)
+        }
+
+        override suspend fun endRemotePlayback(scope: AuthScopeSnapshot): ApiResult<Unit> {
+            logoutGate?.await()
+            return inner.endRemotePlayback(scope)
+        }
+    }
 
     private companion object {
         const val SERVER_URL = "https://media.example.test"
