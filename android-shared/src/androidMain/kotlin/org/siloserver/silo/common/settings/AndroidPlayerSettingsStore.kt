@@ -648,10 +648,18 @@ class AndroidPlayerSettingsStore(
         refreshFromServerConfirmed()
     }
 
-    /** [refreshFromServer], answering whether the server's effective values were read and applied. */
-    private suspend fun refreshFromServerConfirmed(): Boolean {
+    /**
+     * [refreshFromServer], answering whether the server's effective values
+     * were read and applied.
+     *
+     * With [pinned], the refresh is for that captured scope only: the request
+     * carries its authority, the answer is written to its store, and a scope
+     * that stops being the active one (a profile switch, a sign-out, a server
+     * change) makes it apply nothing and answer false. Without it the refresh
+     * follows whichever scope is active when it runs.
+     */
+    private suspend fun refreshFromServerConfirmed(pinned: Scope? = null): Boolean {
         val repo = settingsRepository ?: return false
-        var applied = false
         // Push before pull. Local writes sit in the flusher's debounce for
         // ~750ms; a refresh inside that window read the server's OLD value and
         // wrote it back over the change the user had just made. The player
@@ -664,30 +672,60 @@ class AndroidPlayerSettingsStore(
         // gates revision-dependent fields on a current answer and a server
         // upgraded while the app ran is noticed.
         contractRevision?.let { revision ->
-            getServerUrl()?.takeIf { it.isNotBlank() }?.let { url -> runCatching { revision.refresh(url) } }
+            (pinned?.serverUrl ?: getServerUrl())?.takeIf { it.isNotBlank() }?.let { url -> runCatching { revision.refresh(url) } }
         }
         runCatching { serverSettingsFlusher.flushNow() }
-        withScope { scope, store ->
-            // Batched canonical resolution: one request answers every
-            // device-relevant key, each with the scope it resolved from.
-            val result = repo.getEffectiveValues(RemoteDeviceSettings)
-            if (result !is ApiResult.Success) return@withScope
-            // Draining is not the same as landing: a write that failed
-            // transiently stays queued for retry and flushNow still returns
-            // normally, so this response was answered from the value the write
-            // has not reached yet. Applying it for those keys is the same
-            // clobber the push-first order exists to prevent — it put the
-            // server's old Dolby Vision value back and restarted the session on
-            // it. Every other key still hydrates from the canonical answer.
-            applyEffectiveLocally(
-                scope = scope,
-                store = store,
-                effective = result.data,
-                unlandedKeys = serverSettingsFlusher.pendingKeys(scope.profileId),
-            )
-            applied = true
+        if (pinned != null) {
+            return applyServerEffective(repo, pinned, storeFor(pinned.profileId), pinned.authority) { isStillCurrent(pinned) }
         }
+        var applied = false
+        withScope { scope, store -> applied = applyServerEffective(repo, scope, store, authority = null) { true } }
         return applied
+    }
+
+    private suspend fun applyServerEffective(
+        repo: SettingsRepository,
+        scope: Scope,
+        store: DataStore<Preferences>,
+        authority: org.siloserver.silo.network.AuthScopeSnapshot?,
+        isCurrent: suspend () -> Boolean,
+    ): Boolean {
+        if (!isCurrent()) return false
+        // Batched canonical resolution: one request answers every
+        // device-relevant key, each with the scope it resolved from.
+        val result = repo.getEffectiveValues(RemoteDeviceSettings, authority = authority)
+        if (result !is ApiResult.Success || !isCurrent()) return false
+        // Draining is not the same as landing: a write that failed
+        // transiently stays queued for retry and flushNow still returns
+        // normally, so this response was answered from the value the write
+        // has not reached yet. Applying it for those keys is the same
+        // clobber the push-first order exists to prevent — it put the
+        // server's old Dolby Vision value back and restarted the session on
+        // it. Every other key still hydrates from the canonical answer.
+        return applyEffectiveLocally(
+            scope = scope,
+            store = store,
+            effective = result.data,
+            unlandedKeys = serverSettingsFlusher.pendingKeys(scope.profileId),
+            isCurrent = isCurrent,
+        )
+    }
+
+    /**
+     * Whether [captured] is still the active scope: same profile, server and
+     * device, and the same signed-in identity (the check
+     * [importLegacyDeviceSettings] applies to its captured authority).
+     */
+    private suspend fun isStillCurrent(captured: Scope): Boolean {
+        val now = currentScope() ?: return false
+        if (now.profileId != captured.profileId || now.serverUrl != captured.serverUrl || now.deviceId != captured.deviceId) {
+            return false
+        }
+        val owner = captured.authority ?: return now.authority == null
+        val current = now.authority
+        return owner.isSameIdentityAs(current) &&
+            owner.profileId == current?.profileId &&
+            owner.profileToken == current?.profileToken
     }
 
     override suspend fun setSubtitleDeviceOverrideEnabled(enabled: Boolean) {
@@ -790,10 +828,13 @@ class AndroidPlayerSettingsStore(
             // An empty queue is not proof: the flusher also drops deletes it
             // cannot retry (a 401/403, a replaced owner). Only the server's
             // own answer, with nothing left resolving from this device,
-            // confirms the profile's settings apply.
-            val confirmed = refreshFromServerConfirmed()
+            // confirms the profile's settings apply. The refresh is pinned to
+            // the scope this reset started in: if the user switches profile or
+            // signs out meanwhile, another profile's answer must neither land
+            // in this store nor confirm this reset.
+            val confirmed = refreshFromServerConfirmed(pinned = scope)
             val remaining = store.data.first()[deviceOverridesKey(scope)].orEmpty()
-            landed = !unsent && confirmed && remaining.none { it in RemoteDeviceSettings }
+            landed = !unsent && confirmed && remaining.none { it in RemoteDeviceSettings } && isStillCurrent(scope)
         }
         return landed
     }
@@ -810,8 +851,12 @@ class AndroidPlayerSettingsStore(
         // cannot describe them yet, so the local value stays authoritative
         // until the queued write lands.
         unlandedKeys: Set<String> = emptySet(),
-    ) {
+        isCurrent: suspend () -> Boolean = { true },
+    ): Boolean {
+        var applied = false
         store.edit { prefs ->
+            if (!isCurrent()) return@edit
+            applied = true
             val overrides = prefs[deviceOverridesKey(scope)].orEmpty().toMutableSet()
             for (key in RemoteDeviceSettings) {
                 if (key in unlandedKeys) continue
@@ -859,6 +904,7 @@ class AndroidPlayerSettingsStore(
                 }
             }
         }
+        return applied
     }
 
     /**

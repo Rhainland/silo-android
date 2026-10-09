@@ -919,6 +919,38 @@ class AndroidPlayerSettingsStoreTest {
     }
 
     @Test
+    fun `resetAllDeviceSettings does not confirm a reset for a profile switched away from mid-reset`() = runTest {
+        val ownerA = org.siloserver.silo.network.AuthScopeSnapshot("server", "profile-a", serverUrl, "token-a", credentialEpoch = 1)
+        var owner = ownerA
+        val stores = mutableMapOf<String, DataStore<Preferences>>()
+        // Profile B's answer: every device row is gone, which would confirm
+        // the reset if it were read as profile A's.
+        val api = FakeSettingsApi(
+            effective = mapOf(defaulted(PlaybackSettingsKeys.AutoSkipCredits, JsonPrimitive(false))),
+        )
+        val store = AndroidPlayerSettingsStore(
+            context = mockContextStub(), legacyCache = fakeLegacyCache,
+            getActiveProfileId = { owner.profileId }, getServerUrl = { serverUrl },
+            getDeviceId = { "device" }, serverSettingsFlusher = fakeFlusher,
+            settingsRepository = SettingsRepository(api), getAuthScope = { owner },
+            dataStoreFactory = { id -> stores.getOrPut(id) {
+                PreferenceDataStoreFactory.create(
+                    produceFile = { File(tempFolder.root, "reset_switch_$id.preferences_pb") },
+                )
+            } },
+        )
+        store.setAutoSkipCredits(true)
+        // The user switches to profile B while the reset's refresh is in flight.
+        api.onEffective = { owner = ownerA.copy(profileId = "profile-b", profileToken = "token-b") }
+
+        assertFalse(store.resetAllDeviceSettings())
+        assertEquals(listOf<org.siloserver.silo.network.AuthScopeSnapshot?>(ownerA), api.requestedAuthorities)
+        // Profile A's store did not take profile B's answer either.
+        owner = ownerA
+        assertTrue(store.autoSkipCreditsFlow.first())
+    }
+
+    @Test
     fun `setSubtitleDeviceOverrideEnabled false enqueues delete and clears local flag`() = runTest {
         val repo = SettingsRepository(FakeSettingsApi())
         val store = newStore(repository = repo)
@@ -1223,6 +1255,10 @@ private class FakeSettingsApi(
     // up a second DataStore over the same file.
     var effective: Map<String, EffectiveSettingValue> = effective
     var requestedKeys: List<String> = emptyList()
+    val requestedAuthorities = mutableListOf<org.siloserver.silo.network.AuthScopeSnapshot?>()
+
+    /** Runs while a request is in flight, before it is answered. */
+    var onEffective: () -> Unit = {}
 
     override suspend fun getEffectiveValues(
         keys: List<String>,
@@ -1231,6 +1267,8 @@ private class FakeSettingsApi(
         authority: org.siloserver.silo.network.AuthScopeSnapshot?,
     ): ApiResult<EffectiveSettingValuesResponse> {
         requestedKeys = keys
+        requestedAuthorities += authority
+        onEffective()
         // Like the server: answer only the keys this contract knows.
         val entries = keys.mapNotNull { effective[it] }
         return ApiResult.Success(EffectiveSettingValuesResponse(settings = entries, revision = 1))
