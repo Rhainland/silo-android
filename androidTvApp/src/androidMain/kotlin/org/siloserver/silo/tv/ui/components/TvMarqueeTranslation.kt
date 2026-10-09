@@ -8,6 +8,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -63,7 +64,7 @@ internal class TvMarqueeTranslationState(
         if (item.contentId in landed) landed[item.contentId]?.pending
         else item.pendingTranslationLanguage?.takeIf { it.isNotBlank() }
 
-    fun translateOnView(item: SectionItem) {
+    fun translateOnView(item: SectionItem, onLanded: () -> Unit) {
         val contentId = item.contentId
         val target = pendingLanguage(item) ?: return
         // One translation at a time; an item skipped while another runs is
@@ -92,7 +93,9 @@ internal class TvMarqueeTranslationState(
                         else -> target // transient refetch failure: keep polling
                     }
                 },
-                onTranslated = { },
+                // The rows still hold the untranslated card; re-read them so
+                // the translation survives this feed leaving composition.
+                onTranslated = { onLanded() },
             )
         }
     }
@@ -132,7 +135,10 @@ internal fun rememberTvMarqueeTranslation(
     item: SectionItem?,
     /** Start on-view translation for this item; false only displays it. */
     autoTranslate: Boolean,
+    /** Called once a translation lands, to re-read the rows that hold the card. */
+    onTranslated: () -> Unit = {},
 ): TvMarqueeTranslation? {
+    val latestOnTranslated by rememberUpdatedState(onTranslated)
     val repository: MetadataAiRepository = koinInject()
     val metadataAiStore: MetadataAiFeatureStore = koinInject()
     val status by metadataAiStore.status.collectAsState()
@@ -149,7 +155,7 @@ internal fun rememberTvMarqueeTranslation(
             return@LaunchedEffect
         }
         delay(TvMarqueeTranslateDwellMs)
-        state.translateOnView(item)
+        state.translateOnView(item) { latestOnTranslated() }
     }
     return item?.let { state.presentation(it, phase, runningId) }
 }

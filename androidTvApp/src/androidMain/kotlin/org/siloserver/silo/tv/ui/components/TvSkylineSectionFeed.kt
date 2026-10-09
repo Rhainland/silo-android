@@ -166,6 +166,8 @@ fun TvSkylineSectionFeed(
     /** A non-null action replaces the card context menu for that long press. */
     longClickActionForSection: (ResolvedSection, SectionItem) -> (() -> Unit)? = { _, _ -> null },
     onContentUpFallbackChanged: ((((Boolean) -> Boolean)?) -> Unit)? = null,
+    /** Re-reads [sections] after the marquee translated a card's description. */
+    onMarqueeTranslated: () -> Unit = {},
 ) {
     val rows = remember(sections) { sections.filter { it.items.isNotEmpty() } }
     val diagnosticsSurface = when {
@@ -893,6 +895,7 @@ fun TvSkylineSectionFeed(
                 translation = rememberTvMarqueeTranslation(
                     item = marquee.content?.source,
                     autoTranslate = isFeaturedMarqueeContent(marquee.content, rows),
+                    onTranslated = onMarqueeTranslated,
                 ),
                 startPadding = TvSkyline.safeAreaX,
                 // Keep the marquee out of the top-menu-bar zone: the block is
