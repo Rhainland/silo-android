@@ -62,6 +62,9 @@ import org.siloserver.silo.tv.ui.screens.player.TvVideoPlaybackStarter
 import org.siloserver.silo.tv.ui.screens.profiles.TvProfileSelectionViewModel
 import org.siloserver.silo.tv.ui.screens.search.TvSearchViewModel
 import org.siloserver.silo.tv.data.preferences.TvLibraryScopeStore
+import org.siloserver.silo.tv.data.preferences.TvProfileLaunchPreferences
+import org.siloserver.silo.tv.profiles.TvActiveProfileReset
+import org.siloserver.silo.tv.profiles.TvProfileAwayTracker
 import org.siloserver.silo.tv.watchnext.WatchNextRepository
 import org.siloserver.silo.tv.watchnext.WatchNextSeeder
 import android.net.Uri
@@ -320,6 +323,13 @@ val androidTvModule = module {
     single { WatchNextRepository(androidContext()) }
     single { WatchNextSeeder(androidContext(), get()) }
 
+    // Profile Selection (tvOS General → PROFILE AT LAUNCH): the device-wide
+    // choice, the tracker MainTvActivity drives from onStop/onStart, and the
+    // reset every path uses to drop the active profile.
+    single { TvProfileLaunchPreferences(androidContext()) }
+    single { TvProfileAwayTracker(get(), get(), get()) }
+    single { TvActiveProfileReset(get(), get(), get(), get(), get(), get(), get()) }
+
     // Deep-link bridge between MainTvActivity (producer) and TvAppNavigation
     // (consumer). The Activity writes incoming Silo app-scheme URIs here on
     // cold-launch (read from launching intent in onCreate) and warm-launch
@@ -416,7 +426,7 @@ val androidTvModule = module {
             profileId = params.get(),
         )
     }
-    viewModel { TvServerListViewModel(get(), get(), get()) }
+    viewModel { TvServerListViewModel(get(), get(), get(), get(), get()) }
 
     viewModel { params ->
         org.siloserver.silo.viewmodel.RequestDetailViewModel(get(), params.get(), params.get(), featureStore = get())
@@ -464,7 +474,12 @@ val androidTvModule = module {
             },
         )
     }
-    viewModel { TvLibrariesViewModel(get(), get(), get()) }
+    viewModel {
+        TvLibrariesViewModel(
+            get(), get(), get(),
+            reachability = get<org.siloserver.silo.common.network.ServerReachabilityMonitor>().state,
+        )
+    }
     viewModel { params ->
         TvLibraryDetailViewModel(
             sectionRepository = get(),
@@ -472,6 +487,7 @@ val androidTvModule = module {
             libraryId = params.get(),
             libraryTitle = params.get(),
             libraryType = params.get(),
+            mediaScope = params.values.getOrNull(3) as? String,
         )
     }
     viewModel { params ->
@@ -481,6 +497,8 @@ val androidTvModule = module {
             libraryId = params.get(),
             collectionId = params.get(),
             title = params.get(),
+            mediaScope = params.values.getOrNull(3) as? String,
+            collectionSource = params.values.getOrNull(4) as? String ?: "library_collection",
         )
     }
     viewModel { TvSearchViewModel(get(), get(), get()) }
@@ -601,6 +619,8 @@ val androidTvModule = module {
             tvLibraryScopeStore = getOrNull(),
             seekIntervalStore = get(),
             audiobookSettingsStore = get(),
+            profileLaunchPreferences = get(),
+            watchNextSeeder = get(),
         )
     }
     viewModel { TvDiagnosticsViewModel(get()) }

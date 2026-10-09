@@ -65,6 +65,7 @@ import org.siloserver.silo.model.settings.SubtitleAppearance
 import org.siloserver.silo.model.playback.PlayMethod
 import org.siloserver.silo.model.playback.PlaybackDelivery
 import org.siloserver.silo.model.playback.PlaybackExecutionPlan
+import org.siloserver.silo.model.playback.playbackQualityMenu
 import org.siloserver.silo.model.playback.executableMedia3ClientTransformations
 import org.siloserver.silo.model.playback.PlayerSubtitleInfo
 import org.siloserver.silo.model.playback.CommittedSubtitle
@@ -426,6 +427,8 @@ class PlayerViewModel(
         val title: String = "",
         val subtitle: String = "",
         val seriesTitle: String? = null,
+        /** Catalog item type ("movie", "episode", …), for the controls' "MOVIE · 2026" line. */
+        val contentType: String? = null,
         /**
          * Artwork URL used for the Now Playing lock-screen / Bluetooth /
          * notification surface. Sourced from `WatchDetail.backdropUrl` with
@@ -437,6 +440,8 @@ class PlayerViewModel(
         val sessionId: String? = null,
         val playMethod: PlayMethod? = null,
         val playbackPlan: PlaybackExecutionPlan? = null,
+        /** The quality preference the playing plan was built for; null is Auto. */
+        val committedQualityPreference: String? = null,
         val requestHeaders: Map<String, String> = emptyMap(),
         val delivery: PlaybackDelivery? = null,
         val streamUrl: String? = null,
@@ -908,6 +913,8 @@ class PlayerViewModel(
     private var aiJobHandle: Job? = null
 
     private var controlsHideJob: Job? = null
+    // True while the seek bar is dragged; see onScrubbingChanged.
+    private var scrubbing = false
     private var introObserverJob: Job? = null
     private var lifecycleObserverJob: Job? = null
     private var resolveNextEpisodeJob: Job? = null
@@ -1194,11 +1201,23 @@ class PlayerViewModel(
             normalizedRequestedQuality = normalizedPreferredQuality,
             preserveCurrent = preserveRouteIntent,
         )
+        // A quality picked during this title's playback, or this room epoch,
+        // outlives reloads of it (recovery, retry, the next shuffle part), so
+        // they start with it rather than the route's quality.
+        val carriesPickedQuality = keepsPickedQuality(
+            contentId = contentId,
+            previousContentId = lastLoadArgs?.contentId,
+            routeNamesQuality = !preserveRouteIntent && normalizedPreferredQuality != null,
+            room = room,
+            currentRoom = currentRoomContext,
+        )
+        if (room == null && !carriesPickedQuality) sessionQualityOverride = null
+        val loadQuality = sessionQualityOverride.takeIf { carriesPickedQuality } ?: effectivePreferredQuality
         loadJob?.cancel()
         val loadOwner = loadOwners.begin(
             contentId = contentId,
             preferredFileId = preferredFileId,
-            preferredQuality = effectivePreferredQuality,
+            preferredQuality = loadQuality,
         )
         // Remember the exact request so a "Can't reach server" Retry / Try Anyway
         // can replay it faithfully (this screen has no other retry entry point).
@@ -1276,7 +1295,7 @@ class PlayerViewModel(
                         libraryId = libraryId,
                         contentId = contentId,
                         preferredFileId = preferredFileId,
-                        preferredQualityOverride = effectivePreferredQuality,
+                        preferredQualityOverride = loadQuality,
                         roomId = room?.roomId,
                         resumePositionOverride = resumePositionOverride,
                         audioTrackIndex = initialAudioTrackIndex,
@@ -1593,6 +1612,7 @@ class PlayerViewModel(
                 error = null,
                 title = watchDetail?.title ?: playbackState.title,
                 seriesTitle = watchDetail?.seriesTitle,
+                contentType = watchDetail?.type ?: playbackState.contentType,
                 subtitle = watchDetail?.let { detail -> buildSubtitle(detail) } ?: playbackState.subtitle.orEmpty(),
                 artworkUrl = playbackState.artworkUrl,
                 sessionId = playbackState.sessionId
@@ -3317,7 +3337,8 @@ class PlayerViewModel(
     private var roomObservedSessionId: String? = null
     private var roomLastUiSessionId: String? = null
 
-    // Quality chosen during this room epoch (the lower-quality offer).
+    // Quality chosen during this title's playback, or this room epoch's (the
+    // Quality menu or the lower-quality offer).
     private var sessionQualityOverride: String? = null
 
     /**
@@ -3510,10 +3531,27 @@ class PlayerViewModel(
         return true
     }
 
-    private fun noteRoomQualityCommitted(committed: String?) {
+    /**
+     * Quality menu pick: replans at [id], a plan entry's label sent verbatim,
+     * or auto to hand the choice back to the server. The active row is a no-op.
+     */
+    fun onSelectQuality(id: String) {
+        val state = _uiState.value
+        val menu = playbackQualityMenu(state.playbackPlan?.availableQualities.orEmpty())
+        if (menu.none { it.id == id }) return
+        if (id == state.activeQualityId(menu)) return
+        mobileSubtitleTransactions.updatePlaybackContext(mobileSubtitleContext(state))
+        mobileSubtitleTransactions.selectQuality(id)
+    }
+
+    /**
+     * Keeps a committed quality for later replans, seek recoveries and
+     * restarts of this title, which otherwise fall back to the route's.
+     */
+    private fun noteQualityCommitted(committed: String?) {
         if (committed == null || committed == currentMobileQualityPreference()) return
         sessionQualityOverride = committed
-        _roomQualityChanges.tryEmit(Unit)
+        if (inRoom) _roomQualityChanges.tryEmit(Unit)
     }
 
     private fun roomMediaTransitioning(state: PlayerUiState): Boolean =
@@ -3681,6 +3719,7 @@ class PlayerViewModel(
                 pendingSubtitleIdentity = snapshot.pendingIdentity,
                 localSubtitleMountIdentity = snapshot.localMountIdentity,
                 subtitleApplying = snapshot.subtitleApplying,
+                committedQualityPreference = snapshot.transition.committed.qualityPreference,
             )
         }
         val state = _uiState.value
@@ -3692,9 +3731,15 @@ class PlayerViewModel(
             transactionActive = mobileSubtitleTransactions.hasActiveTransaction,
         )
         snapshot.failureMessage?.let {
-            showVersionSwitchMessage("Couldn't apply subtitles — playback continues unchanged.")
+            showVersionSwitchMessage(
+                if (snapshot.qualityChangeFailed) {
+                    "Couldn't change quality. Try again."
+                } else {
+                    "Couldn't apply subtitles — playback continues unchanged."
+                },
+            )
         }
-        if (inRoom) noteRoomQualityCommitted(snapshot.transition.committed.qualityPreference)
+        noteQualityCommitted(snapshot.transition.committed.qualityPreference)
         if (!mobileSubtitleTransactions.hasActiveTransaction) {
             redriveQueuedInvalidationReplan()
         }
@@ -5170,6 +5215,9 @@ class PlayerViewModel(
             routeIntentState.recoverVersionSelection(state.contentId)
         } else {
             routeIntentState.beginVersionSelection(state.contentId, version.fileId)
+            // Choosing a file drops a picked quality: a quality served by
+            // another version would move playback straight off this one.
+            sessionQualityOverride = null
         }
         val currentVersion = state.versions.getOrNull(state.selectedVersionIndex)
         val carriedAudioIndex = desiredAudio
@@ -5273,6 +5321,16 @@ class PlayerViewModel(
         }
     }
 
+    /**
+     * Holds the controls on screen while the seek bar is dragged: an auto-hide
+     * mid-drag would remove the bar and drop the seek. The timer restarts when
+     * the drag ends.
+     */
+    fun onScrubbingChanged(active: Boolean) {
+        scrubbing = active
+        scheduleControlsHide()
+    }
+
     /** Called when the user exits the player. */
     fun onExit() {
         if (!exitPrepared.compareAndSet(false, true)) return
@@ -5345,6 +5403,7 @@ class PlayerViewModel(
 
     private fun scheduleControlsHide() {
         controlsHideJob?.cancel()
+        if (scrubbing) return
         controlsHideJob = viewModelScope.launch {
             delay(CONTROLS_AUTO_HIDE_MS)
             val state = _uiState.value
@@ -5483,6 +5542,7 @@ class PlayerViewModel(
                 error = null,
                 title = title,
                 subtitle = subtitle,
+                contentType = watchDetail?.type,
                 artworkUrl = artworkUrl,
                 // Playback fields — file:// is read directly by Media3, no
                 // server session needed.
@@ -5738,4 +5798,24 @@ internal fun authoritativePlaybackSubtitleOrdinal(
     -1 -> -1
     else -> playbackTracks.indexOfFirst { it.index == serverIndex }
         .takeIf { it >= 0 }
+}
+
+/**
+ * Whether a quality picked earlier carries into this load. It does for a
+ * reload of the same title outside a room, unless the route itself names a
+ * quality, and for a reload inside the same room epoch. Any other title or
+ * room epoch starts from the route's quality.
+ */
+internal fun keepsPickedQuality(
+    contentId: String,
+    previousContentId: String?,
+    routeNamesQuality: Boolean,
+    room: WatchPartyPlaybackContext?,
+    currentRoom: WatchPartyPlaybackContext?,
+): Boolean = if (room == null) {
+    contentId == previousContentId && !routeNamesQuality
+} else {
+    currentRoom != null &&
+        currentRoom.roomId == room.roomId &&
+        currentRoom.selectionRevision == room.selectionRevision
 }

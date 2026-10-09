@@ -196,6 +196,8 @@ fun TvMainShell(
         collectionId: String,
         title: String,
         libraryType: String,
+        collectionSource: String,
+        mediaScope: String?,
     ) -> Unit,
     onOpenCollectionDetail: (collectionId: String, title: String) -> Unit,
     onSignedOut: () -> Unit,
@@ -242,15 +244,44 @@ fun TvMainShell(
     // `visibleRoots` is only Home + Calendar, so a restored/deep-linked
     // `main/movies` route must NOT be treated as "type has no libraries" yet.
     var librariesLoaded by remember { mutableStateOf(false) }
+    // The list leaves out libraries the profile hid; hiding or showing one
+    // on another device re-loads it.
+    val hiddenLibrariesRevision by personalDataRepository.hiddenLibrariesRevision.collectAsState()
+    // A failed load is retried on the next reachable probe: the revision that
+    // asked for it won't come again, and a library shown again on another
+    // device can only come back from the server.
+    var librariesReloadPending by remember { mutableStateOf(false) }
+    var librariesRetry by remember { mutableIntStateOf(0) }
+    LaunchedEffect(reachabilityState.status, reachabilityState.lastCheckedAtMs) {
+        if (librariesReloadPending && reachabilityState.status == ServerReachabilityStatus.Reachable) librariesRetry++
+    }
     val libraries by produceState(
         initialValue = emptyList<UserLibrary>(),
         personalDataRepository,
+        hiddenLibrariesRevision,
+        librariesRetry,
     ) {
-        when (val result = personalDataRepository.listUserLibraries()) {
-            is ApiResult.Success ->
+        // Pending means the last load failed and none is running, so a probe
+        // never cancels a load still in flight.
+        librariesReloadPending = false
+        // Only the first load may fall back to the offline cache. A later one
+        // re-checks, so a failure stays a failure and stays pending, rather
+        // than a cached list that misses a library shown again since.
+        val result = if (librariesLoaded) {
+            personalDataRepository.recheckUserLibraries(value.mapTo(mutableSetOf()) { it.id })
+        } else {
+            personalDataRepository.listUserLibraries()
+        }
+        when (result) {
+            is ApiResult.Success -> {
                 value = result.data.visibleOnTv().sortedBy { it.sortOrder }
+            }
+            // Keep what's shown, minus a library hidden since.
             is ApiResult.Error,
-            is ApiResult.NetworkError -> Unit
+            is ApiResult.NetworkError -> {
+                value = personalDataRepository.withoutHidden(value)
+                librariesReloadPending = true
+            }
         }
         // Mark loaded even on error (we've attempted) so the redirect can run;
         // an empty list then legitimately means "no libraries for this profile".
@@ -492,8 +523,13 @@ fun TvMainShell(
         { libraryId, collectionId, title, libraryType ->
             restoreContentAfterDetail = true
             detailReturnRoot = null
-            onOpenLibraryCollectionDetail(libraryId, collectionId, title, libraryType)
+            onOpenLibraryCollectionDetail(libraryId, collectionId, title, libraryType, "library_collection", null)
         }
+    val openScopedCollection: (Int, String, String, String, Boolean) -> Unit = { libraryId, id, title, scope, isUser ->
+        restoreContentAfterDetail = true
+        detailReturnRoot = null
+        onOpenLibraryCollectionDetail(libraryId, id, title, "mixed", if (isUser) "user_collection" else "library_collection", scope)
+    }
     val openCollectionDetail: (String, String) -> Unit = { collectionId, title ->
         restoreContentAfterDetail = true
         detailReturnRoot = null
@@ -1262,6 +1298,7 @@ fun TvMainShell(
                 shellComposable(TvMainRoute.Movies.route) {
                     TvLibraryTypeContent(
                         type = TvLibraryTabType.Movies,
+                        onScopedCollectionClick = openScopedCollection,
                         library = activeLibrary(TvLibraryTabType.Movies),
                         emptyConfirmed = librariesLoaded && libraries.none { TvLibraryTabType.Movies.matches(it) },
                         selectedPill = pillSelections[TvLibraryTabType.Movies] ?: TvLibraryPill.Recommended,
@@ -1279,6 +1316,7 @@ fun TvMainShell(
                 shellComposable(TvMainRoute.Series.route) {
                     TvLibraryTypeContent(
                         type = TvLibraryTabType.Series,
+                        onScopedCollectionClick = openScopedCollection,
                         library = activeLibrary(TvLibraryTabType.Series),
                         emptyConfirmed = librariesLoaded && libraries.none { TvLibraryTabType.Series.matches(it) },
                         selectedPill = pillSelections[TvLibraryTabType.Series] ?: TvLibraryPill.Recommended,
@@ -1296,6 +1334,7 @@ fun TvMainShell(
                 shellComposable(TvMainRoute.Music.route) {
                     TvLibraryTypeContent(
                         type = TvLibraryTabType.Music,
+                        onScopedCollectionClick = openScopedCollection,
                         library = activeLibrary(TvLibraryTabType.Music),
                         emptyConfirmed = librariesLoaded && libraries.none { TvLibraryTabType.Music.matches(it) },
                         selectedPill = pillSelections[TvLibraryTabType.Music] ?: TvLibraryPill.Recommended,
@@ -1313,6 +1352,7 @@ fun TvMainShell(
                 shellComposable(TvMainRoute.Audiobooks.route) {
                     TvLibraryTypeContent(
                         type = TvLibraryTabType.Audiobooks,
+                        onScopedCollectionClick = openScopedCollection,
                         library = activeLibrary(TvLibraryTabType.Audiobooks),
                         emptyConfirmed = librariesLoaded && libraries.none { TvLibraryTabType.Audiobooks.matches(it) },
                         selectedPill = pillSelections[TvLibraryTabType.Audiobooks] ?: TvLibraryPill.Recommended,
@@ -1707,6 +1747,7 @@ fun TvMainShell(
 @Composable
 private fun TvLibraryTypeContent(
     type: TvLibraryTabType,
+    onScopedCollectionClick: (Int, String, String, String, Boolean) -> Unit,
     library: UserLibrary?,
     emptyConfirmed: Boolean,
     selectedPill: TvLibraryPill,
@@ -1753,9 +1794,13 @@ private fun TvLibraryTypeContent(
             libraryId = library.id,
             libraryTitle = library.name,
             libraryType = library.type,
+            mediaScope = type.mediaScope(library),
             onItemClick = onItemClick,
             onCollectionClick = { collectionId, title, isUserCollection ->
-                if (isUserCollection) {
+                val scope = type.mediaScope(library)
+                if (scope != null) {
+                    onScopedCollectionClick(library.id, collectionId, title, scope, isUserCollection)
+                } else if (isUserCollection) {
                     onUserCollectionClick(collectionId, title)
                 } else {
                     onLibraryCollectionClick(library.id, collectionId, title, library.type)
