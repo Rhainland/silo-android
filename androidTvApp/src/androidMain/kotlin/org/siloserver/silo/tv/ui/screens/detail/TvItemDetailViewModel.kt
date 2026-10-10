@@ -2197,8 +2197,9 @@ class TvItemDetailViewModel(
         val target = state.episodes
             .filter { it.seasonNumber == seasonNumber }
             .pendingEpisodeTranslationLanguage() ?: return
-        if (!episodeTranslation.shouldAutoFire(season.contentId, target)) return
-        episodeTranslation.markAutoFired(season.contentId, target)
+        // A season switched to while another season's job polls is retried
+        // when that job ends (below), rather than latched as already fired.
+        if (!episodeTranslation.claimAutoFire(season.contentId, target)) return
         episodeTranslation.resetFailure()
         val refreshRail = {
             if (_uiState.value.selectedSeason == seasonNumber) {
@@ -2218,6 +2219,7 @@ class TvItemDetailViewModel(
                 onPoll = { refreshRail() },
                 onTranslated = { refreshRail() },
             )
+            if (episodeTranslation.takeDeferredAuto()) translateShownSeasonEpisodes()
         }
     }
 

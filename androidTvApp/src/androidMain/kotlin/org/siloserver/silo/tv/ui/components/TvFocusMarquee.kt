@@ -43,7 +43,7 @@ import androidx.tv.material3.Text
 import org.siloserver.silo.common.settings.titleLogoUrl
 import org.siloserver.silo.common.ui.components.MachineTranslatedLabel
 import org.siloserver.silo.common.ui.components.ThumbhashImage
-import org.siloserver.silo.model.catalog.hasMachineTranslation
+import org.siloserver.silo.model.catalog.hasMachineTranslatedOverview
 import org.siloserver.silo.tv.ui.theme.SiloOnSurface
 import org.siloserver.silo.tv.ui.theme.SiloSecondaryText
 
@@ -213,7 +213,7 @@ private fun TvMarqueeBlock(
         val synopsisText = (translation?.synopsis ?: content.synopsis)?.takeIf { it.isNotBlank() }
         val translating = translation?.translating == true
         val machineTranslated = !translating && synopsisText != null &&
-            (translation?.machineTranslated ?: hasMachineTranslation(content.source.machineTranslatedFields))
+            (translation?.machineTranslated ?: hasMachineTranslatedOverview(content.source.machineTranslatedFields))
 
         // Badge + meta line.
         if (content.badges.isNotEmpty() || content.metaParts.isNotEmpty() || machineTranslated) {

@@ -15,7 +15,7 @@ import kotlinx.coroutines.launch
 import org.koin.compose.koinInject
 import org.siloserver.silo.metadata.DescriptionTranslationController
 import org.siloserver.silo.metadata.DescriptionTranslationPhase
-import org.siloserver.silo.model.catalog.hasMachineTranslation
+import org.siloserver.silo.model.catalog.hasMachineTranslatedOverview
 import org.siloserver.silo.model.feature.MetadataAiFeatureStore
 import org.siloserver.silo.model.metadata.MetadataAiOnView
 import org.siloserver.silo.model.section.ResolvedSection
@@ -69,9 +69,7 @@ internal class TvMarqueeTranslationState(
         val target = pendingLanguage(item) ?: return
         // One translation at a time; an item skipped while another runs is
         // tried again the next time the viewer rests on it.
-        if (phase.value == DescriptionTranslationPhase.Translating) return
-        if (!controller.shouldAutoFire(contentId, target)) return
-        controller.markAutoFired(contentId, target)
+        if (!controller.claimAutoFire(contentId, target)) return
         controller.resetFailure()
         scope.launch {
             controller.translate(
@@ -83,7 +81,7 @@ internal class TvMarqueeTranslationState(
                             val detail = result.data
                             landed[contentId] = Landed(
                                 overview = detail.overview?.takeIf { it.isNotBlank() },
-                                machineTranslated = hasMachineTranslation(detail.machineTranslatedFields),
+                                machineTranslated = hasMachineTranslatedOverview(detail.machineTranslatedFields),
                                 pending = detail.pendingTranslationLanguage?.takeIf { it.isNotBlank() },
                             )
                             landed[contentId]?.pending
@@ -105,7 +103,7 @@ internal class TvMarqueeTranslationState(
         return TvMarqueeTranslation(
             contentId = item.contentId,
             synopsis = update?.overview ?: item.overview?.takeIf { it.isNotBlank() },
-            machineTranslated = update?.machineTranslated ?: hasMachineTranslation(item.machineTranslatedFields),
+            machineTranslated = update?.machineTranslated ?: hasMachineTranslatedOverview(item.machineTranslatedFields),
             translating = phase == DescriptionTranslationPhase.Translating && runningId == item.contentId,
         )
     }

@@ -32,7 +32,7 @@ import androidx.compose.ui.unit.sp
 import org.siloserver.silo.android.ui.theme.SiloBackground
 import org.siloserver.silo.android.ui.util.rememberDominantColor
 import org.siloserver.silo.model.catalog.EpisodeListItem
-import org.siloserver.silo.model.catalog.hasMachineTranslation
+import org.siloserver.silo.model.catalog.hasMachineTranslatedOverview
 import org.siloserver.silo.model.catalog.ItemDetail
 import org.siloserver.silo.model.catalog.ItemExtra
 import org.siloserver.silo.model.catalog.Season
@@ -120,8 +120,8 @@ fun SeriesDetailContent(
     // Mark the episode overview by the same source the text above came from.
     val selectedEpisodeOverviewMachineTranslated = when {
         !loadedSelectedEpisodeDetail?.overview.isNullOrBlank() ->
-            hasMachineTranslation(loadedSelectedEpisodeDetail?.machineTranslatedFields)
-        selectedEpisodeOverview != null -> hasMachineTranslation(selectedEpisode?.machineTranslatedFields)
+            hasMachineTranslatedOverview(loadedSelectedEpisodeDetail?.machineTranslatedFields)
+        selectedEpisodeOverview != null -> hasMachineTranslatedOverview(selectedEpisode?.machineTranslatedFields)
         else -> false
     }
     val episodeTranslationLabel: (@Composable () -> Unit)? =

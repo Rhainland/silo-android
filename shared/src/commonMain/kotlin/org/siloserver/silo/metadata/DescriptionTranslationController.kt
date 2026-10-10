@@ -114,6 +114,29 @@ class DescriptionTranslationController(
         }
     }
 
+    private var deferredAuto = false
+
+    /**
+     * `auto` on-view mode: claim (content, language) for a translation that
+     * will start now. Returns false without claiming when it already fired, or
+     * while another translation runs — that one would make [translate] a no-op
+     * and the claim would block every later try. In the busy case
+     * [takeDeferredAuto] reports it, so the caller tries again once the
+     * running translation ends.
+     */
+    fun claimAutoFire(contentId: String, targetLanguage: String): Boolean {
+        if (_phase.value == DescriptionTranslationPhase.Translating) {
+            deferredAuto = true
+            return false
+        }
+        if (!shouldAutoFire(contentId, targetLanguage)) return false
+        markAutoFired(contentId, targetLanguage)
+        return true
+    }
+
+    /** True once, after an auto claim was refused because a translation was running. */
+    fun takeDeferredAuto(): Boolean = deferredAuto.also { deferredAuto = false }
+
     /** `auto` on-view mode: fire at most once per (content, language) per session. */
     fun shouldAutoFire(contentId: String, targetLanguage: String): Boolean =
         "$contentId|$targetLanguage" !in autoFired

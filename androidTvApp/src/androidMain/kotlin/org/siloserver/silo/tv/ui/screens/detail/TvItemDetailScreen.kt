@@ -109,7 +109,7 @@ import org.siloserver.silo.audiobook.buildAudiobookTimeline
 import org.siloserver.silo.common.ui.movieDirectorCredit
 import org.siloserver.silo.common.ui.openYoutubeTrailer
 import org.siloserver.silo.metadata.DescriptionTranslationPhase
-import org.siloserver.silo.model.catalog.hasMachineTranslation
+import org.siloserver.silo.model.catalog.hasMachineTranslatedOverview
 import org.siloserver.silo.model.catalog.pendingEpisodeTranslationLanguage
 import org.siloserver.silo.model.audiobook.AudiobookNarration
 import org.siloserver.silo.model.catalog.EpisodeListItem
@@ -778,12 +778,12 @@ private fun TvDetailContent(
     // the focused episode's on a series page, else the page item's own.
     val heroMachineTranslated = if (activeSeriesEpisode != null) {
         if (!activeSeriesPlaybackDetail?.overview.isNullOrBlank()) {
-            hasMachineTranslation(activeSeriesPlaybackDetail?.machineTranslatedFields)
+            hasMachineTranslatedOverview(activeSeriesPlaybackDetail?.machineTranslatedFields)
         } else {
-            hasMachineTranslation(activeSeriesEpisode.machineTranslatedFields)
+            hasMachineTranslatedOverview(activeSeriesEpisode.machineTranslatedFields)
         }
     } else {
-        hasMachineTranslation(detail.machineTranslatedFields) &&
+        hasMachineTranslatedOverview(detail.machineTranslatedFields) &&
             translationPhase != DescriptionTranslationPhase.Translating
     } && !heroOverview.isNullOrBlank()
     val translationSlot: (@Composable () -> Unit)? =

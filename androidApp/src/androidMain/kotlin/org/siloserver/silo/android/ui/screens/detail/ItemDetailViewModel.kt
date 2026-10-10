@@ -1270,8 +1270,9 @@ class ItemDetailViewModel(
         val target = state.episodes
             .filter { it.seasonNumber == seasonNumber }
             .pendingEpisodeTranslationLanguage() ?: return
-        if (!episodeTranslation.shouldAutoFire(season.contentId, target)) return
-        episodeTranslation.markAutoFired(season.contentId, target)
+        // A season switched to while another season's job polls is retried
+        // when that job ends (below), rather than latched as already fired.
+        if (!episodeTranslation.claimAutoFire(season.contentId, target)) return
         episodeTranslation.resetFailure()
         viewModelScope.launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) {
             episodeTranslation.translate(
@@ -1303,6 +1304,7 @@ class ItemDetailViewModel(
                         ?.let(::loadSelectedEpisodeDetail)
                 },
             )
+            if (episodeTranslation.takeDeferredAuto()) translateShownSeasonEpisodes()
         }
     }
 

@@ -210,6 +210,48 @@ class DescriptionTranslationControllerTest {
     }
 
     @Test
+    fun aSeasonSwitchedToWhileAnotherTranslatesIsDeferredNotLatched() = runTest {
+        val started = mutableListOf<String>()
+        val api = object : MetadataAiApi {
+            override suspend fun status(): ApiResult<MetadataAiStatus> =
+                ApiResult.NetworkError(IllegalStateException("not used"))
+
+            override suspend fun translateDescription(
+                contentId: String,
+                targetLanguage: String,
+                scope: org.siloserver.silo.network.AuthScopeSnapshot?,
+            ): ApiResult<org.siloserver.silo.model.metadata.MetadataTranslationJob> {
+                started += contentId
+                return ApiResult.Success(org.siloserver.silo.model.metadata.MetadataTranslationJob("1", "season", contentId, targetLanguage, "pending"))
+            }
+        }
+        val controller = DescriptionTranslationController(MetadataAiRepository(api), delayMs = { })
+        var claimedWhileBusy: Boolean? = null
+
+        // Season 1's job runs; the viewer switches to season 2 mid-poll.
+        assertTrue(controller.claimAutoFire("season-1", "de"))
+        controller.translate(
+            contentId = "season-1",
+            targetLanguage = "de",
+            refetchPendingLanguage = {
+                claimedWhileBusy = controller.claimAutoFire("season-2", "de")
+                null
+            },
+            onTranslated = { },
+        )
+
+        assertEquals(false, claimedWhileBusy)
+        // The refused claim is reported once, and season 2 was not latched.
+        assertTrue(controller.takeDeferredAuto())
+        assertEquals(false, controller.takeDeferredAuto())
+        assertTrue(controller.claimAutoFire("season-2", "de"))
+        controller.translate("season-2", "de", refetchPendingLanguage = { null }, onTranslated = { })
+        assertEquals(listOf("season-1", "season-2"), started)
+        // Season 1 stays latched for the session.
+        assertEquals(false, controller.claimAutoFire("season-1", "de"))
+    }
+
+    @Test
     fun autoFireLatchesPerContentAndLanguage() {
         val controller = DescriptionTranslationController(
             repository = MetadataAiRepository(FakeApi(ApiResult.Success(org.siloserver.silo.model.metadata.MetadataTranslationJob("1", "item", "movie-1", "nl", "pending")))),

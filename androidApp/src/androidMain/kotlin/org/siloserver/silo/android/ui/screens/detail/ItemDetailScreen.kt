@@ -91,7 +91,7 @@ import org.siloserver.silo.network.AccessChangeSignals
 import org.siloserver.silo.metadata.DescriptionTranslationPhase
 import org.siloserver.silo.model.feature.MetadataAiFeatureStore
 import org.siloserver.silo.model.metadata.MetadataAiOnView
-import org.siloserver.silo.model.catalog.hasMachineTranslation
+import org.siloserver.silo.model.catalog.hasMachineTranslatedOverview
 import org.siloserver.silo.model.catalog.pendingEpisodeTranslationLanguage
 
 internal data class SeriesDetailRedirect(
@@ -436,7 +436,7 @@ fun ItemDetailScreen(
                             onTranslate = { viewModel.translateDescription() },
                         )
                     }
-                } else if (hasMachineTranslation(detail.machineTranslatedFields) &&
+                } else if (hasMachineTranslatedOverview(detail.machineTranslatedFields) &&
                     !detail.overview.isNullOrBlank()
                 ) {
                     { DetailMachineTranslatedLabel() }

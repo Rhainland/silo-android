@@ -4,7 +4,8 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonObject
 import org.siloserver.silo.model.catalog.BrowseItem
 import org.siloserver.silo.model.catalog.Season
-import org.siloserver.silo.model.catalog.hasMachineTranslation
+import org.siloserver.silo.model.catalog.hasMachineTranslatedOverview
+import org.siloserver.silo.model.catalog.hasMachineTranslatedText
 import org.siloserver.silo.model.catalog.pendingEpisodeTranslationLanguage
 import org.siloserver.silo.network.SiloJson
 import kotlin.test.Test
@@ -26,7 +27,7 @@ class MachineTranslationDecodingTest {
 
         assertEquals(listOf("overview", "tagline"), detail.machineTranslatedFields)
         assertEquals("nl", detail.pendingTranslationLanguage)
-        assertTrue(hasMachineTranslation(detail.machineTranslatedFields))
+        assertTrue(hasMachineTranslatedOverview(detail.machineTranslatedFields))
     }
 
     @Test
@@ -41,7 +42,7 @@ class MachineTranslationDecodingTest {
 
         assertEquals(emptyList(), absent.machineTranslatedFields)
         assertEquals(emptyList(), nulled.machineTranslatedFields)
-        assertFalse(hasMachineTranslation(absent.machineTranslatedFields))
+        assertFalse(hasMachineTranslatedOverview(absent.machineTranslatedFields))
     }
 
     @Test
@@ -92,5 +93,20 @@ class MachineTranslationDecodingTest {
 
         assertEquals("nl", card.pendingTranslationLanguage)
         assertEquals(listOf("tagline"), card.machineTranslatedFields)
+    }
+
+    @Test
+    fun anAiTaglineAloneDoesNotMarkAProviderOverview() {
+        val detail = SiloJson.decodeFromString<ItemDetailReadV2>(
+            """{"content_id":"m1","type":"movie","title":"Film","overview":"Anbieter: Text","tagline":"[German] Line",
+               "machine_translated_fields":["tagline"],"cast":[],"crew":[],"versions":[],"subtitles":[]}""",
+        ).toDomain()
+
+        // Overview-only surfaces (detail heroes, episode rows, marquee, cards).
+        assertFalse(hasMachineTranslatedOverview(detail.machineTranslatedFields))
+        // A view showing the tagline may mark it, but only while the tagline is visible.
+        assertTrue(hasMachineTranslatedText(detail.machineTranslatedFields, taglineShown = true))
+        assertFalse(hasMachineTranslatedText(detail.machineTranslatedFields, taglineShown = false))
+        assertTrue(hasMachineTranslatedText(listOf("overview"), taglineShown = false))
     }
 }
