@@ -5535,6 +5535,7 @@ class PlayerViewModel(
         val watchDetail = loadLocalWatchMetadata(
             catalogRepository, watchOwner, media.serverId, media.profileId, contentId,
             libraryId = browseLibraryId,
+            fileId = fileId,
         ) { ownsLoad(loadOwner) }
         if (!ownsLoad(loadOwner)) return false
         val title = watchDetail?.title ?: sidecar.title

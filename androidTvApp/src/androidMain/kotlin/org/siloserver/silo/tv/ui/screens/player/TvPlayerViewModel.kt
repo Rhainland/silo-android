@@ -4359,11 +4359,13 @@ class TvPlayerViewModel(
         val state = _uiState.value
         val fileId = state.mediaFileId ?: return
         if (state.sessionId != expectedSessionId) return
+        // The same library the start used: a room may have moved to another library's title.
+        val libraryId = roomContext?.libraryId ?: launchArgs.libraryId
         val ticket = markerReconciliationFence.begin()
         markerReconcileJob?.cancel()
         markerReconcileJob = viewModelScope.launch {
             val owner = catalogRepository.captureWatchAuthority() ?: return@launch
-            val detail = (catalogRepository.getWatchDetail(state.contentId, owner, launchArgs.libraryId, fileId) as? ApiResult.Success)
+            val detail = (catalogRepository.getWatchDetail(state.contentId, owner, libraryId, fileId) as? ApiResult.Success)
                 ?.data ?: return@launch
             if (!catalogRepository.isWatchAuthorityCurrent(owner)) return@launch
             val current = _uiState.value
