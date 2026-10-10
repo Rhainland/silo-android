@@ -69,4 +69,21 @@ class CollectionRouteTest {
 
         assertEquals(1, Regex("navArgument\\(\"source\"\\)").findAll(collectionDestination).count())
     }
+
+    @Test
+    fun collectionItemsAndShufflesOpenWithoutALibraryScope() {
+        val collectionDestination = appNavigationSource.substringAfter(
+            "route = Route.CollectionDetail.ROUTE",
+        ).substringBefore(
+            "// ---- Detail screens ----",
+        )
+
+        // A library-scoped read 404s for an item filed in another library.
+        assertEquals(
+            0,
+            Regex("Route\\.ItemDetail\\([^)]*libraryId").findAll(collectionDestination).count(),
+        )
+        // A collection shuffle draws from the whole collection.
+        assertEquals(1, Regex("shufflePlayerRoute\\(shuffle\\)").findAll(collectionDestination).count())
+    }
 }
