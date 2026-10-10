@@ -221,6 +221,9 @@ class LibrariesViewModel(
     private val playerSettingsStore: org.siloserver.silo.common.settings.PlayerSettingsStore? = null,
     private val browsePrefs: BrowsePrefsStore? = null,
 ) : ViewModel() {
+    /** Access changes this ViewModel has applied, kept while its screen is away. */
+    val accessChanges = org.siloserver.silo.network.AccessChangeCursor()
+
     private val _uiState = MutableStateFlow(LibrariesUiState())
     val uiState: StateFlow<LibrariesUiState> = _uiState.asStateFlow()
     // iOS AppNavPreferences.showAudiobooks parity: audiobook libraries are
@@ -393,6 +396,24 @@ class LibrariesViewModel(
                 }
             }
         }
+    }
+
+    /**
+     * The server reported an access change: the library list, sections,
+     * titles, facets, and collections may all differ under the new policy.
+     * Forget which subtabs are loaded and the cached facets, then reload the
+     * library list and the visible subtab; the others reload when opened.
+     */
+    fun refreshAfterAccessChange() {
+        recommendedLoadedLibraryId = null
+        browseLoadedLibraryId = null
+        collectionsLoadedLibraryId = null
+        // A facet load still in flight was answered under the old policy;
+        // without a new query generation it would refill the facets cleared
+        // here, and Browse would not fetch them again.
+        ++catalogQueryGeneration
+        _uiState.update { it.copy(availableFilters = null) }
+        refresh()
     }
 
     fun selectLibrary(libraryId: Int) {

@@ -16,9 +16,11 @@ import org.siloserver.silo.model.catalog.initialSeasonDisplayPlan
 import org.siloserver.silo.model.catalog.sortedForDisplay
 import org.siloserver.silo.model.download.DownloadCapability
 import org.siloserver.silo.model.download.DownloadRecord
+import org.siloserver.silo.model.download.DownloadStatus
 import org.siloserver.silo.model.download.statusEnum
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.errorMessage
+import org.siloserver.silo.network.isAccessRefusal
 import org.siloserver.silo.model.catalog.isBookLikeItemType
 import org.siloserver.silo.metadata.DescriptionTranslationController
 import org.siloserver.silo.metadata.DescriptionTranslationPhase
@@ -143,9 +145,15 @@ class ItemDetailViewModel(
     private val userItemState: org.siloserver.silo.repository.port.UserItemStatePort =
         org.siloserver.silo.repository.port.NoOpUserItemStatePort,
 ) : ViewModel() {
+    /** Access changes this ViewModel has applied, kept while its screen is away. */
+    val accessChanges = org.siloserver.silo.network.AccessChangeCursor()
 
     private var similarGeneration = 0L
     private var similarJob: kotlinx.coroutines.Job? = null
+    private var detailLoadJob: Job? = null
+    private var quietDetailJob: Job? = null
+    /** Whether [quietDetailJob] clears the page on a refusal (an access-change refresh). */
+    private var quietDetailShowsRefusal = false
     private val libraryId: Int? = savedStateHandle.get<String>("libraryId")?.toIntOrNull()
     private val contentId: String = savedStateHandle.get<String>("contentId") ?: ""
     private val initialSeasonNumber: Int? =
@@ -387,17 +395,29 @@ class ItemDetailViewModel(
         }
     }
 
-    fun loadDetail() {
+    fun loadDetail() = loadDetail(afterAccessChange = false)
+
+    /**
+     * [afterAccessChange] skips joining a Home warm-up still in flight, whose
+     * answer may predate the change.
+     */
+    private fun loadDetail(afterAccessChange: Boolean) {
         val similarRun = ++similarGeneration
         similarJob?.cancel()
+        // A newer load replaces an unfinished one, so a response the server
+        // gave under an older access policy never lands after it.
+        detailLoadJob?.cancel()
+        quietDetailJob?.cancel()
         _uiState.update { it.copy(similarItems = emptyList()) }
-        viewModelScope.launch {
+        detailLoadJob = viewModelScope.launch {
             val similarOwner = recommendationRepository.captureSimilarAuthority()
             _uiState.update { it.copy(isLoading = true, error = null) }
             // Start the live request immediately. The durable cache read can
             // still paint an instant first frame, but it no longer delays the
             // network request that supplies fresh movie/series metadata.
-            val liveDetail = async { catalogRepository.getItemDetail(contentId, libraryId = libraryId) }
+            val liveDetail = async {
+                catalogRepository.getItemDetail(contentId, libraryId = libraryId, joinWarmup = !afterAccessChange)
+            }
             seedCachedDetail()
 
             when (val result = liveDetail.await()) {
@@ -446,6 +466,10 @@ class ItemDetailViewModel(
                     _uiState.update {
                         it.copy(
                             isLoading = false,
+                            // The durable cache still holds a title the server
+                            // now refuses; drop the copy seedCachedDetail painted
+                            // so the screen shows the error, not stale actions.
+                            detail = if (dropsDetailOn(result)) null else it.detail,
                             error = result.message.ifBlank { "Failed to load details" },
                         )
                     }
@@ -476,23 +500,67 @@ class ItemDetailViewModel(
      * Deliberately NOT [loadDetail] — no loading flashes, and the user's
      * season selection is preserved.
      */
-    fun refreshOnReturn() = refreshOnReturn(afterWatchedChange = false)
+    fun refreshOnReturn() = quietRefresh()
+
+    /**
+     * [refreshOnReturn] after the server reports an access change, except that
+     * a refusal ([isAccessRefusal]) replaces the detail with the error the
+     * initial load shows. Transient failures still keep the current detail.
+     * With no detail on screen (an earlier change refused it, or the first
+     * load failed), it runs the full load again, as Retry does, so a title the
+     * viewer regains access to comes back. A load still in flight is replaced
+     * the same way, because its answer may predate the change.
+     */
+    fun refreshAfterAccessChange() {
+        val state = _uiState.value
+        // A load still in flight may have been answered under the old policy:
+        // replace it rather than letting the change pass unapplied.
+        if (state.isLoading || state.detail == null) {
+            loadDetail(afterAccessChange = true)
+        } else {
+            quietRefresh(showAccessRefusal = true)
+        }
+    }
+
+    /**
+     * Whether a failed read should clear the page: an access refusal, unless
+     * the title has a completed download. The page's local play and delete
+     * actions stay usable for a file the server has since deleted or renamed.
+     */
+    private fun dropsDetailOn(result: ApiResult.Error): Boolean =
+        result.isAccessRefusal() && downloads.value.none { record ->
+            record.statusEnum() == DownloadStatus.Completed &&
+                (record.contentId == contentId || record.episodeId == contentId)
+        }
 
     /**
      * [afterWatchedChange] reads the season list and episodes fresh from the
      * server: a coalesced request or cached fallback could still hold the
      * state from before the write.
+     * [showAccessRefusal]: see [refreshAfterAccessChange].
      */
-    private fun refreshOnReturn(afterWatchedChange: Boolean) {
+    private fun quietRefresh(afterWatchedChange: Boolean = false, showAccessRefusal: Boolean = false) {
         val current = _uiState.value.detail ?: return
-        viewModelScope.launch {
+        // A newer detail read replaces an unfinished one, so an older answer
+        // cannot land after it, for example restoring a title the newer read
+        // found refused. The replacement inherits an access-change refresh's
+        // refusal handling, so a return refresh cannot drop it.
+        val showRefusal = showAccessRefusal || (quietDetailShowsRefusal && quietDetailJob?.isActive == true)
+        quietDetailJob?.cancel()
+        quietDetailShowsRefusal = showRefusal
+        quietDetailJob = viewModelScope.launch {
             // Local overlay first: the player's final position write is already
             // on disk, so the label corrects before the server round-trip.
             val overlaid = withLocalProgress(current)
             if (overlaid != current) {
                 _uiState.update { it.copy(detail = overlaid) }
             }
-            when (val result = catalogRepository.getItemDetail(contentId, libraryId = libraryId)) {
+            when (val result = catalogRepository.getItemDetail(
+                contentId,
+                libraryId = libraryId,
+                // An access-change refresh must not reuse a pre-change warm-up.
+                joinWarmup = !showRefusal,
+            )) {
                 is ApiResult.Success -> {
                     val detail = withLocalProgress(result.data)
                     _uiState.update {
@@ -502,8 +570,16 @@ class ItemDetailViewModel(
                         )
                     }
                 }
+                is ApiResult.Error -> if (showRefusal && dropsDetailOn(result)) {
+                    _uiState.update {
+                        it.copy(
+                            isLoading = false,
+                            detail = null,
+                            error = result.message.ifBlank { "Failed to load details" },
+                        )
+                    }
+                }
                 // Quiet refresh: on failure keep showing what we have.
-                is ApiResult.Error,
                 is ApiResult.NetworkError -> Unit
             }
         }
@@ -1380,7 +1456,7 @@ class ItemDetailViewModel(
             )
         }
         // Re-reads the series hero, the season list, and the visible episodes.
-        refreshOnReturn(afterWatchedChange = true)
+        quietRefresh(afterWatchedChange = true)
     }
 
     /**

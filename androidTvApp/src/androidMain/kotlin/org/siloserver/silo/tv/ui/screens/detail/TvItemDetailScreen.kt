@@ -99,6 +99,8 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import org.koin.compose.koinInject
+import org.siloserver.silo.common.ui.OnViewerAccessChanged
+import org.siloserver.silo.network.AccessChangeSignals
 import org.koin.compose.viewmodel.koinViewModel
 import org.koin.core.parameter.parametersOf
 import org.siloserver.silo.audiobook.AudioPlaybackTrack
@@ -266,6 +268,10 @@ fun TvItemDetailScreen(
     // any effect-local "skip the first" flag would reset and swallow exactly
     // the resume we care about. refreshOnReturn() no-ops while detail is still
     // null, which covers the initial load.
+    // The same quiet refresh when the server reports an access change, so
+    // availability, versions, and quality limits follow the new policy; a
+    // title the viewer can no longer see shows the unavailable state.
+    OnViewerAccessChanged(koinInject<AccessChangeSignals>(), viewModel.accessChanges) { viewModel.refreshAfterAccessChange() }
     val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
     androidx.compose.runtime.DisposableEffect(lifecycleOwner) {
         val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->

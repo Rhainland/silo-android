@@ -12,6 +12,7 @@ import io.ktor.http.HttpStatusCode
 import io.ktor.http.headersOf
 import io.ktor.serialization.kotlinx.json.json
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.cancelAndJoin
@@ -120,6 +121,36 @@ class TvLibrarySubdestinationViewModelTest {
         assertEquals(requestsBeforeReentry, requests.catalogRequestCount())
     }
 
+    @Test
+    fun anEarlierFiltersLoadDoesNotOverwriteTheAccessChangeReload() = runLibraryTest {
+        val requests = mutableListOf<RequestRecord>()
+        val firstFilters = CompletableDeferred<Unit>()
+        val viewModel = viewModelFor(requests, libraryType = "movies") { request ->
+            if (request == 1) {
+                firstFilters.await()
+                filtersJson("Before")
+            } else {
+                filtersJson("After")
+            }
+        }
+
+        viewModel.onTabSelected(TvLibraryTab.Browse)
+        awaitState { requests.filtersRequestCount() == 1 }
+        viewModel.refreshAfterAccessChange()
+        awaitState { viewModel.uiState.value.genres == listOf("After") }
+        // The pre-change answer arrives last.
+        firstFilters.complete(Unit)
+        settle()
+
+        assertEquals(listOf("After"), viewModel.uiState.value.genres)
+    }
+
+    private fun filtersJson(genre: String) =
+        """{"genres":["$genre"],"studios":[],"networks":[],"countries":[],"content_ratings":[],"original_languages":[],"authors":[],"narrators":[],"series":[]}"""
+
+    private fun MutableList<RequestRecord>.filtersRequestCount(): Int =
+        synchronized(this) { count { it.path == "/api/v2/catalog/filters" } }
+
     private val createdViewModels = mutableListOf<androidx.lifecycle.ViewModel>()
 
     private fun runLibraryTest(block: suspend () -> Unit) = runTest {
@@ -183,10 +214,13 @@ class TvLibrarySubdestinationViewModelTest {
             lastOrNull { it.path == "/api/v2/catalog/audiobook-groups" }
         }
 
+    /** [filters] answers the Nth filters request (1-based); null serves one genre. */
     private fun viewModelFor(
         requests: MutableList<RequestRecord>,
         libraryType: String,
+        filters: (suspend (request: Int) -> String)? = null,
     ): TvLibraryDetailViewModel {
+        val filterRequests = java.util.concurrent.atomic.AtomicInteger()
         val client = HttpClient(
             MockEngine { request ->
                 val record = RequestRecord(
@@ -201,7 +235,7 @@ class TvLibrarySubdestinationViewModelTest {
                     "/api/v1/library/7/sections" -> respondJson("""{"sections":[]}""")
                     "/api/v2/library/7/collections" -> respondJson("""{"library_id":"7","collections":[],"groups":[]}""")
                     "/api/v2/catalog/filters" -> respondJson(
-                        """{"genres":["Drama"],"studios":[],"networks":[],"countries":[],"content_ratings":[],"original_languages":[],"authors":[],"narrators":[],"series":[]}""",
+                        filters?.invoke(filterRequests.incrementAndGet()) ?: """{"genres":["Drama"],"studios":[],"networks":[],"countries":[],"content_ratings":[],"original_languages":[],"authors":[],"narrators":[],"series":[]}""",
                     )
                     "/api/v2/catalog/audiobook-groups" -> respondJson(
                         """

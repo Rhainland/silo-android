@@ -64,6 +64,20 @@ open class PersonalDataRepository(
     }
 
     /**
+     * Re-checks the library list after the app returns to the foreground and
+     * says whether the set of visible libraries differs from the cached list,
+     * which is the one the screens last loaded. Goes through
+     * [recheckUserLibraries], so a short response is confirmed before it is
+     * trusted and the cache keeps only the visible libraries. False when there
+     * is no cached list, the request fails, or the identity changed while it ran.
+     */
+    suspend fun libraryListChangedSinceCached(): Boolean {
+        val cachedIds = catalogCache.getCachedLibraries()?.mapTo(HashSet()) { it.id } ?: return false
+        val result = recheckUserLibraries(cachedIds)
+        return result is ApiResult.Success && result.data.mapTo(HashSet()) { it.id } != cachedIds
+    }
+
+    /**
      * Background re-check of a library list already on screen ([knownIds]).
      * A list missing any known library is read again before it is trusted,
      * and only the accepted list is cached, so one transient short response

@@ -89,6 +89,20 @@ val repositoryModule = module {
     }
     single { org.siloserver.silo.repository.HiddenLibrariesStore(get(), get()) }
     single { ProfileRepository(get(), get(), getOrNull(), get(), get(), get()) }
+    // Resolved by each Application right after startKoin (guarded there, like
+    // the other starters) so a stale-profile refusal from background work
+    // (downloads, outbox replay) is handled before any screen exists. Clears
+    // only the stale profile selection; navigation acts on its pending prompt.
+    single {
+        org.siloserver.silo.repository.ProfileVerificationRecovery(
+            signals = get(),
+            tokenManager = get(),
+            profileRepository = get(),
+            identityTransitions = get(),
+            scope = CoroutineScope(SupervisorJob() + Dispatchers.Default),
+        )
+    }
+    single { org.siloserver.silo.repository.ForegroundAccessCheck(get(), get()) }
     single { CollectionRepository(get()) }
     single {
         SectionRepository(
@@ -113,7 +127,7 @@ val repositoryModule = module {
     single { org.siloserver.silo.repository.MetadataAiRepository(get()) }
     single { org.siloserver.silo.model.feature.MetadataAiFeatureStore(get()) }
     single { org.siloserver.silo.model.feature.ShuffleFeatureStore(get()) }
-    single { org.siloserver.silo.repository.HomeRealtimeCoordinator(get(), get()) }
+    single { org.siloserver.silo.repository.HomeRealtimeCoordinator(get(), get(), getOrNull()) }
     single { SettingsRepository(get()) }
     // Profile-scoped canonical settings, shared by the phone and TV screens so
     // one platform cannot grow a behavior the other lacks.

@@ -665,6 +665,39 @@ class LibrariesViewModelTest {
         }
     }
 
+    @Test
+    fun accessChangeReloadsSubtabsThatWereAlreadyLoaded() = runTest {
+        val fixture = DeferredLibrariesFixture(deferredKeys = emptySet())
+        Dispatchers.setMain(UnconfinedTestDispatcher(testScheduler))
+        val viewModel = fixture.viewModel()
+        val store = ViewModelStore().also { it.put("libraries", viewModel) }
+        try {
+            fixture.awaitRequest("libraries")
+            fixture.awaitRequest("sections:1")
+            viewModel.uiState.first { !it.isLoadingSections }
+            viewModel.selectTab(LibrariesSubtab.Browse)
+            fixture.awaitRequest("filters")
+            fixture.awaitRequest("catalog:1:added_at:desc")
+            viewModel.uiState.first { it.catalogItems.isNotEmpty() && it.availableFilters != null }
+            viewModel.selectTab(LibrariesSubtab.Recommended)
+
+            viewModel.refreshAfterAccessChange()
+            fixture.awaitRequest("libraries")
+            fixture.awaitRequest("sections:1")
+
+            // Browse was loaded under the old policy: opening it again must
+            // refetch its titles and facets instead of returning early (the
+            // request never arrives without the fix, and runTest times out).
+            viewModel.selectTab(LibrariesSubtab.Browse)
+            fixture.awaitRequest("filters")
+            fixture.awaitRequest("catalog:1:added_at:desc")
+        } finally {
+            store.clear()
+            Dispatchers.resetMain()
+            fixture.close()
+        }
+    }
+
     private suspend fun LibrariesViewModel.onlyActiveRequest(): Job = withTimeout(5_000) {
         while (true) {
             val activeRequests = viewModelScope.coroutineContext[Job]

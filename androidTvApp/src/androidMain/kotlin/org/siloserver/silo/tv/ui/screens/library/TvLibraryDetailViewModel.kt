@@ -16,8 +16,8 @@ import org.siloserver.silo.repository.CatalogRepository
 import org.siloserver.silo.repository.SectionRepository
 import org.siloserver.silo.tv.ui.util.tvCatalogMediaTypeFor
 import org.siloserver.silo.tv.ui.util.visibleOnTv
-import kotlinx.coroutines.async
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -166,6 +166,8 @@ class TvLibraryDetailViewModel(
     private val mediaScope: String? = null,
     private val browsePrefs: BrowsePrefsStore? = null,
 ) : ViewModel() {
+    /** Access changes this ViewModel has applied, kept while its screen is away. */
+    val accessChanges = org.siloserver.silo.network.AccessChangeCursor()
 
     data class UiState(
         val title: String,
@@ -227,6 +229,13 @@ class TvLibraryDetailViewModel(
     private var browseRawLoaded = 0
     private var loadedAudiobookGroupBy: String? = null
     private var audiobookGroupsGeneration = 0
+    // Declared before init, which starts the first Recommended load: an
+    // initializer below it would reset this generation and drop that load's
+    // job afterward, so a reload could neither cancel nor outrank it.
+    private var recommendedGeneration = 0L
+    private var filtersJob: Job? = null
+    private var collectionsJob: Job? = null
+    private var recommendedJob: Job? = null
 
     init {
         // Only the default Recommended tab loads eagerly. Filters (the genre
@@ -383,6 +392,11 @@ class TvLibraryDetailViewModel(
                 browseFilter = it.browseFilter.forTab(it.selectedTab),
             )
         }
+        // The group list went stale while a group was open (an access change).
+        val groupBy = _uiState.value.selectedTab.audiobookGroupBy
+        if (groupBy != null && loadedAudiobookGroupBy != groupBy) {
+            loadAudiobookGroups(groupBy = groupBy, reset = true)
+        }
     }
 
     fun retryRecommended() {
@@ -400,6 +414,44 @@ class TvLibraryDetailViewModel(
     fun retryAudiobookGroups() {
         val groupBy = _uiState.value.selectedTab.audiobookGroupBy ?: return
         loadAudiobookGroups(groupBy = groupBy, reset = true)
+    }
+
+    /**
+     * The server reported an access change: titles, sections, facets, and
+     * collections in this library may differ under the new policy. Reload the
+     * visible tab now and let the others reload when next opened, instead of
+     * trusting their one-time loaded flags.
+     */
+    fun refreshAfterAccessChange() {
+        loadedRecommended = false
+        loadedBrowse = false
+        loadedCollections = false
+        loadedFilters = false
+        loadedAudiobookGroupBy = null
+        val state = _uiState.value
+        when (state.selectedTab) {
+            TvLibraryTab.Recommended -> loadRecommended()
+            TvLibraryTab.Browse,
+            TvLibraryTab.Genres,
+            TvLibraryTab.Alphabet,
+            TvLibraryTab.RecentlyAdded -> {
+                loadFilters()
+                loadBrowse(reset = true)
+            }
+            TvLibraryTab.Authors,
+            TvLibraryTab.Series -> {
+                val groupBy = state.selectedTab.audiobookGroupBy ?: return
+                // A selected author or series shows its titles; keep the
+                // selection and reload those. The group list reloads when the
+                // selection is cleared (onAudiobookGroupCleared).
+                if (state.selectedAudiobookGroup != null) {
+                    loadBrowse(reset = true)
+                } else {
+                    loadAudiobookGroups(groupBy = groupBy, reset = true)
+                }
+            }
+            TvLibraryTab.Collections -> loadCollections()
+        }
     }
 
     /**
@@ -430,9 +482,6 @@ class TvLibraryDetailViewModel(
         if (state.selectedTab != TvLibraryTab.Browse) return
         browsePrefs?.saveState(libraryId, state.browseFilter.toSavedState(), mediaScope)
     }
-
-    private var recommendedGeneration = 0L
-    private var recommendedJob: Job? = null
 
     private fun loadRecommended() {
         val run = ++recommendedGeneration
@@ -543,12 +592,17 @@ class TvLibraryDetailViewModel(
 
     private fun loadFilters() {
         loadedFilters = true
-        viewModelScope.launch {
+        // A reload after an access change replaces an unfinished load, so the
+        // older answer cannot land after it.
+        filtersJob?.cancel()
+        filtersJob = viewModelScope.launch {
             _uiState.update { it.copy(filtersLoading = true) }
             // include_technical adds the resolution / audio-language /
             // subtitle-language vocabularies the filter panel offers (tvOS
             // FacetLoader always requests them).
-            when (val filters = catalogRepository.getFilters(libraryId, includeTechnical = true)) {
+            val filters = catalogRepository.getFilters(libraryId, includeTechnical = true)
+            ensureActive()
+            when (filters) {
                 is ApiResult.Success -> _uiState.update {
                     it.copy(
                         genres = filters.data.genres.sorted(),
@@ -768,9 +822,13 @@ class TvLibraryDetailViewModel(
 
     private fun loadCollections() {
         loadedCollections = true
-        viewModelScope.launch {
+        // As in loadFilters: the newest load is the only one that publishes.
+        collectionsJob?.cancel()
+        collectionsJob = viewModelScope.launch {
             _uiState.update { it.copy(collectionsLoading = true, collectionsError = null) }
-            when (val result = sectionRepository.getLibraryCollectionsGrouped(libraryId)) {
+            val result = sectionRepository.getLibraryCollectionsGrouped(libraryId)
+            ensureActive()
+            when (result) {
                 is ApiResult.Success -> {
                     val sections = buildCollectionSections(result.data)
                     _uiState.update {

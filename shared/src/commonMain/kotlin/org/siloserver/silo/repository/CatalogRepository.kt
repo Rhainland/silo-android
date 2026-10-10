@@ -173,10 +173,19 @@ class CatalogRepository(
     // Keeping them live prevents versions from leaking between browse contexts.
 
     /** Fetches full metadata for a single catalog item (offline: last cached detail). */
-    suspend fun getItemDetail(contentId: String, libraryId: Int? = null): ApiResult<ItemDetail> {
+    /**
+     * Live item detail. By default it joins a Home warm-up already in flight
+     * for the same title; [joinWarmup] = false sends a fresh request instead,
+     * for a reload whose answer must postdate an access change.
+     */
+    suspend fun getItemDetail(
+        contentId: String,
+        libraryId: Int? = null,
+        joinWarmup: Boolean = true,
+    ): ApiResult<ItemDetail> {
         if (libraryId != null) return catalogApi.getItemDetail(contentId, libraryId)
         val requestIdentityGeneration = identityTransitions.generation.value
-        val warmRequest = detailRequestMutex.withLock {
+        val warmRequest = if (!joinWarmup) null else detailRequestMutex.withLock {
             itemDetailInFlight[requestIdentityGeneration to contentId]
         }
         return warmRequest?.await() ?: fetchItemDetail(contentId, requestIdentityGeneration)

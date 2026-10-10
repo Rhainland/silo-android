@@ -126,6 +126,8 @@ import org.siloserver.silo.common.player.video.VideoPlayerRouteArgs
 import org.siloserver.silo.common.settings.CardPresentationStore
 import org.siloserver.silo.common.settings.OverlayPrefsStore
 import org.siloserver.silo.network.TokenManager
+import org.siloserver.silo.repository.ProfilePromptAction
+import org.siloserver.silo.repository.ProfileVerificationRecovery
 import org.koin.compose.koinInject
 import org.koin.compose.viewmodel.koinViewModel
 
@@ -134,6 +136,33 @@ import org.koin.compose.viewmodel.koinViewModel
  * from the route's own `contentId` argument.
  */
 private const val DisplayedDetailContentIdKey = "displayedDetailContentId"
+
+/** The profile picker and its screens, where a prompt has nothing to add. */
+private val ProfilePromptPickerRoutes: Set<String> = setOf(
+    Route.ProfileSelection.route,
+    Route.CreateProfile.route,
+    Route.EditProfile.ROUTE,
+)
+
+/**
+ * Destinations a profile-verification prompt waits behind: playback and reading
+ * keep going on the session they started with, and the sign-in and server
+ * screens have no profile in use.
+ */
+private val ProfilePromptDeferredRoutes: Set<String> = setOf(
+    Route.Player.ROUTE,
+    Route.AudiobookPlayer.ROUTE,
+    Route.BookReader.ROUTE,
+    Route.SiloCastRemote.route,
+    Route.Login.route,
+    Route.ServerSetup.route,
+    Route.ServerSetupPrefilled.ROUTE,
+    Route.ServerList.route,
+    Route.Setup.route,
+    Route.Signup.route,
+    Route.PairDevice.ROUTE,
+    Route.InviteClaim.ROUTE,
+)
 
 /** Page-to-page cross-fade duration (ms). Snappier than Compose Nav's 700ms default. */
 private const val PageFadeDurationMs = 200
@@ -264,6 +293,55 @@ fun AppNavigation(
                 launchSingleTop = true
             }
         }
+    }
+
+    // The server stopped accepting the active profile's PIN proof (an admin
+    // changed the account's access). The recovery has already cleared the
+    // stale profile selection, but not the sign-in; send the user to the
+    // profile picker to choose a profile and enter its PIN again. Playback and
+    // the sign-in screens are not interrupted: the prompt waits until the user
+    // leaves them (or a remote-playback overlay ends), and is dropped after a
+    // sign-out, a server switch, or a profile pick.
+    val profileVerificationRecovery: ProfileVerificationRecovery = koinInject()
+    LaunchedEffect(Unit) {
+        // promptChecks re-emits when a remote-playback overlay ends, so a
+        // prompt deferred behind it does not wait for the next navigation.
+        kotlinx.coroutines.flow.combine(
+            profileVerificationRecovery.promptChecks,
+            navController.currentBackStackEntryFlow,
+        ) { prompt, entry -> prompt to entry.destination.route }
+            .collect { (prompt, route) ->
+                if (prompt == null) return@collect
+                when (
+                    profileVerificationRecovery.actionFor(
+                        prompt = prompt,
+                        currentRoute = route,
+                        deferRoutes = ProfilePromptDeferredRoutes,
+                        pickerRoutes = ProfilePromptPickerRoutes,
+                    )
+                ) {
+                    ProfilePromptAction.Defer -> Unit
+                    // Already on the picker: it reloads itself, and a PIN
+                    // being typed is kept.
+                    ProfilePromptAction.AlreadyThere,
+                    ProfilePromptAction.Drop,
+                    -> profileVerificationRecovery.consume(prompt)
+                    ProfilePromptAction.Navigate -> {
+                        profileVerificationRecovery.consume(prompt)
+                        navController.navigate(Route.ProfileSelection.route) {
+                            popUpTo(0) { inclusive = true }
+                            launchSingleTop = true
+                        }
+                        // Same per-profile teardown as Switch Profile, after
+                        // leaving the shell so it does not repaint first.
+                        overlayPrefsStore.clear()
+                        activeProfileStore.reset()
+                        cardPresentationStore.clear()
+                        seekIntervalStore.clear()
+                        titleArtStore.clear()
+                    }
+                }
+            }
     }
 
     fun navigateExternalRoute(route: String) {
@@ -827,6 +905,23 @@ fun AppNavigation(
 
         // ---- Profile selection ----
         composable(Route.ProfileSelection.route) {
+            // Switch Profile opens the picker above Main so Back can cancel it.
+            // Once profile recovery has cleared the selection (a stale PIN
+            // proof), Main has no profile to return to and every request there
+            // would fail, so Back leaves the app, as it does when the picker is
+            // the first screen. A picker opened from the server list or a
+            // sign-in screen (adding a server) has no profile yet either; Back
+            // there still returns to that screen.
+            val pickerActivity = androidx.activity.compose.LocalActivity.current
+            val selectedProfileId = serverRegistry.activeEntry.collectAsState().value?.profileId
+            val previousRoute = navController.previousBackStackEntry?.destination?.route
+            androidx.activity.compose.BackHandler(
+                enabled = selectedProfileId.isNullOrBlank() &&
+                    previousRoute != null &&
+                    previousRoute !in ProfilePromptDeferredRoutes,
+            ) {
+                pickerActivity?.finish()
+            }
             ProfileSelectionScreen(
                 onNavigateToHome = {
                     // The switch-profile paths dropped the per-profile card

@@ -29,6 +29,7 @@ import org.siloserver.silo.network.api.SettingsApi
 import org.siloserver.silo.repository.port.CatalogCachePort
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 
 class HiddenLibrariesStoreTest {
 
@@ -64,6 +65,8 @@ class HiddenLibrariesStoreTest {
         override suspend fun cacheLibraries(libraries: List<UserLibrary>) {
             cachedLibraries = libraries
         }
+
+        override suspend fun getCachedLibraries(): List<UserLibrary>? = cachedLibraries
     }
 
     private var libraryRequests = 0
@@ -107,6 +110,22 @@ class HiddenLibrariesStoreTest {
         val result = repository.listUserLibraries()
 
         assertEquals(listOf(1), (result as ApiResult.Success).data.map { it.id })
+        assertEquals(listOf(1), cache.cachedLibraries?.map { it.id })
+    }
+
+    @Test
+    fun foregroundCheckDoesNotReportALibraryTheProfileHidAsAnAccessChange() = runTest {
+        val barrier = DefaultIdentityTransitionBarrier()
+        // The screens cached what they showed: library 2 is hidden.
+        val cache = FakeCache().apply { cachedLibraries = listOf(UserLibrary(id = 1, name = "Library 1", type = "movie")) }
+        val repository = PersonalDataRepository(
+            personalDataApi = PersonalDataApi(librariesClient()),
+            catalogCache = cache,
+            identityTransitions = barrier,
+            hiddenLibraries = HiddenLibrariesStore(SettingsRepository(FakeSettings(ids(2))), barrier),
+        )
+
+        assertFalse(repository.libraryListChangedSinceCached())
         assertEquals(listOf(1), cache.cachedLibraries?.map { it.id })
     }
 

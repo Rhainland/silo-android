@@ -14,7 +14,16 @@ import org.koin.dsl.module
 val networkModule = module {
     single<IdentityTransitionBarrier> { DefaultIdentityTransitionBarrier() }
     single<TokenManager> { TokenManagerImpl(get()) }
-    single { createSiloClient(get(), getOrNull(), getOrNull(), getOrNull()) }
+    single { org.siloserver.silo.network.AccessChangeSignals() }
+    single {
+        createSiloClient(
+            tokenManager = get(),
+            deviceMetadataProvider = getOrNull(),
+            diagnosticsObserver = getOrNull(),
+            cleartextOriginConsent = getOrNull(),
+            accessChangeSignals = get(),
+        )
+    }
     single { ApiV2Gate(getOrNull()) }
     single { MembershipV2Api(get(), get(), get()) }
     single { ApiV2Probe(get()) }
@@ -44,7 +53,7 @@ val networkModule = module {
     single { RecommendationApi(get(), get(), get(), get()) }
     single<RequestsApi> { DefaultRequestsApi(get(), get(), get()) }
     single<MetadataAiApi> { DefaultMetadataAiApi(get(), get(), get()) }
-    single { EventsSocketV2Api(get(), get(), get()) }
+    single { EventsSocketV2Api(get(), get(), get(), getOrNull()) }
     single<HomeRealtimeClient> { DefaultHomeRealtimeClient(get()) }
     single<CalendarApi> { DefaultCalendarApi(get(), get(), get()) }
     single { HealthApi(get()) }
@@ -71,7 +80,14 @@ val networkModule = module {
             gate = get(),
             tokens = get(),
             // Start, select, and promote must never be resent by the engine.
-            nonReplayingClient = createSiloClient(get(), getOrNull(), getOrNull(), getOrNull(), retryOnConnectionFailure = false),
+            nonReplayingClient = createSiloClient(
+                tokenManager = get(),
+                deviceMetadataProvider = getOrNull(),
+                diagnosticsObserver = getOrNull(),
+                cleartextOriginConsent = getOrNull(),
+                retryOnConnectionFailure = false,
+                accessChangeSignals = get(),
+            ),
         )
     }
     single<DiagnosticsApi> { DefaultDiagnosticsApi(get(), gate = get()) }

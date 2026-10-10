@@ -33,6 +33,8 @@ class TvLibrariesViewModel(
     /** Server reachability; each reachable probe retries a failed load. */
     reachability: Flow<ServerReachabilityState> = emptyFlow(),
 ) : ViewModel() {
+    /** Access changes this ViewModel has applied, kept while its screen is away. */
+    val accessChanges = org.siloserver.silo.network.AccessChangeCursor()
 
     data class UiState(
         val isLoading: Boolean = true,

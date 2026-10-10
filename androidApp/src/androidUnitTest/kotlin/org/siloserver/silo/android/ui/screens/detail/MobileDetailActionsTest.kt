@@ -5,12 +5,14 @@ import org.siloserver.silo.model.catalog.EpisodeListItem
 import org.siloserver.silo.model.catalog.ItemDetail
 import org.siloserver.silo.model.catalog.LeafItemUserData
 import org.siloserver.silo.model.catalog.Season
+import org.siloserver.silo.model.download.DownloadRecord
 import org.siloserver.silo.model.download.DownloadsListResponse
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.AuthScopeSnapshot
 import org.siloserver.silo.network.SiloJson
 import org.siloserver.silo.network.TokenManager
 import org.siloserver.silo.network.TokenManagerImpl
+import org.siloserver.silo.repository.port.CatalogCachePort
 import org.siloserver.silo.repository.port.NoOpUserItemStatePort
 import org.siloserver.silo.repository.port.PersonalWrite
 import org.siloserver.silo.repository.port.PersonalWriteHandle
@@ -489,6 +491,208 @@ class MobileDetailActionsTest {
         assertFalse(state.hasExplicitSubtitleSelection)
     }
 
+    @Test
+    fun accessChangeReloadsARefusedTitleOnceAccessReturns() = runItemDetailTest {
+        var available = true
+        val viewModel = itemDetailViewModel(
+            personalDataRepository = RecordingPersonalDataRepository(mutableListOf()),
+            catalogRepository = switchableCatalogRepository(available = { available }),
+            contentId = "movie-1",
+        )
+        advanceUntilIdle()
+        assertEquals("movie-1", viewModel.uiState.value.detail?.contentId)
+
+        available = false
+        viewModel.refreshAfterAccessChange()
+        advanceUntilIdle()
+        assertEquals(null, viewModel.uiState.value.detail)
+
+        available = true
+        viewModel.refreshAfterAccessChange()
+        advanceUntilIdle()
+
+        assertEquals("movie-1", viewModel.uiState.value.detail?.contentId)
+        assertEquals(null, viewModel.uiState.value.error)
+    }
+
+    @Test
+    fun accessChangeOnAStillRefusedTitleDoesNotRepaintItsCachedDetail() = runItemDetailTest {
+        var available = true
+        val viewModel = itemDetailViewModel(
+            personalDataRepository = RecordingPersonalDataRepository(mutableListOf()),
+            catalogRepository = switchableCatalogRepository(
+                available = { available },
+                cached = ItemDetail(contentId = "movie-1", type = "movie", title = "Cached"),
+            ),
+            contentId = "movie-1",
+        )
+        advanceUntilIdle()
+
+        available = false
+        viewModel.refreshAfterAccessChange()
+        advanceUntilIdle()
+        // A second, unrelated access change runs the full load, which paints
+        // the durable cached copy before the live request is refused again.
+        viewModel.refreshAfterAccessChange()
+        advanceUntilIdle()
+
+        assertEquals(null, viewModel.uiState.value.detail)
+        assertTrue(viewModel.uiState.value.error != null)
+    }
+
+    @Test
+    fun accessChangeDuringTheFirstLoadReplacesIt() = runItemDetailTest {
+        var available = true
+        val firstResponse = CompletableDeferred<Unit>()
+        val viewModel = itemDetailViewModel(
+            personalDataRepository = RecordingPersonalDataRepository(mutableListOf()),
+            catalogRepository = switchableCatalogRepository(available = { available }, holdFirst = firstResponse),
+            contentId = "movie-1",
+        )
+        // The first request is answered under the old policy but held back.
+        advanceUntilIdle()
+        assertTrue(viewModel.uiState.value.isLoading)
+
+        available = false
+        viewModel.refreshAfterAccessChange()
+        firstResponse.complete(Unit)
+        advanceUntilIdle()
+
+        assertEquals(null, viewModel.uiState.value.detail)
+        assertTrue(viewModel.uiState.value.error != null)
+    }
+
+    @Test
+    fun aRefusedTitleWithACompletedDownloadKeepsItsCachedDetail() = runItemDetailTest {
+        val viewModel = itemDetailViewModel(
+            personalDataRepository = RecordingPersonalDataRepository(mutableListOf()),
+            catalogRepository = switchableCatalogRepository(
+                available = { false },
+                cached = ItemDetail(contentId = "movie-1", type = "movie", title = "Cached"),
+            ),
+            contentId = "movie-1",
+            downloads = listOf(
+                DownloadRecord(
+                    id = "download-1",
+                    contentId = "movie-1",
+                    mediaFileId = 7,
+                    kind = "original",
+                    status = "completed",
+                    createdAt = "2026-01-01T00:00:00Z",
+                ),
+            ),
+        )
+        advanceUntilIdle()
+
+        // The server deleted the title; its local play and delete actions stay.
+        assertEquals("movie-1", viewModel.uiState.value.detail?.contentId)
+        assertTrue(viewModel.uiState.value.error != null)
+    }
+
+    @Test
+    fun anOlderQuietRefreshDoesNotRestoreATitleAnAccessChangeRefused() = runItemDetailTest {
+        var available = true
+        val returnResponse = CompletableDeferred<Unit>()
+        val viewModel = itemDetailViewModel(
+            personalDataRepository = RecordingPersonalDataRepository(mutableListOf()),
+            catalogRepository = switchableCatalogRepository(
+                available = { available },
+                holdFirst = returnResponse,
+                holdRequest = 2,
+            ),
+            contentId = "movie-1",
+        )
+        advanceUntilIdle()
+        // Back from the player: this read is answered under the old policy but held back.
+        viewModel.refreshOnReturn()
+        advanceUntilIdle()
+
+        available = false
+        viewModel.refreshAfterAccessChange()
+        advanceUntilIdle()
+        returnResponse.complete(Unit)
+        advanceUntilIdle()
+
+        assertEquals(null, viewModel.uiState.value.detail)
+        assertTrue(viewModel.uiState.value.error != null)
+    }
+
+    @Test
+    fun aQuietRefreshReplacingAnAccessChangeRefreshStillShowsTheRefusal() = runItemDetailTest {
+        var available = true
+        val accessResponse = CompletableDeferred<Unit>()
+        val viewModel = itemDetailViewModel(
+            personalDataRepository = RecordingPersonalDataRepository(mutableListOf()),
+            catalogRepository = switchableCatalogRepository(
+                available = { available },
+                holdFirst = accessResponse,
+                holdRequest = 2,
+            ),
+            contentId = "movie-1",
+        )
+        advanceUntilIdle()
+
+        available = false
+        viewModel.refreshAfterAccessChange()
+        advanceUntilIdle()
+        // A return refresh replaces the unfinished access-change read.
+        viewModel.refreshOnReturn()
+        advanceUntilIdle()
+        accessResponse.complete(Unit)
+        advanceUntilIdle()
+
+        assertEquals(null, viewModel.uiState.value.detail)
+        assertTrue(viewModel.uiState.value.error != null)
+    }
+
+    /**
+     * Serves `movie-1` while [available] is true and a 404 problem otherwise.
+     * [cached] stands in for the durable detail cache, which a refusal does
+     * not evict. With [holdFirst], detail request number [holdRequest] reads
+     * [available] when it arrives but answers only once [holdFirst] completes.
+     */
+    private fun kotlinx.coroutines.test.TestScope.switchableCatalogRepository(
+        available: () -> Boolean,
+        cached: ItemDetail? = null,
+        holdFirst: CompletableDeferred<Unit>? = null,
+        holdRequest: Int = 1,
+    ): CatalogRepository {
+        val dispatcher = StandardTestDispatcher(testScheduler)
+        var detailRequests = 0
+        val client = HttpClient(
+            MockEngine(
+                MockEngineConfig().apply {
+                    this.dispatcher = dispatcher
+                    addHandler { request ->
+                        val isDetail = request.url.encodedPath == "/api/v2/catalog/items/movie-1"
+                        val allowed = isDetail && available()
+                        if (isDetail && ++detailRequests == holdRequest) holdFirst?.await()
+                        when {
+                            !isDetail -> respond("{}")
+                            allowed -> respond(
+                                """{"content_id":"movie-1","type":"movie","title":"Movie","cast":[],"crew":[],"versions":[],"subtitles":[]}""",
+                                HttpStatusCode.OK,
+                                headersOf(HttpHeaders.ContentType, "application/json"),
+                            )
+                            else -> respond(
+                                """{"type":"about:blank","title":"not_found","status":404,"detail":"Item not found"}""",
+                                HttpStatusCode.NotFound,
+                                headersOf(HttpHeaders.ContentType, "application/problem+json"),
+                            )
+                        }
+                    }
+                },
+            ),
+        ) { install(ContentNegotiation) { json(SiloJson) } }
+        return CatalogRepository(
+            CatalogApi(client),
+            catalogCache = object : CatalogCachePort {
+                override suspend fun getCachedItemDetail(contentId: String): ItemDetail? = cached
+            },
+            requestDispatcher = dispatcher,
+        )
+    }
+
     private val viewModels = mutableListOf<ViewModel>()
 
     /**
@@ -528,12 +732,13 @@ class MobileDetailActionsTest {
         personalDataRepository: RecordingPersonalDataRepository,
         catalogRepository: CatalogRepository? = null,
         contentId: String? = null,
+        downloads: List<DownloadRecord> = emptyList(),
     ): ItemDetailViewModel {
         val dispatcher = StandardTestDispatcher(testScheduler)
         return ItemDetailViewModel(
             catalogRepository = catalogRepository ?: CatalogRepository(CatalogApi(dummyHttpClient(dispatcher))),
             personalDataRepository = personalDataRepository,
-            downloadsRepository = DownloadsRepository(EmptyDownloadsApi(dispatcher)),
+            downloadsRepository = DownloadsRepository(EmptyDownloadsApi(dispatcher, downloads)),
             downloadEnqueuer = unsafeInstance(),
             ebookReaderRepository = dummyEbookReaderRepository(dispatcher),
             recommendationRepository = RecommendationRepository(RecommendationApi(dummyHttpClient(dispatcher))),
@@ -686,14 +891,17 @@ class MobileDetailActionsTest {
         override suspend fun current(): org.siloserver.silo.network.SiloDeviceMetadata? = null
     }
 
-    private class EmptyDownloadsApi(dispatcher: CoroutineDispatcher) : DownloadsApi(
+    private class EmptyDownloadsApi(
+        dispatcher: CoroutineDispatcher,
+        private val records: List<DownloadRecord> = emptyList(),
+    ) : DownloadsApi(
         registry = org.siloserver.silo.network.apiv2.DownloadRegistryV2Api(dummyHttpClient(dispatcher), org.siloserver.silo.network.TokenManagerImpl(), NoDevices, org.siloserver.silo.network.apiv2.ApiV2Gate.Unrestricted),
         tokens = org.siloserver.silo.network.TokenManagerImpl(),
         creation = org.siloserver.silo.network.apiv2.DownloadCreationV2Api(dummyHttpClient(dispatcher), org.siloserver.silo.network.TokenManagerImpl(), NoDevices,
             org.siloserver.silo.network.apiv2.DownloadRegistryV2Api(dummyHttpClient(dispatcher), org.siloserver.silo.network.TokenManagerImpl(), NoDevices, org.siloserver.silo.network.apiv2.ApiV2Gate.Unrestricted), org.siloserver.silo.network.apiv2.ApiV2Gate.Unrestricted),
     ) {
         override suspend fun list(scope: org.siloserver.silo.network.AuthScopeSnapshot?): ApiResult<DownloadsListResponse> =
-            ApiResult.Success(DownloadsListResponse())
+            ApiResult.Success(DownloadsListResponse(downloads = records))
     }
 
     private fun dummyEbookReaderRepository(dispatcher: CoroutineDispatcher): EbookReaderRepository {

@@ -154,6 +154,8 @@ import org.siloserver.silo.tv.ui.theme.TvSkyline
 import org.siloserver.silo.tv.ui.util.visibleOnTv
 import org.koin.compose.koinInject
 import org.koin.compose.viewmodel.koinViewModel
+import org.siloserver.silo.common.ui.rememberViewerAccessKey
+import org.siloserver.silo.network.AccessChangeSignals
 import org.siloserver.silo.tv.ui.focus.TvObservedFocusResult
 import org.siloserver.silo.tv.ui.focus.requestFocusUntilObserved
 import org.siloserver.silo.viewmodel.HomeViewModel
@@ -244,6 +246,9 @@ fun TvMainShell(
     // `visibleRoots` is only Home + Calendar, so a restored/deep-linked
     // `main/movies` route must NOT be treated as "type has no libraries" yet.
     var librariesLoaded by remember { mutableStateOf(false) }
+    // An access change can add or remove whole libraries, so the tab set is
+    // re-derived under the new policy (the previous list stays until then).
+    val viewerAccessKey = rememberViewerAccessKey(koinInject<AccessChangeSignals>())
     // The list leaves out libraries the profile hid; hiding or showing one
     // on another device re-loads it.
     val hiddenLibrariesRevision by personalDataRepository.hiddenLibrariesRevision.collectAsState()
@@ -260,6 +265,7 @@ fun TvMainShell(
         personalDataRepository,
         hiddenLibrariesRevision,
         librariesRetry,
+        viewerAccessKey,
     ) {
         // Pending means the last load failed and none is running, so a probe
         // never cancels a load still in flight.
@@ -665,11 +671,21 @@ fun TvMainShell(
     // (QA 2026-07-08: Movies → Collections → black 'No collections' page).
     // null = unknown (still loading) → pill stays visible.
     var librariesWithCollections by remember { mutableStateOf<Set<Int>?>(null) }
-    LaunchedEffect(libraries) {
+    // Keyed on the access key too: an access change can alter which libraries
+    // have collections while the library list itself stays equal.
+    LaunchedEffect(libraries, viewerAccessKey) {
         if (libraries.isEmpty()) return@LaunchedEffect
         val ids = mutableSetOf<Int>()
         libraries.forEach { lib ->
-            val result = runCatching { sectionRepository.getLibraryCollections(lib.id) }.getOrNull()
+            // Rethrow cancellation: a restarted probe must stop here, not
+            // finish the loop and publish a partial set.
+            val result = try {
+                sectionRepository.getLibraryCollections(lib.id)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                null
+            }
             if (result is ApiResult.Success && result.data.isNotEmpty()) ids += lib.id
         }
         librariesWithCollections = ids
