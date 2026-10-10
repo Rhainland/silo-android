@@ -138,6 +138,7 @@ class SearchViewModel(
 
     private var continuation: CatalogContinuationV2? = null
     private var peopleJob: Job? = null
+    private var searchGeneration = 0L
     private val pageSize = 60
 
     /**
@@ -306,6 +307,10 @@ class SearchViewModel(
     }
 
     private suspend fun performSearch(query: String, reset: Boolean) {
+        // A new search makes every earlier one's answer obsolete, even for the
+        // same query: a re-run after an access change must not be overwritten
+        // by the older request's results. Loading more continues the newest.
+        val generation = if (reset) ++searchGeneration else searchGeneration
         val currentState = _uiState.value
         val requestedMediaType = currentState.mediaType
         var offset = if (reset) 0 else currentState.nextOffset
@@ -327,7 +332,7 @@ class SearchViewModel(
                 limit = pageSize,
             )
             val latest = _uiState.value
-            if (latest.query != query || latest.mediaType != requestedMediaType) return
+            if (generation != searchGeneration || latest.query != query || latest.mediaType != requestedMediaType) return
 
             when (result) {
                 is ApiResult.Success -> {
