@@ -2,6 +2,12 @@ package org.siloserver.silo.tv.ui.screens.profiles
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
+import org.siloserver.silo.common.ui.marquee.SignInHandoff
 import org.siloserver.silo.model.profile.Profile
 import org.siloserver.silo.model.profile.authorizedProfileToken
 import org.siloserver.silo.model.profile.householdPrimary
@@ -12,12 +18,7 @@ import org.siloserver.silo.repository.AuthRepository
 import org.siloserver.silo.repository.ProfileCommitResult
 import org.siloserver.silo.repository.ProfileRepository
 import org.siloserver.silo.repository.ProfileVerificationRecovery
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.update
-import kotlinx.coroutines.launch
-import org.siloserver.silo.common.ui.marquee.SignInHandoff
+import org.siloserver.silo.tv.data.preferences.TvProfileLaunchPreferences
 
 data class TvProfileSelectionUiState(
     val profiles: List<Profile> = emptyList(),
@@ -42,6 +43,8 @@ data class TvProfileSelectionUiState(
     val accountName: String? = null,
     /** A one-profile household is being opened straight after sign-in; the picker stays hidden. */
     val openingOnlyProfile: Boolean = false,
+    /** The profile just picked on a new TV, while the TV asks whether to open it automatically. */
+    val rememberOffer: Profile? = null,
 )
 
 /**
@@ -54,6 +57,7 @@ class TvProfileSelectionViewModel(
     private val authRepository: AuthRepository? = null,
     private val consumeSkipsSingleProfile: () -> Boolean = SignInHandoff::consumeSkipsSingleProfilePicker,
     private val profileVerificationRecovery: ProfileVerificationRecovery? = null,
+    private val launchPreferences: TvProfileLaunchPreferences? = null,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(TvProfileSelectionUiState())
@@ -403,8 +407,20 @@ class TvProfileSelectionViewModel(
                 loadProfiles()
                 return@launch
             }
+            if (result == ProfileCommitResult.Committed && launchPreferences?.isRememberOfferPending == true) {
+                // A new TV: ask whether to open this profile automatically before Home.
+                _uiState.update { it.copy(rememberOffer = profile) }
+                return@launch
+            }
             _uiState.update { it.copy(selectedProfileId = profile.id) }
         }
+    }
+
+    /** Answers the new TV's offer and continues into the picked profile. */
+    fun answerRememberOffer(remember: Boolean) {
+        val profile = _uiState.value.rememberOffer ?: return
+        launchPreferences?.answerRememberOffer(remember)
+        _uiState.update { it.copy(rememberOffer = null, selectedProfileId = profile.id) }
     }
 
     fun onSelectionConsumed() {

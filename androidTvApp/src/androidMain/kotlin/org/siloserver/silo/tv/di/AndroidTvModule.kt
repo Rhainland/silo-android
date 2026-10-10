@@ -426,7 +426,9 @@ val androidTvModule = module {
             advertisesSignIn = BuildConfig.DEBUG,
         )
     }
-    viewModel { TvProfileSelectionViewModel(get(), get(), profileVerificationRecovery = getOrNull()) }
+    viewModel {
+        TvProfileSelectionViewModel(get(), get(), profileVerificationRecovery = getOrNull(), launchPreferences = get())
+    }
     viewModel { org.siloserver.silo.tv.ui.screens.profiles.TvCreateProfileViewModel(get()) }
     viewModel { params ->
         org.siloserver.silo.tv.ui.screens.profiles.TvEditProfileViewModel(

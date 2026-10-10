@@ -360,6 +360,10 @@ class MainTvActivity : ComponentActivity() {
         val tokenManager = get<TokenManager>(TokenManager::class.java)
         val processStart = !hasResolvedLaunchProfile
         hasResolvedLaunchProfile = true
+        if (processStart) {
+            get<TvProfileLaunchPreferences>(TvProfileLaunchPreferences::class.java)
+                .settleFirstLaunch(hasRememberedProfile = !tokenManager.getProfileId().isNullOrBlank())
+        }
 
         val activeEntry = registry.activeEntry.value
             ?: return TvRoute.ServerSetup.route

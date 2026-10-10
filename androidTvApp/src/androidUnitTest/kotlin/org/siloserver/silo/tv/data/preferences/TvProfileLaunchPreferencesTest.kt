@@ -114,9 +114,62 @@ class TvProfileLaunchPreferencesTest {
         restarted.clearBackgroundedAt()
         assertFalse(TvProfileLaunchPreferences(prefs) { now }.requiresSelectionAtLaunch())
     }
+
+    @Test
+    fun `a new TV asks who's watching and offers to remember the first profile`() {
+        val prefs = InMemoryPrefs()
+        val store = TvProfileLaunchPreferences(prefs) { start }
+        store.settleFirstLaunch(hasRememberedProfile = false)
+
+        assertEquals(ProfileLaunchBehavior.EveryTime, store.state.value.behavior)
+        assertTrue(store.isRememberOfferPending)
+        assertTrue(store.requiresSelectionAtLaunch())
+        // Later launches keep what was saved.
+        val next = TvProfileLaunchPreferences(prefs) { start }
+        next.settleFirstLaunch(hasRememberedProfile = true)
+        assertEquals(ProfileLaunchBehavior.EveryTime, next.state.value.behavior)
+        assertTrue(next.isRememberOfferPending)
+    }
+
+    @Test
+    fun `a TV that already opens a profile keeps Automatic and gets no offer`() {
+        val prefs = InMemoryPrefs()
+        TvProfileLaunchPreferences(prefs) { start }.settleFirstLaunch(hasRememberedProfile = true)
+
+        val restarted = TvProfileLaunchPreferences(prefs) { start }
+        assertEquals(ProfileLaunchBehavior.Automatic, restarted.state.value.behavior)
+        assertFalse(restarted.isRememberOfferPending)
+        assertFalse(restarted.requiresSelectionAtLaunch())
+    }
+
+    @Test
+    fun `the offer is answered once and the answer is kept`() {
+        for (remember in listOf(true, false)) {
+            val prefs = InMemoryPrefs()
+            TvProfileLaunchPreferences(prefs) { start }.apply {
+                settleFirstLaunch(hasRememberedProfile = false)
+                answerRememberOffer(remember)
+            }
+            val restarted = TvProfileLaunchPreferences(prefs) { start }
+            assertFalse(restarted.isRememberOfferPending)
+            assertEquals(
+                if (remember) ProfileLaunchBehavior.Automatic else ProfileLaunchBehavior.EveryTime,
+                restarted.state.value.behavior,
+            )
+        }
+    }
+
+    @Test
+    fun `choosing in Settings ends the offer`() {
+        val prefs = InMemoryPrefs()
+        val store = TvProfileLaunchPreferences(prefs) { start }
+        store.settleFirstLaunch(hasRememberedProfile = false)
+        store.setBehavior(ProfileLaunchBehavior.AfterOneHour)
+        assertFalse(TvProfileLaunchPreferences(prefs) { start }.isRememberOfferPending)
+    }
 }
 
-/** Just enough SharedPreferences for the store: strings and longs. */
+/** Just enough SharedPreferences for the store: strings, longs and booleans. */
 private class InMemoryPrefs : SharedPreferences {
     private val values = mutableMapOf<String, Any?>()
 
@@ -126,7 +179,7 @@ private class InMemoryPrefs : SharedPreferences {
     override fun getInt(key: String?, defValue: Int): Int = defValue
     override fun getLong(key: String?, defValue: Long): Long = values[key] as Long? ?: defValue
     override fun getFloat(key: String?, defValue: Float): Float = defValue
-    override fun getBoolean(key: String?, defValue: Boolean): Boolean = defValue
+    override fun getBoolean(key: String?, defValue: Boolean): Boolean = values[key] as Boolean? ?: defValue
     override fun contains(key: String?): Boolean = key in values
     override fun edit(): SharedPreferences.Editor = Editor()
     override fun registerOnSharedPreferenceChangeListener(l: SharedPreferences.OnSharedPreferenceChangeListener?) {}
@@ -154,7 +207,10 @@ private class InMemoryPrefs : SharedPreferences {
         override fun putStringSet(key: String, values: MutableSet<String>?): SharedPreferences.Editor = this
         override fun putInt(key: String, value: Int): SharedPreferences.Editor = this
         override fun putFloat(key: String, value: Float): SharedPreferences.Editor = this
-        override fun putBoolean(key: String, value: Boolean): SharedPreferences.Editor = this
+        override fun putBoolean(key: String, value: Boolean): SharedPreferences.Editor {
+            pending[key] = value
+            return this
+        }
         override fun clear(): SharedPreferences.Editor = this
         override fun commit(): Boolean {
             apply()

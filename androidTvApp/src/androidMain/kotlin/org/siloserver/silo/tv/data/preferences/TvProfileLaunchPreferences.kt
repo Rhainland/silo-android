@@ -62,6 +62,12 @@ data class ProfileLaunchState(
     val behavior: ProfileLaunchBehavior = ProfileLaunchBehavior.Automatic,
     /** Epoch ms when Silo last went to the background unused; null while in use. */
     val backgroundedAtMs: Long? = null,
+    /**
+     * A new TV offers the first profile picked on it as the one to open
+     * automatically. True until that offer is answered or a choice is made in
+     * Settings.
+     */
+    val rememberOfferPending: Boolean = false,
 ) {
     /**
      * Cold start. Every Time asks even when the previous process never
@@ -93,11 +99,33 @@ data class ProfileLaunchState(
             return since + timeout
         }
 
-    /** Automatic never keeps an away interval. */
+    /** Automatic never keeps an away interval. Choosing a behavior answers the offer. */
     fun withBehavior(behavior: ProfileLaunchBehavior): ProfileLaunchState = copy(
         behavior = behavior,
         backgroundedAtMs = if (behavior == ProfileLaunchBehavior.Automatic) null else backgroundedAtMs,
+        rememberOfferPending = false,
     )
+
+    /** The answer to the offer: remember opens the picked profile automatically from now on. */
+    fun answeringRememberOffer(remember: Boolean): ProfileLaunchState = when {
+        !rememberOfferPending -> this
+        remember -> withBehavior(ProfileLaunchBehavior.Automatic)
+        else -> copy(rememberOfferPending = false)
+    }
+
+    companion object {
+        /**
+         * The state of a TV with no saved choice. A new TV asks who's watching
+         * and offers to remember the first profile picked; a TV that already
+         * remembers a profile (it predates this setting) keeps opening it.
+         */
+        fun firstLaunch(hasRememberedProfile: Boolean): ProfileLaunchState =
+            if (hasRememberedProfile) {
+                ProfileLaunchState(behavior = ProfileLaunchBehavior.Automatic)
+            } else {
+                ProfileLaunchState(behavior = ProfileLaunchBehavior.EveryTime, rememberOfferPending = true)
+            }
+    }
 
     fun markedBackgrounded(atMs: Long): ProfileLaunchState =
         if (behavior == ProfileLaunchBehavior.Automatic) copy(backgroundedAtMs = null) else copy(backgroundedAtMs = atMs)
@@ -140,6 +168,21 @@ class TvProfileLaunchPreferences(
 
     fun setBehavior(behavior: ProfileLaunchBehavior) = update { it.withBehavior(behavior) }
 
+    /**
+     * Saves the starting choice the first time this TV runs Silo; later
+     * launches keep what is saved. [hasRememberedProfile] says whether the TV
+     * already opens a profile from an earlier version.
+     */
+    @Synchronized
+    fun settleFirstLaunch(hasRememberedProfile: Boolean) {
+        if (prefs.contains(KEY_BEHAVIOR)) return
+        write(ProfileLaunchState.firstLaunch(hasRememberedProfile))
+    }
+
+    val isRememberOfferPending: Boolean get() = state.value.rememberOfferPending
+
+    fun answerRememberOffer(remember: Boolean) = update { it.answeringRememberOffer(remember) }
+
     /** Start the away clock. A no-op under Automatic. */
     fun markBackgrounded() = update { it.markedBackgrounded(clock()) }
 
@@ -150,10 +193,15 @@ class TvProfileLaunchPreferences(
     private fun update(change: (ProfileLaunchState) -> ProfileLaunchState) {
         val next = change(_state.value)
         if (next == _state.value) return
+        write(next)
+    }
+
+    private fun write(next: ProfileLaunchState) {
         prefs.edit {
             putString(KEY_BEHAVIOR, next.behavior.raw)
             val at = next.backgroundedAtMs
             if (at == null) remove(KEY_BACKGROUNDED_AT) else putLong(KEY_BACKGROUNDED_AT, at)
+            if (next.rememberOfferPending) putBoolean(KEY_REMEMBER_OFFER, true) else remove(KEY_REMEMBER_OFFER)
         }
         _state.value = next
     }
@@ -161,11 +209,13 @@ class TvProfileLaunchPreferences(
     private fun read(): ProfileLaunchState = ProfileLaunchState(
         behavior = ProfileLaunchBehavior.fromRaw(prefs.getString(KEY_BEHAVIOR, null)),
         backgroundedAtMs = if (prefs.contains(KEY_BACKGROUNDED_AT)) prefs.getLong(KEY_BACKGROUNDED_AT, 0L) else null,
+        rememberOfferPending = prefs.getBoolean(KEY_REMEMBER_OFFER, false),
     )
 
     private companion object {
         const val PREFS_NAME = "silo_tv_profile_launch"
         const val KEY_BEHAVIOR = "behavior"
         const val KEY_BACKGROUNDED_AT = "backgrounded_at_ms"
+        const val KEY_REMEMBER_OFFER = "remember_offer_pending"
     }
 }
