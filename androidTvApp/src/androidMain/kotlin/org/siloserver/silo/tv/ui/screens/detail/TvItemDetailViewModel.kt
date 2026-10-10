@@ -2196,14 +2196,23 @@ class TvItemDetailViewModel(
         owner: org.siloserver.silo.network.AuthScopeSnapshot?,
         target: String,
     ): String? {
+        val requestGeneration = episodeLoadRequestGeneration
+        val listGeneration = episodeListGeneration
         val result = catalogRepository.getEpisodes(seriesId, seasonNumber, libraryId = libraryId, fresh = true)
         if (result !is ApiResult.Success || !metadataAiRepository.isCurrent(owner)) return target
         kotlinx.coroutines.currentCoroutineContext().ensureActive()
         if (_uiState.value.selectedSeason != seasonNumber) return result.data.episodes.pendingEpisodeTranslationLanguage()
+        val fresh = withLocalProgress(result.data.episodes)
+        kotlinx.coroutines.currentCoroutineContext().ensureActive()
+        if (!metadataAiRepository.isCurrent(owner) ||
+            requestGeneration != episodeLoadRequestGeneration ||
+            listGeneration != episodeListGeneration ||
+            _uiState.value.selectedSeason != seasonNumber
+        ) return target
         episodeDescriptionRevisions[seasonNumber] = (episodeDescriptionRevisions[seasonNumber] ?: 0L) + 1
         _uiState.update { state ->
             val current = state.episodes.associateBy { it.contentId }
-            val merged = result.data.episodes.sortedBy { it.episodeNumber }
+            val merged = fresh.sortedBy { it.episodeNumber }
                 .map { row -> current[row.contentId]?.withTranslatedDescription(row) ?: row }
             state.copy(episodes = merged)
         }

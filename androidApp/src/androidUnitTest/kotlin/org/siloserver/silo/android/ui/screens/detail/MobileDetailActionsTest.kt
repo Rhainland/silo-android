@@ -18,6 +18,9 @@ import org.siloserver.silo.repository.port.PersonalWrite
 import org.siloserver.silo.repository.port.PersonalWriteHandle
 import org.siloserver.silo.repository.port.UserItemStatePort
 import org.siloserver.silo.network.api.CatalogApi
+import org.siloserver.silo.network.api.MetadataAiApi
+import org.siloserver.silo.model.metadata.MetadataAiStatus
+import org.siloserver.silo.model.metadata.MetadataTranslationJob
 import org.siloserver.silo.network.api.DownloadsApi
 import org.siloserver.silo.network.api.EbookReaderApi
 import org.siloserver.silo.network.api.PersonalDataApi
@@ -60,6 +63,122 @@ import kotlin.test.assertTrue
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class MobileDetailActionsTest {
+    @Test
+    fun delayedTranslationDoesNotRestoreANewerReloadsRemovedEpisodes() = runItemDetailTest {
+        assertTranslationPreservesReload(reloadAdmittedFirst = false)
+    }
+
+    @Test
+    fun translationStartedDuringReloadPreservesThePublishedReload() = runItemDetailTest {
+        assertTranslationPreservesReload(reloadAdmittedFirst = true)
+    }
+
+    @Test
+    fun delayedTranslationDoesNotRepopulateASeasonInvalidatedAfterAWatchedWrite() = runItemDetailTest {
+        val translationRead = CompletableDeferred<Unit>()
+        var seasonOneReads = 0
+        val client = dummyHttpClient(StandardTestDispatcher(testScheduler)) { request ->
+            when {
+                request.url.encodedPath.endsWith("/seasons/1/episodes") -> {
+                    if (++seasonOneReads == 1) {
+                        translationRead.await()
+                        respond(
+                            """{"items":[{"content_id":"season-1-episode-1","season_number":1,"episode_number":1,"user_data":{"played":false}}]}""",
+                            HttpStatusCode.OK, headersOf(HttpHeaders.ContentType, "application/json"),
+                        )
+                    } else respond("", HttpStatusCode.ServiceUnavailable)
+                }
+                request.url.encodedPath.endsWith("/seasons/2/episodes") -> respond(
+                    """{"items":[{"content_id":"season-2-episode-1","season_number":2,"episode_number":1}]}""",
+                    HttpStatusCode.OK, headersOf(HttpHeaders.ContentType, "application/json"),
+                )
+                else -> respond("{}")
+            }
+        }
+        val viewModel = itemDetailViewModel(
+            RecordingPersonalDataRepository(mutableListOf(), engineDispatcher = StandardTestDispatcher(testScheduler)),
+            catalogRepository = CatalogRepository(CatalogApi(client)),
+            metadataApi = acceptingTranslationApi(),
+        )
+        viewModel.seedSeriesDetail(listOf(EpisodeListItem(
+            "season-1-episode-1", 1, 1, pendingTranslationLanguage = "de",
+        )))
+        viewModel.translateShownSeasonEpisodes()
+        advanceUntilIdle()
+        assertEquals(1, seasonOneReads)
+        viewModel.selectSeason(2)
+        advanceUntilIdle()
+        viewModel.setSeasonWatched(viewModel.uiState.value.seasons.first(), true)
+        advanceUntilIdle()
+        assertFalse(1 in viewModel.uiState.value.episodesBySeason)
+
+        translationRead.complete(Unit)
+        advanceUntilIdle()
+        assertFalse(1 in viewModel.uiState.value.episodesBySeason)
+        assertEquals(2, viewModel.uiState.value.selectedSeasonNumber)
+    }
+
+    private fun acceptingTranslationApi() = object : MetadataAiApi {
+        override suspend fun status() = ApiResult.Success(MetadataAiStatus())
+        override suspend fun translateDescription(
+            contentId: String,
+            targetLanguage: String,
+            scope: AuthScopeSnapshot?,
+        ) = ApiResult.Success(MetadataTranslationJob("job", "season", contentId, targetLanguage, "pending"))
+    }
+
+    private suspend fun kotlinx.coroutines.test.TestScope.assertTranslationPreservesReload(reloadAdmittedFirst: Boolean) {
+        val translationRead = CompletableDeferred<Unit>()
+        val reloadRead = CompletableDeferred<Unit>()
+        val translationReadNumber = if (reloadAdmittedFirst) 2 else 1
+        var episodeReads = 0
+        val client = dummyHttpClient(StandardTestDispatcher(testScheduler)) { request ->
+            when {
+                request.url.encodedPath.endsWith("/seasons/1/episodes") -> {
+                    val admitted = ++episodeReads
+                    val response = if (admitted == translationReadNumber) {
+                        translationRead.await()
+                        """{"items":[{"content_id":"season-1-episode-1","season_number":1,"episode_number":1,"overview":"Older"},{"content_id":"removed-episode","season_number":1,"episode_number":2}]}"""
+                    } else {
+                        reloadRead.await()
+                        """{"items":[{"content_id":"season-1-episode-1","season_number":1,"episode_number":1,"overview":"Newer"}]}"""
+                    }
+                    respond(response, HttpStatusCode.OK, headersOf(HttpHeaders.ContentType, "application/json"))
+                }
+                else -> respond("{}")
+            }
+        }
+        val viewModel = itemDetailViewModel(
+            RecordingPersonalDataRepository(mutableListOf(), engineDispatcher = StandardTestDispatcher(testScheduler)),
+            catalogRepository = CatalogRepository(CatalogApi(client)),
+            metadataApi = acceptingTranslationApi(),
+        )
+        viewModel.seedSeriesDetail(listOf(EpisodeListItem(
+            "season-1-episode-1", 1, 1, pendingTranslationLanguage = "de",
+        )))
+        if (reloadAdmittedFirst) {
+            viewModel.refreshOnReturn()
+            advanceUntilIdle()
+            assertEquals(1, episodeReads)
+        }
+        viewModel.translateShownSeasonEpisodes()
+        advanceUntilIdle()
+        assertEquals(translationReadNumber, episodeReads)
+
+        if (!reloadAdmittedFirst) {
+            viewModel.refreshOnReturn()
+            advanceUntilIdle()
+        }
+        reloadRead.complete(Unit)
+        advanceUntilIdle()
+        assertEquals("Newer", viewModel.uiState.value.episodes.single().overview)
+        translationRead.complete(Unit)
+        advanceUntilIdle()
+        assertEquals(listOf("season-1-episode-1"), viewModel.uiState.value.episodes.map { it.contentId })
+        assertEquals("Newer", viewModel.uiState.value.episodes.single().overview)
+        assertEquals(viewModel.uiState.value.episodes, viewModel.uiState.value.episodesBySeason[1])
+    }
+
     @Test
     fun watchedTogglePersistsOptimisticStateOnSuccess() = runItemDetailTest {
         val repository = RecordingPersonalDataRepository(
@@ -733,6 +852,7 @@ class MobileDetailActionsTest {
         catalogRepository: CatalogRepository? = null,
         contentId: String? = null,
         downloads: List<DownloadRecord> = emptyList(),
+        metadataApi: MetadataAiApi? = null,
     ): ItemDetailViewModel {
         val dispatcher = StandardTestDispatcher(testScheduler)
         return ItemDetailViewModel(
@@ -743,7 +863,7 @@ class MobileDetailActionsTest {
             ebookReaderRepository = dummyEbookReaderRepository(dispatcher),
             recommendationRepository = RecommendationRepository(RecommendationApi(dummyHttpClient(dispatcher))),
             metadataAiRepository = org.siloserver.silo.repository.MetadataAiRepository(
-                org.siloserver.silo.network.api.DefaultMetadataAiApi(dummyHttpClient(dispatcher), gate = org.siloserver.silo.network.apiv2.ApiV2Gate.Unrestricted),
+                metadataApi ?: org.siloserver.silo.network.api.DefaultMetadataAiApi(dummyHttpClient(dispatcher), gate = org.siloserver.silo.network.apiv2.ApiV2Gate.Unrestricted),
             ),
             savedStateHandle = SavedStateHandle(contentId?.let { mapOf("contentId" to it) } ?: emptyMap()),
         ).also { viewModels += it }

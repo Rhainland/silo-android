@@ -52,6 +52,7 @@ import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.ensureActive
 
 /**
  * UI state for the item detail screen.
@@ -929,6 +930,7 @@ class ItemDetailViewModel(
         preferPrefetched: Boolean = false,
         fresh: Boolean = false,
     ) {
+        episodeRebuildGenerations[seasonNumber] = (episodeRebuildGenerations[seasonNumber] ?: 0L) + 1
         episodeLoadJob?.cancel()
         val cachedEpisodes = _uiState.value.episodesBySeason[seasonNumber]
         if (!forceRefresh && cachedEpisodes != null) {
@@ -972,6 +974,7 @@ class ItemDetailViewModel(
                 is ApiResult.Success -> {
                     val episodes = withLocalProgress(result.data.episodes)
                     loadedSeasonNumber = seasonNumber
+                    episodeRebuildGenerations[seasonNumber] = (episodeRebuildGenerations[seasonNumber] ?: 0L) + 1
                     _uiState.update {
                         val current = it.episodesBySeason[seasonNumber].orEmpty().associateBy { row -> row.contentId }
                         val rows = if (descriptionRevision != (episodeDescriptionRevisions[seasonNumber] ?: 0L)) {
@@ -1013,12 +1016,14 @@ class ItemDetailViewModel(
     }
 
     private val episodeDescriptionRevisions = mutableMapOf<Int, Long>()
+    private val episodeRebuildGenerations = mutableMapOf<Int, Long>()
 
     private fun cacheEpisodes(
         seasonNumber: Int,
         episodes: List<EpisodeListItem>,
         descriptionRevision: Long,
     ) {
+        episodeRebuildGenerations[seasonNumber] = (episodeRebuildGenerations[seasonNumber] ?: 0L) + 1
         _uiState.update {
             val current = it.episodesBySeason[seasonNumber].orEmpty().associateBy { row -> row.contentId }
             val rows = if (descriptionRevision != (episodeDescriptionRevisions[seasonNumber] ?: 0L)) {
@@ -1315,6 +1320,7 @@ class ItemDetailViewModel(
                 contentId = season.contentId,
                 targetLanguage = target,
                 refetchPendingLanguage = { owner ->
+                    val rebuildGeneration = episodeRebuildGenerations[seasonNumber] ?: 0L
                     when (
                         val result = catalogRepository.getEpisodes(
                             seriesId,
@@ -1325,8 +1331,13 @@ class ItemDetailViewModel(
                     ) {
                         is ApiResult.Success -> if (metadataAiRepository.isCurrent(owner)) {
                             val episodes = withLocalProgress(result.data.episodes)
-                            cacheTranslatedEpisodes(seasonNumber, episodes)
-                            episodes.pendingEpisodeTranslationLanguage()
+                            kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                            if (metadataAiRepository.isCurrent(owner) &&
+                                rebuildGeneration == (episodeRebuildGenerations[seasonNumber] ?: 0L)
+                            ) {
+                                cacheTranslatedEpisodes(seasonNumber, episodes)
+                                episodes.pendingEpisodeTranslationLanguage()
+                            } else target
                         } else {
                             target
                         }
@@ -1540,15 +1551,16 @@ class ItemDetailViewModel(
      * stale so selecting them later loads fresh checkmarks.
      */
     private fun refreshAfterSeasonWatchedChange(seriesId: String, changedSeasonNumber: Int?) {
-        _uiState.update { state ->
-            state.copy(
-                episodesBySeason = state.episodesBySeason.filterKeys { number ->
-                    // The loaded page is the fallback if the selected season's reload fails.
-                    number == state.selectedSeasonNumber || number == loadedSeasonNumber ||
-                        (changedSeasonNumber != null && number != changedSeasonNumber)
-                },
-            )
+        val state = _uiState.value
+        val retained = state.episodesBySeason.filterKeys { number ->
+            // The loaded page is the fallback if the selected season's reload fails.
+            number == state.selectedSeasonNumber || number == loadedSeasonNumber ||
+                (changedSeasonNumber != null && number != changedSeasonNumber)
         }
+        (state.episodesBySeason.keys - retained.keys).forEach { number ->
+            episodeRebuildGenerations[number] = (episodeRebuildGenerations[number] ?: 0L) + 1
+        }
+        _uiState.update { it.copy(episodesBySeason = retained) }
         // Re-reads the series hero, the season list, and the visible episodes.
         quietRefresh(afterWatchedChange = true)
     }

@@ -41,6 +41,10 @@ import org.siloserver.silo.network.SiloJson
 import org.siloserver.silo.network.TokenManager
 import org.siloserver.silo.network.api.CatalogApi
 import org.siloserver.silo.network.api.DefaultMetadataAiApi
+import org.siloserver.silo.network.api.MetadataAiApi
+import org.siloserver.silo.model.metadata.MetadataAiStatus
+import org.siloserver.silo.model.metadata.MetadataTranslationJob
+import org.siloserver.silo.repository.port.LocalPlaybackProgress
 import org.siloserver.silo.network.api.PersonalDataApi
 import org.siloserver.silo.network.api.ProfileApi
 import org.siloserver.silo.network.api.SettingsApi
@@ -75,6 +79,60 @@ import kotlin.test.assertTrue
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class TvNextUpSelectionHandoffTest {
+    @Test
+    fun delayedTranslationDoesNotRestoreANewerReloadsRemovedEpisodes() = runDetailTest {
+        val scenario = Scenario(suffix = "-translation-reload")
+        scenario.translationPending = true
+        val fixture = createFixture(scenario, acceptingTranslationApi())
+        awaitEpisode(fixture.viewModel, scenario.episodeOneId)
+        awaitCondition { fixture.viewModel.uiState.value.carouselEpisodes.size == 3 }
+        val initialReads = scenario.completedSeasonOneReads.get()
+        val oldRead = CompletableDeferred<Unit>()
+        scenario.seasonOneResponses += DetailResponse(oldRead, scenario.episodesJson()
+            .replace("\"pending_translation_language\":\"de\"", "\"pending_translation_language\":null"))
+        fixture.viewModel.translateShownSeasonEpisodes()
+        awaitCondition { scenario.seasonOneResponses.isEmpty() }
+
+        scenario.seasonOnePageOverride = """{"items":[{"content_id":"${scenario.episodeOneId}","season_number":1,"episode_number":1,"overview":"Newer"}]}"""
+        fixture.viewModel.refreshOnReturn()
+        awaitCondition { fixture.viewModel.uiState.value.episodes.singleOrNull()?.overview == "Newer" }
+        oldRead.complete(Unit)
+        // A discarded reply keeps polling. The old implementation instead
+        // publishes the removed row and treats this completed reply as final.
+        awaitCondition {
+            fixture.viewModel.uiState.value.episodes.any { it.contentId == scenario.episodeTwoId } ||
+                scenario.completedSeasonOneReads.get() >= initialReads + 3
+        }
+
+        assertEquals(listOf(scenario.episodeOneId), fixture.viewModel.uiState.value.episodes.map { it.contentId })
+        assertEquals("Newer", fixture.viewModel.uiState.value.episodes.single().overview)
+        assertFalse(fixture.viewModel.uiState.value.carouselEpisodes.any { it.contentId == scenario.episodeTwoId })
+    }
+
+    @Test
+    fun translationAppliesLocalProgressToNewEpisodeRows() = runDetailTest {
+        val scenario = Scenario(suffix = "-translation-local-progress")
+        scenario.seasonOnePageOverride = """{"items":[{"content_id":"${scenario.episodeOneId}","season_number":1,"episode_number":1,"pending_translation_language":"de"}]}"""
+        val fixture = createFixture(scenario, acceptingTranslationApi())
+        awaitEpisode(fixture.viewModel, scenario.episodeOneId)
+        awaitCondition { fixture.viewModel.uiState.value.carouselEpisodes.size == 2 }
+        fixture.userState.progress[scenario.episodeTwoId] = LocalPlaybackProgress(201, 30.0, 120.0)
+        scenario.seasonOnePageOverride = """{"items":[{"content_id":"${scenario.episodeOneId}","season_number":1,"episode_number":1},{"content_id":"${scenario.episodeTwoId}","season_number":1,"episode_number":2,"user_data":{"played":false,"is_in_progress":false}}]}"""
+        fixture.viewModel.translateShownSeasonEpisodes()
+        awaitCondition { fixture.viewModel.uiState.value.episodes.size == 2 }
+
+        val inserted = fixture.viewModel.uiState.value.episodes.first { it.contentId == scenario.episodeTwoId }
+        assertTrue(inserted.userData?.isInProgress == true)
+        assertEquals(30.0, inserted.userData?.positionSeconds)
+    }
+
+    private fun acceptingTranslationApi() = object : MetadataAiApi {
+        override suspend fun status() = ApiResult.Success(MetadataAiStatus())
+        override suspend fun translateDescription(contentId: String, targetLanguage: String,
+            scope: AuthScopeSnapshot?) = ApiResult.Success(
+                MetadataTranslationJob("job", "season", contentId, targetLanguage, "pending"))
+    }
+
     @Test
     fun routedEpisodeReplacesAnEarlierSeasonJump() = runDetailTest {
         val scenario = Scenario(suffix = "-routed-season-jump")
@@ -784,7 +842,7 @@ class TvNextUpSelectionHandoffTest {
         }
     }
 
-    private fun createFixture(scenario: Scenario): Fixture {
+    private fun createFixture(scenario: Scenario, metadataApi: MetadataAiApi? = null): Fixture {
         val identityTransitions = DefaultIdentityTransitionBarrier()
         val tokenManager = FakeTokenManager(identityTransitions)
         val client = scenario.client(tokenManager)
@@ -816,7 +874,7 @@ class TvNextUpSelectionHandoffTest {
             },
             profileRepository = profileRepository,
             profileSettings = ProfileSettingsController(SettingsRepository(UnavailableSettingsApi())),
-            metadataAiRepository = MetadataAiRepository(DefaultMetadataAiApi(client, gate = ApiV2Gate.Unrestricted)),
+            metadataAiRepository = MetadataAiRepository(metadataApi ?: DefaultMetadataAiApi(client, gate = ApiV2Gate.Unrestricted)),
             contentId = scenario.seriesId,
             userItemState = userState,
             tokenManager = tokenManager,
@@ -877,6 +935,10 @@ class TvNextUpSelectionHandoffTest {
         var seasonsGate: CompletableDeferred<Unit>? = null
         var seasonOneEpisodesGate: CompletableDeferred<Unit>? = null
         var seasonTwoEpisodesGate: CompletableDeferred<Unit>? = null
+        var translationPending = false
+        var seasonOnePageOverride: String? = null
+        val seasonOneResponses = ConcurrentLinkedDeque<DetailResponse>()
+        val completedSeasonOneReads = AtomicInteger()
         val seasonsRequests = AtomicInteger()
         val episodeTwoRequests = AtomicInteger()
         val pendingEpisodeOneResponses = AtomicInteger()
@@ -912,8 +974,11 @@ class TvNextUpSelectionHandoffTest {
                         )
                     }
                     "/api/v2/catalog/series/$seriesId/seasons/1/episodes" -> {
-                        seasonOneEpisodesGate?.await()
-                        json(episodesJson())
+                        val queued = seasonOneResponses.pollFirst()
+                        queued?.gate?.await()
+                        if (queued == null) seasonOneEpisodesGate?.await()
+                        completedSeasonOneReads.incrementAndGet()
+                        json(queued?.json ?: seasonOnePageOverride ?: episodesJson())
                     }
                     "/api/v2/catalog/series/$seriesId/seasons/2/episodes" -> {
                         seasonTwoEpisodesGate?.await()
@@ -979,9 +1044,9 @@ class TvNextUpSelectionHandoffTest {
             install(ContentNegotiation) { json(SiloJson) }
         }
 
-        private fun episodesJson(): String =
+        fun episodesJson(): String =
             """{"items":[
-                {"content_id":"$episodeOneId","season_number":1,"episode_number":1,"title":"One","user_data":{"played":$episodeOneWatched}},
+                {"content_id":"$episodeOneId","season_number":1,"episode_number":1,"title":"One","pending_translation_language":${if (translationPending) "\"de\"" else "null"},"user_data":{"played":$episodeOneWatched}},
                 {"content_id":"$episodeTwoId","season_number":1,"episode_number":2,"title":"Two","user_data":{"played":$episodeTwoWatched}}
             ]}""".trimIndent()
     }
@@ -993,6 +1058,9 @@ class TvNextUpSelectionHandoffTest {
         val writes = CopyOnWriteArrayList<Write>()
         val readGates = ConcurrentHashMap<Pair<String, Int>, CompletableDeferred<Unit>>()
         val startedReads: MutableSet<Pair<String, Int>> = ConcurrentHashMap.newKeySet()
+        val progress = ConcurrentHashMap<String, LocalPlaybackProgress>()
+        override suspend fun localPlaybackProgress(contentId: String) = progress[contentId]
+        override suspend fun localPlaybackProgressForContent(contentIds: List<String>) = progress.filterKeys { it in contentIds }
 
         private var nextPersonalWrite = 0L
         override suspend fun beginPersonalWrite(command: PersonalWrite) =

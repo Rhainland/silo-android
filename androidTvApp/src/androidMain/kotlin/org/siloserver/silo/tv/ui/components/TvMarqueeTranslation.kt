@@ -65,7 +65,14 @@ internal class TvMarqueeTranslationState(
     /** Descriptions re-read while this feed was on screen, by content id. */
     private val landed = mutableStateMapOf<String, Landed>()
     private var translationJob: Job? = null
+    private var focusedContentId: String? = null
+    private var failedPreflightContentId: String? = null
     val working = MutableStateFlow(false)
+
+    fun onFocusChanged(contentId: String?) {
+        if (focusedContentId != contentId) failedPreflightContentId = null
+        focusedContentId = contentId
+    }
 
     fun close() {
         translationJob?.cancel()
@@ -79,7 +86,7 @@ internal class TvMarqueeTranslationState(
         if (translationJob?.isActive == true) return
         val contentId = item.contentId
         val hintedTarget = pendingLanguage(item) ?: return
-        if (!controller.claimAutoFire(contentId, hintedTarget)) return
+        if (failedPreflightContentId == contentId || !controller.shouldAutoFire(contentId, hintedTarget)) return
         working.value = true
         translationJob = scope.launch {
             try {
@@ -88,7 +95,12 @@ internal class TvMarqueeTranslationState(
                 val owner = repository.captureAuthority()
                 val latest = repository.refreshDetail(contentId, owner)
                 currentCoroutineContext().ensureActive()
-                if (latest !is ApiResult.Success || !repository.isCurrent(owner)) return@launch
+                if (latest !is ApiResult.Success || !repository.isCurrent(owner)) {
+                    // Retry on refocus without repeatedly reading a failing endpoint
+                    // while focus rests here. No translation claim has been consumed.
+                    failedPreflightContentId = contentId
+                    return@launch
+                }
                 fun publish(detail: org.siloserver.silo.model.catalog.ItemDetail) {
                     landed[contentId] = Landed(
                         overview = detail.overview?.takeIf { it.isNotBlank() },
@@ -102,7 +114,7 @@ internal class TvMarqueeTranslationState(
                     onLanded()
                     return@launch
                 }
-                if (target != hintedTarget && !controller.claimAutoFire(contentId, target)) return@launch
+                if (!controller.claimAutoFire(contentId, target)) return@launch
                 controller.resetFailure()
                 controller.translate(
                     contentId = contentId,
@@ -180,6 +192,7 @@ internal fun rememberTvMarqueeTranslation(
     // Re-run when a running translation ends, so an item skipped meanwhile
     // gets its turn while the viewer is still resting on it.
     LaunchedEffect(state, item?.contentId, pending, status.onView, busy, autoTranslate) {
+        state.onFocusChanged(item?.contentId)
         if (!autoTranslate || item == null || pending == null || status.onView != MetadataAiOnView.Auto) {
             return@LaunchedEffect
         }

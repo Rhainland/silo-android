@@ -123,4 +123,39 @@ class TvMarqueeTranslationTest {
         assertFalse(state.working.value)
     }
 
+    @Test
+    fun failedPreflightRetriesOnRefocusWithoutConsumingTheTranslationClaim() = runTest {
+        var reads = 0
+        var posts = 0
+        val api = object : MetadataAiApi {
+            override suspend fun status() = ApiResult.Success(MetadataAiStatus())
+            override suspend fun translateDescription(contentId: String, targetLanguage: String,
+                scope: AuthScopeSnapshot?): ApiResult<MetadataTranslationJob> {
+                posts++
+                return ApiResult.Success(MetadataTranslationJob("job", "item", contentId, targetLanguage, "pending"))
+            }
+            override suspend fun refreshDetail(contentId: String, scope: AuthScopeSnapshot?): ApiResult<ItemDetail> {
+                if (++reads == 1) return ApiResult.NetworkError(IllegalStateException("Temporary failure"))
+                return ApiResult.Success(ItemDetail("movie-1", "movie", title = "Film",
+                    overview = if (reads == 2) "Original" else "Localized",
+                    pendingTranslationLanguage = if (reads == 2) "nl" else null))
+            }
+        }
+        val state = TvMarqueeTranslationState(MetadataAiRepository(api), this)
+        state.onFocusChanged(pendingCard.contentId)
+        state.translateOnView(pendingCard) {}
+        advanceUntilIdle()
+        state.translateOnView(pendingCard) {}
+        advanceUntilIdle()
+        assertEquals(1, reads, "resting focus must not loop on a failing preflight")
+        assertEquals(0, posts)
+
+        state.onFocusChanged("another-card")
+        state.onFocusChanged(pendingCard.contentId)
+        state.translateOnView(pendingCard) {}
+        advanceUntilIdle()
+        assertEquals(1, posts)
+        assertEquals("Localized", state.presentation(pendingCard, state.phase.value, state.runningContentId.value).synopsis)
+    }
+
 }
