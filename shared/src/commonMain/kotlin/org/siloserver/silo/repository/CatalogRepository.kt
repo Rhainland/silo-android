@@ -199,7 +199,7 @@ class CatalogRepository(
     /** Fetches playback-oriented detail (versions, user progress, intro/credits markers). */
     suspend fun captureWatchAuthority() = catalogApi.captureWatchAuthority()
     suspend fun isWatchAuthorityCurrent(owner: org.siloserver.silo.network.AuthScopeSnapshot) = catalogApi.isWatchAuthorityCurrent(owner)
-    suspend fun getWatchDetail(contentId: String, owner: org.siloserver.silo.network.AuthScopeSnapshot, libraryId: Int? = null) = catalogApi.getWatchDetail(contentId, owner, libraryId)
+    suspend fun getWatchDetail(contentId: String, owner: org.siloserver.silo.network.AuthScopeSnapshot, libraryId: Int? = null, fileId: Int? = null) = catalogApi.getWatchDetail(contentId, owner, libraryId, fileId)
 
     suspend fun getWatchDetail(contentId: String, libraryId: Int? = null): ApiResult<WatchDetail> =
         catalogApi.getWatchDetail(contentId, libraryId)

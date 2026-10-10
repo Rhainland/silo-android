@@ -53,7 +53,7 @@ class TvPlaybackRealtimeController(
                         when (event) {
                             is PlaybackRealtimeEvent.Opened -> {
                                 client.sendHello(sessionId)
-                                viewModel.reconcileMarkersAfterRealtimeConnect(sessionId)
+                                viewModel.reconcileMarkers(sessionId)
                             }
                             is PlaybackRealtimeEvent.Command -> handleCommand(event)
                             is PlaybackRealtimeEvent.ServerEvent -> handleServerEvent(event)
@@ -118,10 +118,7 @@ class TvPlaybackRealtimeController(
                 viewModel.applySubtitleTimingChanged(decodePlaybackSubtitleTimingChanged(event))
             "subtitle_sync_updated" ->
                 viewModel.applySubtitleSyncUpdated(decodePlaybackSubtitleSyncUpdated(event))
-            "markers_updated" -> {
-                val markers = decodeMarkersUpdate(event)
-                viewModel.applyUpdatedMarkers(markers.intro, markers.credits, markers.recap, markers.preview)
-            }
+            "markers_updated" -> viewModel.applyMarkersUpdate(decodeMarkersUpdate(event))
             // chapter_thumbnail_ready: no scrubber-thumbnail UI yet → nothing to update.
             else -> { /* ignore */ }
         }
