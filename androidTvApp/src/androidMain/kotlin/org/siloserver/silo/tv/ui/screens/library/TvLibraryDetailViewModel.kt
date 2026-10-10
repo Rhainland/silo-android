@@ -227,6 +227,13 @@ class TvLibraryDetailViewModel(
     private var browseRawLoaded = 0
     private var loadedAudiobookGroupBy: String? = null
     private var audiobookGroupsGeneration = 0
+    // Declared before init, which starts the first Recommended load: an
+    // initializer below it would reset this generation and drop that load's
+    // job afterward, so a reload could neither cancel nor outrank it.
+    private var recommendedGeneration = 0L
+    private var filtersJob: Job? = null
+    private var collectionsJob: Job? = null
+    private var recommendedJob: Job? = null
 
     init {
         // Only the default Recommended tab loads eagerly. Filters (the genre
@@ -473,11 +480,6 @@ class TvLibraryDetailViewModel(
         if (state.selectedTab != TvLibraryTab.Browse) return
         browsePrefs?.saveState(libraryId, state.browseFilter.toSavedState(), mediaScope)
     }
-
-    private var recommendedGeneration = 0L
-    private var filtersJob: Job? = null
-    private var collectionsJob: Job? = null
-    private var recommendedJob: Job? = null
 
     private fun loadRecommended() {
         val run = ++recommendedGeneration
