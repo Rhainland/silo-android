@@ -1,6 +1,8 @@
 package org.siloserver.silo.tv.ui.screens.player
 
 import androidx.media3.common.Player
+import org.siloserver.silo.common.player.video.markerSkipTarget
+import org.siloserver.silo.model.catalog.TimeRange
 import org.siloserver.silo.watchtogether.RoomPlayerState
 import org.siloserver.silo.watchtogether.WatchPartyPlaybackContext
 import java.io.File
@@ -11,6 +13,23 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class TvWatchPartyPlayerTest {
+    @Test
+    fun `visible quality offer owns select throughout recap and credits`() {
+        val recap = TimeRange(80.0, 160.0)
+        val credits = TimeRange(160.0, 240.0)
+        for (position in listOf(100.0, 200.0)) {
+            val target = markerSkipTarget(position, recap, credits)
+            assertTrue(target != null)
+            assertNull(tvManualMarkerSkipTarget(target, true, false, false, true))
+            // Opening controls hides the quality offer and restores the focused
+            // marker button; dismissing it restores clean-playback marker OK.
+            assertEquals(target, tvManualMarkerSkipTarget(target, true, false, false, false))
+            assertNull(tvManualMarkerSkipTarget(target, false, false, false, false))
+            assertNull(tvManualMarkerSkipTarget(target, true, true, false, false))
+            assertNull(tvManualMarkerSkipTarget(target, true, false, true, false))
+        }
+    }
+
     private val room = WatchPartyPlaybackContext(
         roomId = "room-1",
         selectionRevision = 7L,

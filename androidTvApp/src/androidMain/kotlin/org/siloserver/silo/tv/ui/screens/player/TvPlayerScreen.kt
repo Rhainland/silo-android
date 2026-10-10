@@ -63,6 +63,7 @@ import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
@@ -117,6 +118,9 @@ import org.siloserver.silo.common.player.PlayWhenReadyReconciliationGate
 import org.siloserver.silo.common.player.PlaybackCapabilityDetector
 import org.siloserver.silo.common.player.PlaybackPreflightListener
 import org.siloserver.silo.common.player.PlayerNotice
+import org.siloserver.silo.common.player.video.markerSkipTarget
+import org.siloserver.silo.common.player.video.MarkerSkipTarget
+import org.siloserver.silo.common.player.video.ManualMarkerKind
 import org.siloserver.silo.common.player.SessionState
 import org.siloserver.silo.common.player.SiloPlaybackService
 import org.siloserver.silo.common.player.SleepTimerState
@@ -353,6 +357,7 @@ fun TvPlayerScreen(
     }
     val sessionState by viewModel.sessionState.collectAsState()
     val introSkipState by viewModel.introSkipState.collectAsState()
+    val activeMarkerSkipTarget by viewModel.manualMarkerSkipTarget.collectAsState()
     val introSkipCountdownRun by viewModel.introSkipCountdownRun.collectAsState()
     val introSkipTimerRunning by viewModel.introSkipTimerRunning.collectAsState()
     val subtitleAppearance by viewModel.subtitleAppearance.collectAsState()
@@ -586,6 +591,24 @@ fun TvPlayerScreen(
         roomTransportAuthorized(roomSnapshot, RoomTransportIntent.PlayPause)
     val visibleIntroSkipState = if (canSeekInRoom) introSkipState else IntroAutoSkipState.Hidden
     val latestIntroSkipState by rememberUpdatedState(visibleIntroSkipState)
+    // After repeated stalls in a room: a one-line offer to step down the same
+    // file's quality ladder, taken with OK while the transport is hidden.
+    val qualityOffer = remember { TvWatchPartyQualityOfferState() }
+    val lowerQuality = tvWatchPartyLowerQuality(
+        watchParty = watchParty,
+        offerState = qualityOffer,
+        videoQualities = state.videoQualities,
+        selectedFileResolution = state.selectedFileResolution,
+    )
+    val latestLowerQuality by rememberUpdatedState(lowerQuality)
+
+    val qualityOfferVisible = lowerQuality != null &&
+        !state.showControls && !state.hudOpen && !state.showNextUp
+    val manualSkipTarget = tvManualMarkerSkipTarget(
+        activeMarkerSkipTarget, canSeekInRoom, visibleIntroSkipState.isVisible,
+        state.isLoading || state.error != null, qualityOfferVisible,
+    )
+    val latestManualSkipTarget by rememberUpdatedState(manualSkipTarget)
     val latestRoomSnapshot by rememberUpdatedState(roomSnapshot)
     val latestShowPartyPanel by rememberUpdatedState(showPartyPanel)
     val latestShowQuickSubtitlePicker by rememberUpdatedState(showQuickSubtitlePicker)
@@ -641,6 +664,18 @@ fun TvPlayerScreen(
             requestIdleOverlayFocus(TvIdleOverlayFocusTarget.Scrubber)
         }
         return true
+    }
+
+    fun handleManualMarkerSelect() {
+        val current = viewModel.uiState.value
+        val target = markerSkipTarget(current.position, current.recap, current.credits) ?: return
+        if (watchParty != null) {
+            if (!watchParty.canSeek()) return
+            watchParty.seek(target.endSeconds)
+        } else {
+            viewModel.seekImmediate(target.endSeconds)
+        }
+        if (current.showControls) requestIdleOverlayFocus(TvIdleOverlayFocusTarget.Scrubber)
     }
 
     fun armQuickSkipCapture() {
@@ -888,17 +923,6 @@ fun TvPlayerScreen(
         }
     }
 
-    // After repeated stalls in a room: a one-line offer to step down the same
-    // file's quality ladder, taken with OK while the transport is hidden.
-    val qualityOffer = remember { TvWatchPartyQualityOfferState() }
-    val lowerQuality = tvWatchPartyLowerQuality(
-        watchParty = watchParty,
-        offerState = qualityOffer,
-        videoQualities = state.videoQualities,
-        selectedFileResolution = state.selectedFileResolution,
-    )
-    val latestLowerQuality by rememberUpdatedState(lowerQuality)
-
     // More-specific overlays register their own BackHandlers later in the
     // composition and therefore run first. This screen callback owns the
     // remaining player-state ladder on Android 16, where KEYCODE_BACK is no
@@ -1133,6 +1157,14 @@ fun TvPlayerScreen(
                 )
             ) {
                 return@handler handleIntroPromptSelect()
+            }
+
+            if (latestManualSkipTarget != null && !playerState.showControls &&
+                !playerState.isScrubbing && cleanSeekRate == 0 &&
+                event.keyCode in setOf(KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER)
+            ) {
+                if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) handleManualMarkerSelect()
+                return@handler true
             }
 
             // The lower-quality offer owns OK and Back while the transport is
@@ -2427,6 +2459,8 @@ fun TvPlayerScreen(
             nextUpCountdownTotalSeconds = state.nextUpCountdownTotalSeconds,
             autoPlayNextEnabled = autoPlayNextEnabled,
             introSkipState = visibleIntroSkipState,
+            manualSkipTarget = manualSkipTarget,
+            onManualMarkerSelect = { handleManualMarkerSelect() },
             introSkipCountdownRun = introSkipCountdownRun,
             introSkipTimerRunning = introSkipTimerRunning,
             introSkipTotalSeconds = viewModel.introSkipTotalSeconds,
@@ -2453,9 +2487,7 @@ fun TvPlayerScreen(
             onExitPlayback = { stopPlaybackAndExit() },
             onNextUpVideoBoundsChanged = { nextUpVideoBounds = it },
             onIntroPromptSelect = { handleIntroPromptSelect() },
-            qualityOfferLabel = lowerQuality?.label?.takeIf {
-                !state.showControls && !state.hudOpen && !state.showNextUp
-            },
+            qualityOfferLabel = lowerQuality?.label?.takeIf { qualityOfferVisible },
         )
         if (watchParty != null) {
             TvWatchPartyPlayerOverlays(
@@ -3695,6 +3727,8 @@ private fun TvPlayerOverlays(
     shuffle: TvShuffleUiState?,
     autoPlayNextEnabled: Boolean,
     introSkipState: IntroAutoSkipState,
+    manualSkipTarget: MarkerSkipTarget?,
+    onManualMarkerSelect: () -> Unit,
     /** Bumps when the pill's timer (re)starts, so its fill re-anchors. */
     introSkipCountdownRun: Int,
     /** False while the pill is up but its timer is frozen by a pause. */
@@ -3929,6 +3963,12 @@ private fun TvPlayerOverlays(
                         .padding(bottom = introSkipBottomInset, end = 32.dp),
                     contentAlignment = Alignment.BottomEnd,
                 ) {
+                    if (manualSkipTarget != null) {
+                        TvMarkerSkipPill(
+                            label = stringResource(if (manualSkipTarget.kind == ManualMarkerKind.Recap) R.string.marker_skip_recap else R.string.marker_skip_credits),
+                            onSelect = onManualMarkerSelect,
+                        )
+                    }
                     TvIntroAutoSkipBanner(
                         state = introSkipState,
                         onSelect = onIntroPromptSelect,

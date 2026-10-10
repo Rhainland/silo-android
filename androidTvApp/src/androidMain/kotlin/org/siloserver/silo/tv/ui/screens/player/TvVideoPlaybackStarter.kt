@@ -412,10 +412,10 @@ class TvVideoPlaybackStarter(
                 showForcedSubtitles = watchDetail.effectiveShowForcedSubtitles
                     ?: activeProfile?.showForcedSubtitles
                     ?: true,
-                intro = watchDetail.intro,
-                credits = watchDetail.credits,
-                recap = watchDetail.recap,
-                preview = watchDetail.preview,
+                intro = effectiveVersion?.intro,
+                credits = effectiveVersion?.credits,
+                recap = effectiveVersion?.recap,
+                preview = effectiveVersion?.preview,
                 chapters = effectiveVersion?.chapters.orEmpty(),
                 seriesId = watchDetail.seriesId,
                 seriesTitle = watchDetail.seriesTitle,

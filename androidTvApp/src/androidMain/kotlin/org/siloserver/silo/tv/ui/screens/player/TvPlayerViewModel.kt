@@ -56,7 +56,10 @@ import org.siloserver.silo.common.player.seek.playerPositionForSource
 import org.siloserver.silo.common.player.seek.replanMountPositionForSource
 import org.siloserver.silo.common.player.seek.sourcePositionForPlayer
 import org.siloserver.silo.common.network.ServerReachabilityMonitor
+import org.siloserver.silo.common.player.video.MarkerReconciliationFence
+import org.siloserver.silo.common.player.video.MarkerSkipTarget
 import org.siloserver.silo.common.player.video.VideoPlaybackSessionCoordinator
+import org.siloserver.silo.common.player.video.markerSkipTarget
 import org.siloserver.silo.common.player.video.VideoPlaybackStartRequest
 import org.siloserver.silo.common.player.video.EpisodeAudioIntent
 import org.siloserver.silo.common.player.video.EpisodeAudioMode
@@ -105,6 +108,7 @@ import org.siloserver.silo.model.playback.SubtitleMediaIdentity
 import org.siloserver.silo.model.playback.enrichAuthoritativePlaybackSubtitleChoices
 import org.siloserver.silo.model.playback.resolvedSelectedSubtitleIndex
 import org.siloserver.silo.model.playback.mergeDownloadedSubtitles
+import org.siloserver.silo.playback.PlaybackMarkersUpdate
 import org.siloserver.silo.playback.PlaybackSubtitleReady
 import org.siloserver.silo.playback.PlaybackSubtitleTimingChanged
 import org.siloserver.silo.playback.PlaybackSubtitleSyncUpdated
@@ -1190,6 +1194,12 @@ class TvPlayerViewModel(
             started = SharingStarted.Eagerly,
             initialValue = _uiState.value.toPlaybackClock(),
         )
+    // Marker controls use source time; presentationState deliberately omits the clock.
+    val manualMarkerSkipTarget: StateFlow<MarkerSkipTarget?> = uiState
+        .map { markerSkipTarget(it.position, it.recap, it.credits) }
+        .distinctUntilChanged()
+        .stateIn(viewModelScope, SharingStarted.Eagerly, null)
+
     private var subtitleMountGeneration = 0L
     private var lastAdapterMountIdentity: SubtitleIdentity? = null
     private var lastAdapterMountGeneration: Long? = null
@@ -1881,6 +1891,7 @@ class TvPlayerViewModel(
                 position = remountPosition.sourcePositionSeconds,
             )
         }
+        adoptFileMarkersAfterReplan(before.mediaFileId, version)
         Log.i(
             TAG,
             "subtitle_replan_mount restored_source_seconds=${remountPosition.sourcePositionSeconds} " +
@@ -2815,6 +2826,7 @@ class TvPlayerViewModel(
                         coroutineContext.ensureActive()
                         if (recoveryContentGeneration != contentLoadGeneration) return@launch
                         val transportMountNonce = nextTypedSubtitleMountNonce(returnedSubtitleIdentity)
+                        val previousFileId = _uiState.value.mediaFileId
                         _uiState.update {
                             it.copy(
                                 error = null,
@@ -2858,6 +2870,7 @@ class TvPlayerViewModel(
                             committedIdentity = returnedSubtitleIdentity,
                         )
                         subtitleTransactions.restoreCommittedLocalMount()
+                        adoptFileMarkersAfterReplan(previousFileId, effectiveVersion)
                         Log.i(
                             TAG,
                             "replan_mount restored_source_seconds=${remountPosition.sourcePositionSeconds} " +
@@ -4339,12 +4352,61 @@ class TvPlayerViewModel(
         _pendingRemoteSubtitleIndex.value?.let(::remoteSelectSubtitle)
     }
 
+    private val markerReconciliationFence = MarkerReconciliationFence()
+    private var markerReconcileJob: Job? = null
+
     /**
-     * Adopt server-recomputed intro/credits ranges (a `markers_updated` event).
-     * Skip-intro and the credits-based F2 trigger read these from UiState, so the
-     * update takes effect immediately; `null` clears a marker the server dropped.
+     * Read the playing file's markers again: after every control connection,
+     * including on-demand mode, and after a replan lands on another file.
+     * Naming the file makes the server fill that version's on-demand markers.
      */
-    fun applyUpdatedMarkers(intro: TimeRange?, credits: TimeRange?, recap: TimeRange?, preview: TimeRange?) {
+    fun reconcileMarkers(expectedSessionId: String) {
+        val state = _uiState.value
+        val fileId = state.mediaFileId ?: return
+        if (state.sessionId != expectedSessionId) return
+        // The same library the start used: a room may have moved to another library's title.
+        val libraryId = roomContext?.libraryId ?: launchArgs.libraryId
+        val ticket = markerReconciliationFence.begin()
+        markerReconcileJob?.cancel()
+        markerReconcileJob = viewModelScope.launch {
+            val owner = catalogRepository.captureWatchAuthority() ?: return@launch
+            val detail = (catalogRepository.getWatchDetail(state.contentId, owner, libraryId, fileId) as? ApiResult.Success)
+                ?.data ?: return@launch
+            if (!catalogRepository.isWatchAuthorityCurrent(owner)) return@launch
+            val current = _uiState.value
+            if (!markerReconciliationFence.isCurrent(ticket) || current.sessionId != expectedSessionId ||
+                current.contentId != state.contentId || current.mediaFileId != fileId) return@launch
+            val version = detail.versions.firstOrNull { it.fileId == fileId } ?: return@launch
+            applyUpdatedMarkers(version.intro, version.credits,
+                version.recap, version.preview)
+        }
+    }
+
+    /**
+     * A `markers_updated` event. The server also sends a file's update to
+     * sessions that requested that file but play another, so check the file.
+     */
+    fun applyMarkersUpdate(update: PlaybackMarkersUpdate) {
+        if (update.fileId != null && update.fileId != _uiState.value.mediaFileId) return
+        applyUpdatedMarkers(update.intro, update.credits, update.recap, update.preview)
+    }
+
+    /** A replan that lands on another file takes that file's markers, then reads them again. */
+    private fun adoptFileMarkersAfterReplan(previousFileId: Int?, version: FileVersion?) {
+        val state = _uiState.value
+        if (state.mediaFileId == previousFileId) return
+        applyUpdatedMarkers(version?.intro, version?.credits, version?.recap, version?.preview)
+        state.sessionId?.let(::reconcileMarkers)
+    }
+
+    /**
+     * Adopt the playing file's marker ranges (a `markers_updated` event or a
+     * reconcile read). Skip-intro and the credits-based F2 trigger read these
+     * from UiState, so the update takes effect immediately; `null` clears a
+     * marker the server dropped.
+     */
+    private fun applyUpdatedMarkers(intro: TimeRange?, credits: TimeRange?, recap: TimeRange?, preview: TimeRange?) {
+        markerReconciliationFence.invalidate()
         _uiState.update { it.copy(intro = intro, credits = credits, recap = recap, preview = preview) }
     }
 
