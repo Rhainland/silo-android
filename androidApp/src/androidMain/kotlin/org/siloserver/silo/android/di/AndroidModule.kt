@@ -534,6 +534,20 @@ val androidModule = module {
     single {
         org.siloserver.silo.android.auth.ProfileSwitchTeardown(get(), get(), get(), get(), get(), get(), get())
     }
+    // Profile Selection (Apple Settings → General → Profile Selection): the
+    // choice kept on this device, the tracker MainActivity drives from
+    // onStop/onStart, and the reset that drops the active profile when it asks.
+    single {
+        org.siloserver.silo.common.profiles.ProfileLaunchPreferences(
+            androidContext(),
+            org.siloserver.silo.common.profiles.ProfileLaunchPreferences.PHONE_PREFS_NAME,
+        )
+    }
+    single {
+        val cast = get<SiloCastSessionManager>()
+        org.siloserver.silo.common.profiles.ProfileAwayTracker(get(), get(), isCasting = { cast.castState.value.isConnected })
+    }
+    single { org.siloserver.silo.android.auth.ActiveProfileReset(get(), get(), get(), get(), get(), get(), get()) }
     viewModel { SettingsViewModel(get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get()) }
     viewModel { DiagnosticsViewModel(get()) }
     viewModel { DownloadsViewModel(get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get()) }
@@ -553,7 +567,7 @@ val androidModule = module {
     viewModel { ProfileSelectionViewModel(get(), get(), profileVerificationRecovery = getOrNull()) }
     viewModel { CreateProfileViewModel(get()) }
     viewModel { EditProfileViewModel(get()) }
-    viewModel { ServerListViewModel(get(), get(), get()) }
+    viewModel { ServerListViewModel(get(), get(), get(), get(), get()) }
     viewModel { params ->
         val args = params.get<Pair<String?, String?>>()
         val authRepository = get<org.siloserver.silo.repository.AuthRepository>()

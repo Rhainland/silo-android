@@ -12,6 +12,8 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import org.siloserver.silo.android.auth.ActiveProfileReset
+import org.siloserver.silo.common.profiles.ProfileLaunchPreferences
 
 /**
  * Where to land after a successful server switch. The list view emits this
@@ -39,6 +41,8 @@ class ServerListViewModel(
     private val serverRegistry: ServerRegistry,
     private val tokenManager: TokenManager,
     private val authRepository: AuthRepository,
+    private val profileLaunchPreferences: ProfileLaunchPreferences? = null,
+    private val activeProfileReset: ActiveProfileReset? = null,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(ServerListUiState())
@@ -82,6 +86,13 @@ class ServerListViewModel(
             val destination = when {
                 accessToken.isNullOrBlank() -> ServerSwitchDestination.Login
                 profileId.isNullOrBlank() -> ServerSwitchDestination.ProfileSelection
+                // Profile Selection asks on a server switch as it does at
+                // launch, so a protected profile there needs its PIN. Cleared
+                // before navigating, so the picker loads under the new server.
+                profileLaunchPreferences?.requiresSelectionAtLaunch() == true -> {
+                    activeProfileReset?.clearActiveProfile()
+                    ServerSwitchDestination.ProfileSelection
+                }
                 else -> ServerSwitchDestination.Home
             }
 

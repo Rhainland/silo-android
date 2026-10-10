@@ -56,10 +56,10 @@ import org.siloserver.silo.repository.ProfileRepository
 import org.siloserver.silo.repository.SectionRepository
 import org.siloserver.silo.repository.port.HomeCachePort
 import org.siloserver.silo.tv.cast.TvSiloCastReceiver
-import org.siloserver.silo.tv.data.preferences.ProfileLaunchBehavior
-import org.siloserver.silo.tv.data.preferences.TvProfileLaunchPreferences
+import org.siloserver.silo.common.profiles.ProfileLaunchBehavior
+import org.siloserver.silo.common.profiles.ProfileLaunchPreferences
 import org.siloserver.silo.tv.profiles.TvActiveProfileReset
-import org.siloserver.silo.tv.profiles.TvProfileAwayTracker
+import org.siloserver.silo.common.profiles.ProfileAwayTracker
 import org.siloserver.silo.tv.ui.navigation.TvAppNavigation
 import org.siloserver.silo.tv.ui.navigation.TvRoute
 import org.siloserver.silo.tv.ui.screens.player.TvPlayerRemoteKeyBridge
@@ -135,7 +135,7 @@ class MainTvActivity : ComponentActivity() {
         // equivalent short of blocking screenshots altogether).
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             lifecycleScope.launch {
-                get<TvProfileLaunchPreferences>(TvProfileLaunchPreferences::class.java).state
+                get<ProfileLaunchPreferences>(ProfileLaunchPreferences::class.java).state
                     .map { it.behavior == ProfileLaunchBehavior.Automatic }
                     .distinctUntilChanged()
                     .collect { automatic -> setRecentsScreenshotEnabled(automatic) }
@@ -179,7 +179,7 @@ class MainTvActivity : ComponentActivity() {
             // Profile Selection: from the moment Silo returns and the setting
             // asks, cover the previous profile's screens until Who's Watching
             // has replaced them (TvAppNavigation lifts the request).
-            val profileAwayTracker = remember { get<TvProfileAwayTracker>(TvProfileAwayTracker::class.java) }
+            val profileAwayTracker = remember { get<ProfileAwayTracker>(ProfileAwayTracker::class.java) }
             val profileCoverVisible by profileAwayTracker.selectionRequired.collectAsState()
 
             SiloTvTheme {
@@ -268,7 +268,7 @@ class MainTvActivity : ComponentActivity() {
     override fun onStart() {
         super.onStart()
         DiagnosticsLifecycleLogger.state("foreground")
-        get<TvProfileAwayTracker>(TvProfileAwayTracker::class.java).onForeground()
+        get<ProfileAwayTracker>(ProfileAwayTracker::class.java).onForeground()
         val refresher = get<ServerDrivenConfigRefresher>(ServerDrivenConfigRefresher::class.java)
         val monitor = get<ServerReachabilityMonitor>(ServerReachabilityMonitor::class.java)
         monitor.startForeground()
@@ -339,7 +339,7 @@ class MainTvActivity : ComponentActivity() {
         super.onStop()
         // A configuration-change recreation is not leaving Silo.
         if (!isChangingConfigurations) {
-            get<TvProfileAwayTracker>(TvProfileAwayTracker::class.java).onBackground()
+            get<ProfileAwayTracker>(ProfileAwayTracker::class.java).onBackground()
         }
         val monitor = get<ServerReachabilityMonitor>(ServerReachabilityMonitor::class.java)
         monitor.stopForeground()
@@ -366,7 +366,7 @@ class MainTvActivity : ComponentActivity() {
             // makes this an existing TV, not just one on the active server.
             val hasRememberedProfile = registry.entries.value.any { !it.profileId.isNullOrBlank() } ||
                 !tokenManager.getProfileId().isNullOrBlank()
-            get<TvProfileLaunchPreferences>(TvProfileLaunchPreferences::class.java)
+            get<ProfileLaunchPreferences>(ProfileLaunchPreferences::class.java)
                 .settleFirstLaunch(hasRememberedProfile = hasRememberedProfile)
         }
         // Only once settled: an Activity recreated while this was suspended
@@ -417,11 +417,11 @@ class MainTvActivity : ComponentActivity() {
         // return rule the away tracker evaluated in onStart. Either way the
         // profile is cleared here, before the picker loads, and losing its PIN
         // proof makes a protected profile ask for its PIN again.
-        val launchPreferences = get<TvProfileLaunchPreferences>(TvProfileLaunchPreferences::class.java)
+        val launchPreferences = get<ProfileLaunchPreferences>(ProfileLaunchPreferences::class.java)
         val requiresSelection = if (processStart) {
             launchPreferences.requiresSelectionAtLaunch()
         } else {
-            get<TvProfileAwayTracker>(TvProfileAwayTracker::class.java).selectionRequired.value
+            get<ProfileAwayTracker>(ProfileAwayTracker::class.java).selectionRequired.value
         }
         if (requiresSelection) {
             get<TvActiveProfileReset>(TvActiveProfileReset::class.java).clearActiveProfile()

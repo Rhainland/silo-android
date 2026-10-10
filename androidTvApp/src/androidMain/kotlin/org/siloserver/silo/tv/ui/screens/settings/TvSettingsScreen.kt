@@ -127,7 +127,7 @@ import org.siloserver.silo.common.ui.components.ThumbhashImage
 import org.siloserver.silo.common.ui.components.profileAvatarDisplayText
 import org.siloserver.silo.common.ui.components.rememberProfileAvatarImage
 import androidx.compose.ui.layout.ContentScale
-import org.siloserver.silo.tv.data.preferences.ProfileLaunchBehavior
+import org.siloserver.silo.common.profiles.ProfileLaunchBehavior
 import org.siloserver.silo.tv.data.preferences.SubtitleMode
 import org.siloserver.silo.tv.ui.screens.player.TvSubtitleAppearanceOptions
 import org.siloserver.silo.tv.ui.screens.settings.diagnostics.TvDiagnosticsSettingsPane
@@ -1013,7 +1013,7 @@ private fun TvGeneralSettingsPane(
                     onClick = { showProfileLaunchPicker = true },
                     focusRequester = firstFocusRequester,
                 )
-                SettingsFooterText(text = state.profileLaunchBehavior.description)
+                SettingsFooterText(text = state.profileLaunchBehavior.description(PROFILE_LAUNCH_DEVICE))
             }
         }
         item {
@@ -1158,7 +1158,7 @@ private fun TvGeneralSettingsPane(
         TvSettingsPickerSheet(
             title = "Profile Selection",
             options = ProfileLaunchBehavior.entries.map {
-                PickerOption(it.raw, it.title, detail = it.description)
+                PickerOption(it.raw, it.title, detail = it.description(PROFILE_LAUNCH_DEVICE))
             },
             selectedId = state.profileLaunchBehavior.raw,
             onSelect = { id ->
@@ -1185,6 +1185,9 @@ private enum class CardPresentationPicker {
 
 /** Picker id for the synthetic "Custom" preset row (never on the wire). */
 private const val CustomCardPresetId = "custom"
+
+/** How Profile Selection's descriptions name this device. */
+private const val PROFILE_LAUNCH_DEVICE = "this Android TV"
 
 @Composable
 private fun TvPlaybackSettingsPane(

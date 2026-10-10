@@ -18,7 +18,7 @@ import org.siloserver.silo.repository.AuthRepository
 import org.siloserver.silo.repository.ProfileCommitResult
 import org.siloserver.silo.repository.ProfileRepository
 import org.siloserver.silo.repository.ProfileVerificationRecovery
-import org.siloserver.silo.tv.data.preferences.TvProfileLaunchPreferences
+import org.siloserver.silo.common.profiles.ProfileLaunchPreferences
 
 data class TvProfileSelectionUiState(
     val profiles: List<Profile> = emptyList(),
@@ -57,7 +57,7 @@ class TvProfileSelectionViewModel(
     private val authRepository: AuthRepository? = null,
     private val consumeSkipsSingleProfile: () -> Boolean = SignInHandoff::consumeSkipsSingleProfilePicker,
     private val profileVerificationRecovery: ProfileVerificationRecovery? = null,
-    private val launchPreferences: TvProfileLaunchPreferences? = null,
+    private val launchPreferences: ProfileLaunchPreferences? = null,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(TvProfileSelectionUiState())

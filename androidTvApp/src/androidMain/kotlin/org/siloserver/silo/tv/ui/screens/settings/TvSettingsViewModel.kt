@@ -32,10 +32,10 @@ import org.siloserver.silo.network.TokenManager
 import org.siloserver.silo.repository.AuthRepository
 import org.siloserver.silo.repository.ProfileRepository
 import org.siloserver.silo.tv.data.preferences.LegacyTvPrefsMigration
-import org.siloserver.silo.tv.data.preferences.ProfileLaunchBehavior
+import org.siloserver.silo.common.profiles.ProfileLaunchBehavior
 import org.siloserver.silo.tv.data.preferences.SubtitleMode
 import org.siloserver.silo.tv.data.preferences.SubtitleSize
-import org.siloserver.silo.tv.data.preferences.TvProfileLaunchPreferences
+import org.siloserver.silo.common.profiles.ProfileLaunchPreferences
 import org.siloserver.silo.tv.watchnext.WatchNextSeeder
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -73,7 +73,7 @@ class TvSettingsViewModel(
     private val seekIntervalStore: SeekIntervalStore? = null,
     private val episodeSpoilerStore: EpisodeSpoilerStore? = null,
     audiobookSettingsStore: AudiobookSettingsStore? = null,
-    private val profileLaunchPreferences: TvProfileLaunchPreferences? = null,
+    private val profileLaunchPreferences: ProfileLaunchPreferences? = null,
     private val watchNextSeeder: WatchNextSeeder? = null,
 ) : ViewModel() {
 

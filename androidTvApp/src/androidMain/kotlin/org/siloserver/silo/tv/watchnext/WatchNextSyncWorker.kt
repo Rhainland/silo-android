@@ -8,7 +8,7 @@ import org.siloserver.silo.repository.CatalogRepository
 import org.siloserver.silo.common.settings.EpisodeSpoilerStore
 import org.siloserver.silo.common.settings.EpisodeSpoilerSupport
 import org.siloserver.silo.network.ApiResult
-import org.siloserver.silo.tv.data.preferences.TvProfileLaunchPreferences
+import org.siloserver.silo.common.profiles.ProfileLaunchPreferences
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -28,7 +28,7 @@ class WatchNextSyncWorker(
     private val repository: WatchNextRepository,
     private val spoilerStore: EpisodeSpoilerStore,
     private val catalogRepository: CatalogRepository,
-    /** Profile Selection's verdict; see [TvProfileLaunchPreferences.allowsWatchNext]. */
+    /** Profile Selection's verdict; see [ProfileLaunchPreferences.allowsWatchNext]. */
     private val allowsWatchNext: () -> Boolean = { true },
     /**
      * A phone's cast identity is active; its titles never reach this TV's

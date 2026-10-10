@@ -15,7 +15,18 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
+import org.siloserver.silo.android.auth.ActiveProfileReset
+import org.siloserver.silo.android.profiles.ProfileLaunchAction
+import org.siloserver.silo.android.profiles.profileLaunchAction
+import org.siloserver.silo.common.downloads.DownloadStorage
+import org.siloserver.silo.common.network.ServerReachabilityMonitor
+import org.siloserver.silo.common.profiles.ProfileAwayTracker
+import org.siloserver.silo.common.profiles.ProfileLaunchPreferences
 import org.siloserver.silo.model.profile.ActiveProfileStore
 import org.siloserver.silo.android.ui.components.rememberVideoSeekIntervals
 import org.siloserver.silo.android.cast.GOOGLE_CAST_LEGACY_SEEK_INTERVALS
@@ -109,6 +120,7 @@ import org.siloserver.silo.android.ui.screens.servers.ServerSwitchDestination
 import org.siloserver.silo.android.ui.screens.settings.SettingsDownloadsScreen
 import org.siloserver.silo.android.ui.screens.settings.SettingsInterfaceScreen
 import org.siloserver.silo.android.ui.screens.settings.SettingsNotificationsScreen
+import org.siloserver.silo.android.ui.screens.settings.SettingsProfileSelectionScreen
 import org.siloserver.silo.android.ui.screens.settings.SettingsPlaybackScreen
 import org.siloserver.silo.android.ui.screens.settings.SettingsScreen
 import org.siloserver.silo.android.ui.screens.settings.SettingsSubtitlesScreen
@@ -167,6 +179,12 @@ private val ProfilePromptDeferredRoutes: Set<String> = setOf(
 
 /** Page-to-page cross-fade duration (ms). Snappier than Compose Nav's 700ms default. */
 private const val PageFadeDurationMs = 200
+
+/** Longest the Profile Selection cover stays up while Who's Watching replaces the previous profile's screens. */
+private const val PROFILE_COVER_MAX_MS = 2_000L
+
+/** Screens that show no profile: sign-in, server setup, and the profile picker itself. */
+private val ProfileFreeRoutes: Set<String> get() = MarqueeRoutes + ProfilePromptPickerRoutes + Route.ServerList.route
 
 internal class PlayerTargetProviderRegistration(
     val backStackEntryId: String,
@@ -345,6 +363,85 @@ fun AppNavigation(
                     }
                 }
             }
+    }
+
+    // Android can restore Silo's previous back stack over the start route
+    // MainActivity chose: after its process was killed in the background.
+    // When Profile Selection has already cleared the profile at launch, that
+    // brings back the previous profile's screens with no profile behind them,
+    // so go to Who's Watching instead.
+    LaunchedEffect(navController) {
+        val restoredRoute = navController.currentBackStackEntryFlow.first().destination.route
+        if (startDestination == Route.ProfileSelection.route &&
+            restoredRoute != null &&
+            restoredRoute !in ProfileFreeRoutes &&
+            !tokenManager.getAccessToken().isNullOrBlank() &&
+            tokenManager.getProfileId().isNullOrBlank()
+        ) {
+            navController.navigate(Route.ProfileSelection.route) {
+                popUpTo(0) { inclusive = true }
+                launchSingleTop = true
+            }
+        }
+    }
+
+    // Profile Selection's return rule (silo-apple `applyProfileReturnPolicy`):
+    // when Silo comes back from the background and the setting asks, Who's
+    // Watching replaces whatever was on screen. Playback that kept going in
+    // the background never raises the request (see ProfileAwayTracker).
+    val profileAwayTracker: ProfileAwayTracker = koinInject()
+    val profileLaunchPreferences: ProfileLaunchPreferences = koinInject()
+    val activeProfileReset: ActiveProfileReset = koinInject()
+    val downloadStorage: DownloadStorage = koinInject()
+    val reachabilityMonitor: ServerReachabilityMonitor = koinInject()
+    LaunchedEffect(profileAwayTracker) {
+        kotlinx.coroutines.flow.combine(
+            profileAwayTracker.selectionRequired,
+            navController.currentBackStackEntryFlow,
+        ) { required, entry -> required to entry.destination.route }.collect { (required, route) ->
+            if (!required) return@collect
+            // Nothing to replace when signed out, or when no profile is in
+            // use and none of its screens are showing (already choosing a
+            // profile, or adding a server).
+            val profileId = tokenManager.getProfileId()
+            if (route == null ||
+                tokenManager.getAccessToken().isNullOrBlank() ||
+                (profileId.isNullOrBlank() && route in ProfileFreeRoutes)
+            ) {
+                profileAwayTracker.onSelectionHandled()
+                return@collect
+            }
+            val serverId = serverRegistry.activeEntry.value?.id
+            val offlineWithDownloads = withContext(Dispatchers.IO) {
+                hasLocalDownloadsForScope(downloadStorage, serverId, profileId) &&
+                    !reachabilityMonitor.retryNow().canUseServer
+            }
+            // Re-check after the wait, as silo-apple's return policy does.
+            val action = profileLaunchAction(
+                requiresSelection = profileLaunchPreferences.requiresSelectionAfterBackground(),
+                startsOfflineOnDownloads = offlineWithDownloads,
+            )
+            if (action != ProfileLaunchAction.AskWhoIsWatching) {
+                profileAwayTracker.onSelectionHandled()
+                return@collect
+            }
+            // Leave the profile's screens before clearing its state, as
+            // Switch Profile does. MainActivity.onStop already flushed
+            // pending device-setting writes under this profile.
+            navController.navigate(Route.ProfileSelection.route) {
+                popUpTo(0) { inclusive = true }
+                launchSingleTop = true
+            }
+            activeProfileReset.clearActiveProfile()
+            // MainActivity covers the screen while the request is up; lift
+            // it once the previous profile's screens have faded out.
+            withTimeoutOrNull(PROFILE_COVER_MAX_MS) {
+                navController.visibleEntries.first { entries ->
+                    entries.all { it.destination.route in ProfileFreeRoutes }
+                }
+            }
+            profileAwayTracker.onSelectionHandled()
+        }
     }
 
     fun navigateExternalRoute(route: String) {
@@ -929,6 +1026,9 @@ fun AppNavigation(
             }
             ProfileSelectionScreen(
                 onNavigateToHome = {
+                    // A chosen profile ends any away interval (silo-apple
+                    // `remember`).
+                    profileLaunchPreferences.clearBackgroundedAt()
                     // The switch-profile paths dropped the per-profile card
                     // and seek-interval caches; re-hydrate for the profile just picked. The
                     // providers above the graph only re-run when the profile id
@@ -1068,6 +1168,7 @@ fun AppNavigation(
                 onOpenSubtitles = { navController.navigate(Route.SettingsSubtitles.route) },
                 onOpenDownloads = { navController.navigate(Route.SettingsDownloads.route) },
                 onOpenNotifications = { navController.navigate(Route.SettingsNotifications.route) },
+                onOpenProfileSelection = { navController.navigate(Route.SettingsProfileSelection.route) },
                 onNavigateToServers = {
                     navController.navigate(Route.ServerList.route)
                 },
@@ -1124,6 +1225,9 @@ fun AppNavigation(
                 viewModel = koinViewModel(viewModelStoreOwner = settingsOwner(navController, entry)),
                 onBackClick = { navController.popBackStack() },
             )
+        }
+        composable(Route.SettingsProfileSelection.route) {
+            SettingsProfileSelectionScreen(onBackClick = { navController.popBackStack() })
         }
         composable(Route.Diagnostics.route) {
             DiagnosticsSettingsScreen(

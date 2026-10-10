@@ -13,7 +13,7 @@ import org.siloserver.silo.common.diagnostics.HostedDiagnosticsDeletionWorker
 import org.siloserver.silo.common.diagnostics.HostedDiagnosticsReportDeleter
 import org.siloserver.silo.common.diagnostics.PendingReportStore
 import org.siloserver.silo.repository.SectionRepository
-import org.siloserver.silo.tv.data.preferences.TvProfileLaunchPreferences
+import org.siloserver.silo.common.profiles.ProfileLaunchPreferences
 import org.koin.core.context.GlobalContext
 import org.siloserver.silo.network.TokenManager
 
@@ -51,7 +51,7 @@ class TvWorkerFactory : WorkerFactory() {
                     repository = koin.get<WatchNextRepository>(),
                     spoilerStore = koin.get(),
                     catalogRepository = koin.get(),
-                    allowsWatchNext = koin.get<TvProfileLaunchPreferences>()::allowsWatchNext,
+                    allowsWatchNext = koin.get<ProfileLaunchPreferences>()::allowsWatchNext,
                     hasTemporaryScope = koin.get<TokenManager>()::hasTemporaryScope,
                 )
             }

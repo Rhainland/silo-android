@@ -62,9 +62,10 @@ import org.siloserver.silo.tv.ui.screens.player.TvVideoPlaybackStarter
 import org.siloserver.silo.tv.ui.screens.profiles.TvProfileSelectionViewModel
 import org.siloserver.silo.tv.ui.screens.search.TvSearchViewModel
 import org.siloserver.silo.tv.data.preferences.TvLibraryScopeStore
-import org.siloserver.silo.tv.data.preferences.TvProfileLaunchPreferences
+import org.siloserver.silo.common.profiles.ProfileLaunchBehavior
+import org.siloserver.silo.common.profiles.ProfileLaunchPreferences
 import org.siloserver.silo.tv.profiles.TvActiveProfileReset
-import org.siloserver.silo.tv.profiles.TvProfileAwayTracker
+import org.siloserver.silo.common.profiles.ProfileAwayTracker
 import org.siloserver.silo.tv.watchnext.WatchNextRepository
 import org.siloserver.silo.tv.watchnext.WatchNextSeeder
 import android.net.Uri
@@ -332,8 +333,22 @@ val androidTvModule = module {
     // Profile Selection (tvOS General → PROFILE AT LAUNCH): the device-wide
     // choice, the tracker MainTvActivity drives from onStop/onStart, and the
     // reset every path uses to drop the active profile.
-    single { TvProfileLaunchPreferences(androidContext()) }
-    single { TvProfileAwayTracker(get(), get(), get()) }
+    single { ProfileLaunchPreferences(androidContext(), ProfileLaunchPreferences.TV_PREFS_NAME) }
+    single {
+        val watchNextSeeder = get<WatchNextSeeder>()
+        ProfileAwayTracker(
+            preferences = get(),
+            activePlayerHolder = get(),
+            // Every Time keeps the launcher's Watch Next row empty whenever
+            // Silo is not on screen (silo-apple Top Shelf parity).
+            onLeave = { state ->
+                if (state.behavior == ProfileLaunchBehavior.EveryTime) watchNextSeeder.clear()
+            },
+            // The timed choices keep the Watch Next row until the interval
+            // runs out, then a check removes it.
+            onAwayIntervalStarted = watchNextSeeder::scheduleProfileExpiryCheck,
+        )
+    }
     single { TvActiveProfileReset(get(), get(), get(), get(), get(), get(), get(), get()) }
 
     // Deep-link bridge between MainTvActivity (producer) and TvAppNavigation

@@ -20,9 +20,8 @@ import org.siloserver.silo.network.TokenManagerImpl
 import org.siloserver.silo.network.api.ProfileApi
 import org.siloserver.silo.network.apiv2.ApiV2Gate
 import org.siloserver.silo.repository.ProfileRepository
-import org.siloserver.silo.tv.data.preferences.InMemoryPrefs
-import org.siloserver.silo.tv.data.preferences.ProfileLaunchBehavior
-import org.siloserver.silo.tv.data.preferences.TvProfileLaunchPreferences
+import org.siloserver.silo.common.profiles.ProfileLaunchBehavior
+import org.siloserver.silo.common.profiles.ProfileLaunchPreferences
 import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -43,7 +42,7 @@ class TvProfileRememberOfferTest {
         Dispatchers.setMain(UnconfinedTestDispatcher(testScheduler))
         val barrier = DefaultIdentityTransitionBarrier()
         val repository = OneProfileRepository(barrier, profile)
-        val preferences = TvProfileLaunchPreferences(InMemoryPrefs()).apply {
+        val preferences = ProfileLaunchPreferences(InMemoryPrefs()).apply {
             settleFirstLaunch(hasRememberedProfile = false)
         }
         val viewModel = TvProfileSelectionViewModel(
@@ -73,7 +72,7 @@ class TvProfileRememberOfferTest {
         Dispatchers.setMain(UnconfinedTestDispatcher(testScheduler))
         val barrier = DefaultIdentityTransitionBarrier()
         val repository = OneProfileRepository(barrier, profile)
-        val preferences = TvProfileLaunchPreferences(InMemoryPrefs()).apply {
+        val preferences = ProfileLaunchPreferences(InMemoryPrefs()).apply {
             settleFirstLaunch(hasRememberedProfile = false)
         }
         val viewModel = TvProfileSelectionViewModel(
@@ -99,7 +98,7 @@ class TvProfileRememberOfferTest {
         val repository = OneProfileRepository(barrier, profile) { call ->
             if (call == 2) reloadInFlight.await()
         }
-        val preferences = TvProfileLaunchPreferences(InMemoryPrefs()).apply {
+        val preferences = ProfileLaunchPreferences(InMemoryPrefs()).apply {
             settleFirstLaunch(hasRememberedProfile = false)
         }
         val viewModel = TvProfileSelectionViewModel(
