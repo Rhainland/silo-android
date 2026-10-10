@@ -406,6 +406,10 @@ class LibrariesViewModel(
         recommendedLoadedLibraryId = null
         browseLoadedLibraryId = null
         collectionsLoadedLibraryId = null
+        // A facet load still in flight was answered under the old policy;
+        // without a new query generation it would refill the facets cleared
+        // here, and Browse would not fetch them again.
+        ++catalogQueryGeneration
         _uiState.update { it.copy(availableFilters = null) }
         refresh()
     }
