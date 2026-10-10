@@ -129,11 +129,12 @@ class ProfileSettingsController(
         resolved(write(SettingKeys.PLAYBACK_SHOW_FORCED_SUBTITLES, JsonPrimitive(enabled)))
 
     /** [language] is a BCP 47 tag, or "" to inherit the library's language. */
-    suspend fun setMetadataLanguage(language: String): WriteResult =
-        resolved(writeLanguage(SettingKeys.CATALOG_METADATA_LANGUAGE, language)).also { result ->
-            // Catalog text on screen is localized for the old language.
-            if (result.succeeded) catalogLanguage.changed()
-        }
+    suspend fun setMetadataLanguage(language: String): WriteResult {
+        val result = writeLanguage(SettingKeys.CATALOG_METADATA_LANGUAGE, language)
+        // The write committed even if the following settings read is canceled.
+        if (result is ApiResult.Success) catalogLanguage.changed()
+        return resolved(result)
+    }
 
     private suspend fun resolved(write: ApiResult<Unit>): WriteResult =
         if (write is ApiResult.Success) {

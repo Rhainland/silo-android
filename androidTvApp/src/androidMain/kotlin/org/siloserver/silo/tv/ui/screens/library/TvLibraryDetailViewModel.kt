@@ -249,8 +249,7 @@ class TvLibraryDetailViewModel(
         catalogLanguage?.let { language ->
             viewModelScope.launch {
                 language.revision.drop(1).collect {
-                    loadRecommended()
-                    if (_uiState.value.browseItems.isNotEmpty()) loadBrowse(reset = true)
+                    refreshAfterLanguageChange()
                 }
             }
         }
@@ -425,6 +424,36 @@ class TvLibraryDetailViewModel(
     fun retryAudiobookGroups() {
         val groupBy = _uiState.value.selectedTab.audiobookGroupBy ?: return
         loadAudiobookGroups(groupBy = groupBy, reset = true)
+    }
+
+    private fun refreshAfterLanguageChange() {
+        recommendedJob?.cancel()
+        filtersJob?.cancel()
+        collectionsJob?.cancel()
+        ++recommendedGeneration
+        ++browseGeneration
+        ++audiobookGroupsGeneration
+        browseContinuation = null
+        audiobookContinuation = null
+        _uiState.update {
+            it.copy(
+                sections = emptyList(),
+                browseItems = emptyList(),
+                collections = emptyList(),
+                collectionSections = emptyList(),
+                genres = emptyList(),
+                facetOptions = null,
+                recommendedLoading = false,
+                browseLoading = false,
+                browseLoadingMore = false,
+                audiobookGroups = emptyList(),
+                audiobookGroupsLoading = false,
+                audiobookGroupsLoadingMore = false,
+                filtersLoading = false,
+                collectionsLoading = false,
+            )
+        }
+        refreshAfterAccessChange()
     }
 
     /**

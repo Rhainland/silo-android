@@ -1,5 +1,6 @@
 package org.siloserver.silo.tv.ui.components
 
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Stable
@@ -9,6 +10,10 @@ import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -59,42 +64,64 @@ internal class TvMarqueeTranslationState(
 
     /** Descriptions re-read while this feed was on screen, by content id. */
     private val landed = mutableStateMapOf<String, Landed>()
+    private var translationJob: Job? = null
+    val working = MutableStateFlow(false)
+
+    fun close() {
+        translationJob?.cancel()
+    }
 
     fun pendingLanguage(item: SectionItem): String? =
         if (item.contentId in landed) landed[item.contentId]?.pending
         else item.pendingTranslationLanguage?.takeIf { it.isNotBlank() }
 
     fun translateOnView(item: SectionItem, onLanded: () -> Unit) {
+        if (translationJob?.isActive == true) return
         val contentId = item.contentId
-        val target = pendingLanguage(item) ?: return
-        // One translation at a time; an item skipped while another runs is
-        // tried again the next time the viewer rests on it.
-        if (!controller.claimAutoFire(contentId, target)) return
-        controller.resetFailure()
-        scope.launch {
-            controller.translate(
-                contentId = contentId,
-                targetLanguage = target,
-                refetchPendingLanguage = { owner ->
-                    when (val result = repository.refreshDetail(contentId, owner)) {
-                        is ApiResult.Success -> if (repository.isCurrent(owner)) {
-                            val detail = result.data
-                            landed[contentId] = Landed(
-                                overview = detail.overview?.takeIf { it.isNotBlank() },
-                                machineTranslated = hasMachineTranslatedOverview(detail.machineTranslatedFields),
-                                pending = detail.pendingTranslationLanguage?.takeIf { it.isNotBlank() },
-                            )
-                            landed[contentId]?.pending
-                        } else {
-                            target
+        val hintedTarget = pendingLanguage(item) ?: return
+        if (!controller.claimAutoFire(contentId, hintedTarget)) return
+        working.value = true
+        translationJob = scope.launch {
+            try {
+                // Retained cards can still name the previous metadata language.
+                // Read the current profile's description before queuing work.
+                val owner = repository.captureAuthority()
+                val latest = repository.refreshDetail(contentId, owner)
+                currentCoroutineContext().ensureActive()
+                if (latest !is ApiResult.Success || !repository.isCurrent(owner)) return@launch
+                fun publish(detail: org.siloserver.silo.model.catalog.ItemDetail) {
+                    landed[contentId] = Landed(
+                        overview = detail.overview?.takeIf { it.isNotBlank() },
+                        machineTranslated = hasMachineTranslatedOverview(detail.machineTranslatedFields),
+                        pending = detail.pendingTranslationLanguage?.takeIf { it.isNotBlank() },
+                    )
+                }
+                publish(latest.data)
+                val target = latest.data.pendingTranslationLanguage?.takeIf { it.isNotBlank() }
+                if (target == null) {
+                    onLanded()
+                    return@launch
+                }
+                if (target != hintedTarget && !controller.claimAutoFire(contentId, target)) return@launch
+                controller.resetFailure()
+                controller.translate(
+                    contentId = contentId,
+                    targetLanguage = target,
+                    refetchPendingLanguage = { currentOwner ->
+                        when (val result = repository.refreshDetail(contentId, currentOwner)) {
+                            is ApiResult.Success -> if (repository.isCurrent(currentOwner)) {
+                                currentCoroutineContext().ensureActive()
+                                publish(result.data)
+                                landed[contentId]?.pending
+                            } else target
+                            else -> target
                         }
-                        else -> target // transient refetch failure: keep polling
-                    }
-                },
-                // The rows still hold the untranslated card; re-read them so
-                // the translation survives this feed leaving composition.
-                onTranslated = { onLanded() },
-            )
+                    },
+                    onTranslated = { onLanded() },
+                )
+            } finally {
+                working.value = false
+            }
         }
     }
 
@@ -140,15 +167,19 @@ internal fun rememberTvMarqueeTranslation(
     val repository: MetadataAiRepository = koinInject()
     val metadataAiStore: MetadataAiFeatureStore = koinInject()
     val status by metadataAiStore.status.collectAsState()
+    val language: org.siloserver.silo.domain.settings.CatalogLanguageRevision = koinInject()
+    val languageRevision by language.revision.collectAsState()
     val scope = rememberCoroutineScope()
-    val state = remember(repository, scope) { TvMarqueeTranslationState(repository, scope) }
+    val state = remember(repository, scope, languageRevision) { TvMarqueeTranslationState(repository, scope) }
+    DisposableEffect(state) { onDispose { state.close() } }
     val phase by state.phase.collectAsState()
     val runningId by state.runningContentId.collectAsState()
     val pending = item?.let(state::pendingLanguage)
-    val busy = phase == DescriptionTranslationPhase.Translating
+    val working by state.working.collectAsState()
+    val busy = working || phase == DescriptionTranslationPhase.Translating
     // Re-run when a running translation ends, so an item skipped meanwhile
     // gets its turn while the viewer is still resting on it.
-    LaunchedEffect(item?.contentId, pending, status.onView, busy, autoTranslate) {
+    LaunchedEffect(state, item?.contentId, pending, status.onView, busy, autoTranslate) {
         if (!autoTranslate || item == null || pending == null || status.onView != MetadataAiOnView.Auto) {
             return@LaunchedEffect
         }

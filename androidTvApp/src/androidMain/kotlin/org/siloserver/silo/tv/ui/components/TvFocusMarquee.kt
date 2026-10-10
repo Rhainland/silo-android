@@ -219,7 +219,11 @@ private fun TvMarqueeBlock(
             )
         }
 
-        val synopsisText = (translation?.synopsis ?: content.synopsis)?.takeIf { it.isNotBlank() }
+        val hidesSynopsis = content.isEpisode && LocalEpisodeSpoilerPrefs.current.hidesOverview(
+            org.siloserver.silo.model.settings.EpisodeSpoilers.isUnwatched(content.source),
+        )
+        val synopsisText = (translation?.synopsis ?: content.synopsis)
+            ?.takeIf { it.isNotBlank() && !hidesSynopsis }
         val translating = translation?.translating == true
         val machineTranslated = !translating && synopsisText != null &&
             (translation?.machineTranslated ?: hasMachineTranslatedOverview(content.source.machineTranslatedFields))

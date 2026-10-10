@@ -20,6 +20,8 @@ import org.siloserver.silo.common.settings.dolbyVisionPolicySnapshot
 import org.siloserver.silo.domain.settings.ProfileSettingsController
 import org.siloserver.silo.model.catalog.BrowseItem
 import org.siloserver.silo.model.catalog.CastMember
+import org.siloserver.silo.model.catalog.withTranslatedDescription
+import org.siloserver.silo.model.catalog.withEpisodeDescription
 import org.siloserver.silo.model.catalog.EpisodeListItem
 import org.siloserver.silo.model.catalog.FileVersion
 import org.siloserver.silo.model.catalog.ItemDetail
@@ -54,6 +56,7 @@ import org.siloserver.silo.tv.ui.util.isTvHiddenMediaType
 import org.siloserver.silo.tv.ui.util.visibleOnTv
 import org.siloserver.silo.viewmodel.applyLocalPlaybackProgress
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -1033,12 +1036,12 @@ class TvItemDetailViewModel(
                         (latest <= episodeMutationWatermark || failedEpisodeWatchMutation[it.contentId] == latest)
                 }
                 .associateBy { it.contentId }
-            episodeWindow.mapEpisodes(seasonNumber) { previousById[it.contentId] ?: it }
+            episodeWindow.mapEpisodes(seasonNumber) { previousById[it.contentId]?.withTranslatedDescription(it) ?: it }
             _uiState.update { state ->
                 state.copy(
                     seasons = state.seasons.map { if (it.seasonNumber == seasonNumber) previousSeason else it },
                     episodes = if (state.selectedSeason == seasonNumber) {
-                        state.episodes.map { previousById[it.contentId] ?: it }
+                        state.episodes.map { previousById[it.contentId]?.withTranslatedDescription(it) ?: it }
                     } else {
                         state.episodes
                     },
@@ -1536,6 +1539,7 @@ class TvItemDetailViewModel(
     // the rail stay consistent (T15).
     private var loadedSeason: Int? = null
     private var episodeListGeneration: Long = 0
+    private val episodeDescriptionRevisions = mutableMapOf<Int, Long>()
     private var nextEpisodeWatchMutationGeneration: Long = 0
     private val episodeWatchMutationGenerations = mutableMapOf<String, Long>()
     private val seasonWatchMutationGenerations = mutableMapOf<Int, Long>()
@@ -1593,6 +1597,7 @@ class TvItemDetailViewModel(
         // the authoritative owner of the network result publications below.
         episodeLoadRequestGeneration += 1
         val requestGeneration = episodeLoadRequestGeneration
+        val descriptionRevision = episodeDescriptionRevisions[seasonNumber] ?: 0L
         episodeLoadJob?.cancel()
         episodeLoadJob = viewModelScope.launch {
             fun ownsRequest(): Boolean =
@@ -1618,9 +1623,16 @@ class TvItemDetailViewModel(
                     if (!ownsRequest()) return@launch
                     loadedSeason = seasonNumber
                     episodeListGeneration += 1
-                    _uiState.update { it.copy(episodesLoading = false, episodes = episodes) }
-                    refreshNextUp(episodes)
-                    recordCarouselSeason(seasonNumber, episodes)
+                    _uiState.update { state ->
+                        val current = state.episodes.associateBy { it.contentId }
+                        val rows = if (descriptionRevision != (episodeDescriptionRevisions[seasonNumber] ?: 0L)) {
+                            episodes.map { row -> current[row.contentId]?.let(row::withTranslatedDescription) ?: row }
+                        } else episodes
+                        state.copy(episodesLoading = false, episodes = rows)
+                    }
+                    val publishedEpisodes = _uiState.value.episodes
+                    refreshNextUp(publishedEpisodes)
+                    recordCarouselSeason(seasonNumber, publishedEpisodes)
                     val revalidationComplete =
                         refreshEpisodeFavoriteStates(episodes, revalidate = revalidateFavorites)
                     // Caught up only now, and only if every id we were asked to
@@ -1769,7 +1781,7 @@ class TvItemDetailViewModel(
                     val live = _uiState.value
                     if (live.selectedSeason == mutationSeason) {
                         val restored = live.episodes.map { episode ->
-                            if (episode.contentId == episodeContentId) previousEpisode else episode
+                            if (episode.contentId == episodeContentId) previousEpisode.withTranslatedDescription(episode) else episode
                         }
                         if (_uiState.compareAndSet(live, live.copy(episodes = restored))) {
                             publishCarousel()
@@ -2006,13 +2018,13 @@ class TvItemDetailViewModel(
                             // read was suspended. Finish loading the target but
                             // leave that newer explicit choice untouched.
                             it.copy(
-                                nextUpPlaybackDetail = playbackDetail,
+                                nextUpPlaybackDetail = it.nextUpEpisode?.let(playbackDetail::withEpisodeDescription) ?: playbackDetail,
                                 isLoadingNextUpPlaybackDetail = false,
                                 didLoadNextUpPlaybackDetail = true,
                             )
                         } else {
                             it.copy(
-                                nextUpPlaybackDetail = playbackDetail,
+                                nextUpPlaybackDetail = it.nextUpEpisode?.let(playbackDetail::withEpisodeDescription) ?: playbackDetail,
                                 isLoadingNextUpPlaybackDetail = false,
                                 didLoadNextUpPlaybackDetail = true,
                                 selectedNextUpFileId = selection.fileId,
@@ -2160,25 +2172,45 @@ class TvItemDetailViewModel(
                             val refreshed = withLocalProgress(result.data)
                             if (metadataAiRepository.isCurrent(owner) && _uiState.value.detail?.contentId == detail.contentId) {
                                 _uiState.update { it.copy(detail = refreshed) }
-                                refreshed.pendingTranslationLanguage
+                                val seriesId = detail.seriesId
+                                val seasonNumber = detail.seasonNumber
+                                if (detail.type.equals("season", ignoreCase = true) &&
+                                    seriesId != null && seasonNumber != null
+                                ) {
+                                    refreshEpisodesForTranslation(seriesId, seasonNumber, owner, target)
+                                        ?: refreshed.pendingTranslationLanguage
+                                } else refreshed.pendingTranslationLanguage
                             } else target
                         }
                         else -> target // transient refetch failure: keep polling
                     }
                 },
-                // A season's job also translates its episodes: keep the rail current.
-                onPoll = { refreshEpisodesForTranslation(detail) },
-                onTranslated = { refreshEpisodesForTranslation(detail) },
+                onTranslated = {},
             )
         }
     }
 
-    private fun refreshEpisodesForTranslation(detail: ItemDetail) {
-        if (!detail.type.equals("season", ignoreCase = true)) return
-        val seriesId = detail.seriesId?.takeIf { it.isNotBlank() } ?: return
-        val season = detail.seasonNumber ?: return
-        if (_uiState.value.selectedSeason != season) return
-        loadEpisodes(seriesId, season, quiet = true, revalidateFavorites = emptySet(), freshRead = true)
+    private suspend fun refreshEpisodesForTranslation(
+        seriesId: String,
+        seasonNumber: Int,
+        owner: org.siloserver.silo.network.AuthScopeSnapshot?,
+        target: String,
+    ): String? {
+        val result = catalogRepository.getEpisodes(seriesId, seasonNumber, libraryId = libraryId, fresh = true)
+        if (result !is ApiResult.Success || !metadataAiRepository.isCurrent(owner)) return target
+        kotlinx.coroutines.currentCoroutineContext().ensureActive()
+        if (_uiState.value.selectedSeason != seasonNumber) return result.data.episodes.pendingEpisodeTranslationLanguage()
+        episodeDescriptionRevisions[seasonNumber] = (episodeDescriptionRevisions[seasonNumber] ?: 0L) + 1
+        _uiState.update { state ->
+            val current = state.episodes.associateBy { it.contentId }
+            val merged = result.data.episodes.sortedBy { it.episodeNumber }
+                .map { row -> current[row.contentId]?.withTranslatedDescription(row) ?: row }
+            state.copy(episodes = merged)
+        }
+        val episodes = _uiState.value.episodes
+        refreshNextUp(episodes)
+        recordCarouselSeason(seasonNumber, episodes)
+        return result.data.episodes.pendingEpisodeTranslationLanguage()
     }
 
     /**
@@ -2201,23 +2233,14 @@ class TvItemDetailViewModel(
         // when that job ends (below), rather than latched as already fired.
         if (!episodeTranslation.claimAutoFire(season.contentId, target)) return
         episodeTranslation.resetFailure()
-        val refreshRail = {
-            if (_uiState.value.selectedSeason == seasonNumber) {
-                loadEpisodes(detail.contentId, seasonNumber, quiet = true, revalidateFavorites = emptySet(), freshRead = true)
-            }
-        }
         viewModelScope.launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) {
             episodeTranslation.translate(
                 contentId = season.contentId,
                 targetLanguage = target,
                 refetchPendingLanguage = { owner ->
-                    when (val result = metadataAiRepository.refreshDetail(season.contentId, owner)) {
-                        is ApiResult.Success -> result.data.pendingTranslationLanguage
-                        else -> target // transient refetch failure: keep polling
-                    }
+                    refreshEpisodesForTranslation(detail.contentId, seasonNumber, owner, target)
                 },
-                onPoll = { refreshRail() },
-                onTranslated = { refreshRail() },
+                onTranslated = {},
             )
             if (episodeTranslation.takeDeferredAuto()) translateShownSeasonEpisodes()
         }
@@ -2408,16 +2431,6 @@ class TvItemDetailViewModel(
         }
     }
 
-}
-
-/** The row's localized description, once it has one, replaces the detail's. */
-private fun ItemDetail.withEpisodeDescription(row: EpisodeListItem): ItemDetail {
-    if (row.contentId != contentId || row.overview.isNullOrBlank() || row.overview == overview) return this
-    return copy(
-        overview = row.overview,
-        machineTranslatedFields = row.machineTranslatedFields,
-        pendingTranslationLanguage = row.pendingTranslationLanguage,
-    )
 }
 
 /** Watched and unwatched both reset resume progress, as the server does. */

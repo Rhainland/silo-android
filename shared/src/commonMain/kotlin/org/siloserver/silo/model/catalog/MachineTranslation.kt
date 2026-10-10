@@ -9,16 +9,7 @@ package org.siloserver.silo.model.catalog
 fun hasMachineTranslatedOverview(fields: List<String>?): Boolean =
     fields.orEmpty().contains(MACHINE_TRANSLATED_OVERVIEW)
 
-/**
- * For a view that shows the overview and the tagline together: either field
- * marks it, but the tagline counts only when [taglineShown].
- */
-fun hasMachineTranslatedText(fields: List<String>?, taglineShown: Boolean): Boolean =
-    hasMachineTranslatedOverview(fields) ||
-        (taglineShown && fields.orEmpty().contains(MACHINE_TRANSLATED_TAGLINE))
-
 const val MACHINE_TRANSLATED_OVERVIEW = "overview"
-const val MACHINE_TRANSLATED_TAGLINE = "tagline"
 
 /**
  * The language a season's episode rows are still missing, if any. A season's
@@ -26,3 +17,27 @@ const val MACHINE_TRANSLATED_TAGLINE = "tagline"
  */
 fun List<EpisodeListItem>.pendingEpisodeTranslationLanguage(): String? =
     firstNotNullOfOrNull { episode -> episode.pendingTranslationLanguage?.takeIf { it.isNotBlank() } }
+
+/** Refresh description metadata without replacing playback or personal state. */
+fun ItemDetail.withEpisodeDescription(row: EpisodeListItem): ItemDetail {
+    if (row.contentId != contentId) return this
+    // A detail read can finish after translation while the rail still holds
+    // a pending snapshot. Keep that completed detail until the rail catches up.
+    if (pendingTranslationLanguage.isNullOrBlank() && !row.pendingTranslationLanguage.isNullOrBlank()) return this
+    if (row.overview.isNullOrBlank()) return copy(pendingTranslationLanguage = row.pendingTranslationLanguage)
+    return copy(
+        overview = row.overview,
+        machineTranslatedFields = row.machineTranslatedFields,
+        pendingTranslationLanguage = row.pendingTranslationLanguage,
+    )
+}
+
+/** A translation poll owns description fields; the current row owns user state. */
+fun EpisodeListItem.withTranslatedDescription(row: EpisodeListItem): EpisodeListItem {
+    if (row.contentId != contentId) return this
+    return copy(
+        overview = row.overview,
+        machineTranslatedFields = row.machineTranslatedFields,
+        pendingTranslationLanguage = row.pendingTranslationLanguage,
+    )
+}

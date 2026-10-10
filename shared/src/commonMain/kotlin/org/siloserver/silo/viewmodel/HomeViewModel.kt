@@ -21,6 +21,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.currentCoroutineContext
@@ -101,7 +102,13 @@ class HomeViewModel(
                 // A metadata-language change re-localizes every card: re-read
                 // quietly. Unlike refreshFromRealtime this never skips, since a
                 // fetch already in flight still asked for the old language.
-                language.revision.drop(1).collect { fetchSections(HomeLoadTrigger.REALTIME) }
+                language.revision.drop(1).collectLatest {
+                    val generation = fetchSections(HomeLoadTrigger.REALTIME)
+                    if (generation == fetchGeneration) {
+                        _uiState.update { it.copy(isRefreshing = false) }
+                        runPendingRealtimeRefresh()
+                    }
+                }
             }
         }
         homeRealtime?.let { coordinator ->

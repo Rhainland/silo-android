@@ -269,7 +269,7 @@ class LibrariesViewModel(
         // Titles and descriptions are localized per metadata language.
         catalogLanguage?.revision
             ?.drop(1)
-            ?.onEach { refresh() }
+            ?.onEach { refreshAfterLanguageChange() }
             ?.launchIn(viewModelScope)
         refresh()
     }
@@ -403,6 +403,31 @@ class LibrariesViewModel(
                 }
             }
         }
+    }
+
+    private fun refreshAfterLanguageChange() {
+        recommendedJob?.cancel()
+        recommendedLoadedLibraryId = null
+        browseLoadedLibraryId = null
+        collectionsLoadedLibraryId = null
+        ++recommendedRequestGeneration
+        ++catalogRequestGeneration
+        ++catalogQueryGeneration
+        ++collectionsRequestGeneration
+        catalogContinuation = null
+        _uiState.update {
+            it.copy(
+                sections = emptyList(),
+                catalogItems = emptyList(),
+                collections = emptyList(),
+                availableFilters = null,
+                isLoadingSections = false,
+                isLoadingCatalog = false,
+                isLoadingMoreCatalog = false,
+                isLoadingCollections = false,
+            )
+        }
+        refresh()
     }
 
     /**

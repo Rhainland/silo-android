@@ -1,11 +1,26 @@
 package org.siloserver.silo.tv.ui.components
 
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.test.advanceUntilIdle
+import kotlinx.coroutines.test.runCurrent
+import org.siloserver.silo.network.api.MetadataAiApi
+import org.siloserver.silo.network.ApiResult
+import org.siloserver.silo.network.AuthScopeSnapshot
+import org.siloserver.silo.model.metadata.MetadataAiStatus
+import org.siloserver.silo.model.metadata.MetadataTranslationJob
+import org.siloserver.silo.model.catalog.ItemDetail
+import org.siloserver.silo.repository.MetadataAiRepository
+import kotlin.test.assertEquals
+
 import org.siloserver.silo.model.section.ResolvedSection
 import org.siloserver.silo.model.section.SectionItem
 import kotlin.test.Test
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
+@OptIn(ExperimentalCoroutinesApi::class)
 class TvMarqueeTranslationTest {
     private val pendingCard = SectionItem(
         contentId = "movie-1",
@@ -49,4 +64,63 @@ class TvMarqueeTranslationTest {
         val content = TvMarqueeContent.from(pendingCard, "Gone", "gone")
         assertFalse(isFeaturedMarqueeContent(content, sections))
     }
+    @Test
+    fun retainedCardQueuesOnlyTheCurrentProfilesPendingLanguage() = runTest {
+        val requested = mutableListOf<String>()
+        var reads = 0
+        var refreshed = false
+        val api = object : MetadataAiApi {
+            override suspend fun status() = ApiResult.Success(
+                MetadataAiStatus())
+            override suspend fun translateDescription(contentId: String, targetLanguage: String,
+                scope: AuthScopeSnapshot?) : ApiResult<MetadataTranslationJob> {
+                requested += targetLanguage
+                return ApiResult.Success(
+                    MetadataTranslationJob("job", "item", contentId, targetLanguage, "pending"))
+            }
+            override suspend fun refreshDetail(contentId: String, scope: AuthScopeSnapshot?): ApiResult<ItemDetail> {
+                reads++
+                return ApiResult.Success(ItemDetail(
+                    contentId, "movie", title = "Film", overview = if (reads == 1) "Original" else "Localized",
+                    pendingTranslationLanguage = if (reads == 1) "de" else null,
+                    machineTranslatedFields = if (reads == 1) emptyList() else listOf("overview")))
+            }
+        }
+        val state = TvMarqueeTranslationState(MetadataAiRepository(api), this)
+        state.translateOnView(pendingCard) { refreshed = true }
+        advanceUntilIdle()
+        assertEquals(listOf("de"), requested)
+        assertTrue(refreshed)
+        val presented = state.presentation(pendingCard, state.phase.value, state.runningContentId.value)
+        assertEquals("Localized", presented.synopsis)
+        assertTrue(presented.machineTranslated)
+        assertFalse(state.working.value)
+    }
+
+    @Test
+    fun disposingDuringLanguagePreflightCancelsItsQueuedWork() = runTest {
+        val response = CompletableDeferred<ItemDetail>()
+        var posts = 0
+        val api = object : MetadataAiApi {
+            override suspend fun status() = ApiResult.Success(
+                MetadataAiStatus())
+            override suspend fun translateDescription(contentId: String, targetLanguage: String,
+                scope: AuthScopeSnapshot?): ApiResult<MetadataTranslationJob> {
+                posts++
+                return ApiResult.Error(503, "unavailable", "Unavailable")
+            }
+            override suspend fun refreshDetail(contentId: String, scope: AuthScopeSnapshot?) =
+                ApiResult.Success(response.await())
+        }
+        val state = TvMarqueeTranslationState(MetadataAiRepository(api), this)
+        state.translateOnView(pendingCard) {}
+        runCurrent()
+        assertTrue(state.working.value)
+        state.close()
+        response.complete(ItemDetail("movie-1", "movie", title = "Film", pendingTranslationLanguage = "de"))
+        runCurrent()
+        assertEquals(0, posts)
+        assertFalse(state.working.value)
+    }
+
 }

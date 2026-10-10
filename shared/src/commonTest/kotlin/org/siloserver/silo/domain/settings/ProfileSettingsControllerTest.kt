@@ -37,6 +37,7 @@ class ProfileSettingsControllerTest {
             ApiResult.Success(StoredSettingValue(key = it, scope = "profile"))
         },
         val deleteResult: ApiResult<Unit> = ApiResult.Success(Unit),
+        val effectiveHook: suspend () -> Unit = {},
     ) : SettingsApi(org.siloserver.silo.network.apiv2.SettingsV2Api(HttpClient(), org.siloserver.silo.network.TokenManagerImpl(), org.siloserver.silo.network.apiv2.ApiV2Gate.Unrestricted)) {
 
         val calls = mutableListOf<Call>()
@@ -48,7 +49,10 @@ class ProfileSettingsControllerTest {
             libraryIds: List<Int>,
             seriesIds: List<String>,
             authority: org.siloserver.silo.network.AuthScopeSnapshot?,
-        ): ApiResult<EffectiveSettingValuesResponse> = effective
+        ): ApiResult<EffectiveSettingValuesResponse> {
+            effectiveHook()
+            return effective
+        }
 
         override suspend fun putValue(
             key: String,
@@ -143,6 +147,18 @@ class ProfileSettingsControllerTest {
         )
         failing.setMetadataLanguage("de")
         assertEquals(1L, revision.revision.value)
+    }
+
+    @Test
+    fun `committed language write invalidates cards even when settings reload is canceled`() = runTest {
+        val revision = CatalogLanguageRevision()
+        val api = FakeSettingsApi(effectiveHook = { throw kotlinx.coroutines.CancellationException("Settings closed") })
+        val controller = ProfileSettingsController(SettingsRepository(api), revision)
+        kotlin.test.assertFailsWith<kotlinx.coroutines.CancellationException> {
+            controller.setMetadataLanguage("de")
+        }
+        assertEquals(1L, revision.revision.value)
+        assertEquals(1, api.calls.size)
     }
 
     @Test

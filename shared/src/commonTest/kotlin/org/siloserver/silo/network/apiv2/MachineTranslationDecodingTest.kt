@@ -5,7 +5,6 @@ import kotlinx.serialization.json.jsonObject
 import org.siloserver.silo.model.catalog.BrowseItem
 import org.siloserver.silo.model.catalog.Season
 import org.siloserver.silo.model.catalog.hasMachineTranslatedOverview
-import org.siloserver.silo.model.catalog.hasMachineTranslatedText
 import org.siloserver.silo.model.catalog.pendingEpisodeTranslationLanguage
 import org.siloserver.silo.network.SiloJson
 import kotlin.test.Test
@@ -104,9 +103,5 @@ class MachineTranslationDecodingTest {
 
         // Overview-only surfaces (detail heroes, episode rows, marquee, cards).
         assertFalse(hasMachineTranslatedOverview(detail.machineTranslatedFields))
-        // A view showing the tagline may mark it, but only while the tagline is visible.
-        assertTrue(hasMachineTranslatedText(detail.machineTranslatedFields, taglineShown = true))
-        assertFalse(hasMachineTranslatedText(detail.machineTranslatedFields, taglineShown = false))
-        assertTrue(hasMachineTranslatedText(listOf("overview"), taglineShown = false))
     }
 }
