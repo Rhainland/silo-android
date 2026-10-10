@@ -31,6 +31,12 @@ class RoomCatalogCacheRepository(
     private val dao = db.catalogCacheDao()
     private val json = Json { ignoreUnknownKeys = true }
 
+    override suspend fun invalidateDetailMetadata() {
+        val snapshot = snapshotProvider() ?: return
+        val profile = snapshot.profileId ?: return
+        dao.deleteDetailMetadata(snapshot.serverId, profile)
+    }
+
     override suspend fun cacheLibraries(libraries: List<UserLibrary>) =
         cacheLibraries(libraries, currentWriteLease())
 

@@ -144,4 +144,31 @@ class RoomCatalogCacheRepositoryTest {
         assertEquals(0L, oldProfileGeneration)
         assertNull(guardedRepo.getCachedLibraries())
     }
+    @Test
+    fun languageInvalidationPurgesOnlyCurrentScopesDetailMetadata() = runTest {
+        val owner = scope!!
+        val detail = org.siloserver.silo.model.catalog.ItemDetail(contentId = "c1", type = "series", title = "Old language")
+        val seasons = org.siloserver.silo.model.catalog.SeasonsResponse()
+        val episodes = org.siloserver.silo.model.catalog.EpisodesResponse()
+        suspend fun populate() {
+            repo.cacheItemDetail("c1", detail)
+            repo.cacheSeasons("c1", seasons)
+            repo.cacheEpisodes("c1", 1, episodes)
+            repo.cacheLibraries(listOf(UserLibrary(id = 1, name = "Shows", type = "series")))
+        }
+        populate()
+        scope = owner.copy(profileId = "p2")
+        populate()
+        scope = owner
+        repo.invalidateDetailMetadata()
+        assertNull(repo.getCachedItemDetail("c1"))
+        assertNull(repo.getCachedSeasons("c1"))
+        assertNull(repo.getCachedEpisodes("c1", 1))
+        assertEquals("Shows", repo.getCachedLibraries()?.single()?.name)
+        scope = owner.copy(profileId = "p2")
+        assertEquals(detail, repo.getCachedItemDetail("c1"))
+        assertEquals(seasons, repo.getCachedSeasons("c1"))
+        assertEquals(episodes, repo.getCachedEpisodes("c1", 1))
+    }
+
 }

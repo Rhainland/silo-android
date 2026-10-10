@@ -1,5 +1,7 @@
 package org.siloserver.silo.domain.settings
 
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
 import org.siloserver.silo.model.settings.EffectiveSettingValue
 import org.siloserver.silo.model.settings.SettingKeys
 import org.siloserver.silo.network.ApiResult
@@ -29,6 +31,7 @@ import kotlinx.serialization.json.jsonPrimitive
 class ProfileSettingsController(
     private val repository: SettingsRepository,
     private val catalogLanguage: CatalogLanguageRevision = CatalogLanguageRevision(),
+    private val invalidateCatalogMetadata: suspend () -> Unit = {},
 ) {
 
     /** Whether the connected server answered the canonical settings probe. */
@@ -132,7 +135,14 @@ class ProfileSettingsController(
     suspend fun setMetadataLanguage(language: String): WriteResult {
         val result = writeLanguage(SettingKeys.CATALOG_METADATA_LANGUAGE, language)
         // The write committed even if the following settings read is canceled.
-        if (result is ApiResult.Success) catalogLanguage.changed()
+        if (result is ApiResult.Success) {
+            catalogLanguage.changed()
+            // Complete durable invalidation even if the post-write reload is
+            // canceled, so a later app launch cannot revive the old language.
+            withContext(NonCancellable) {
+                invalidateCatalogMetadata()
+            }
+        }
         return resolved(result)
     }
 

@@ -179,6 +179,8 @@ private fun EpisodeRailCard(
     val stillShape = RoundedCornerShape(8.dp)
     val spoilers = LocalEpisodeSpoilerPrefs.current
     val unwatched = EpisodeSpoilers.isUnwatched(episode.userData)
+    val visibleOverview = episode.overview
+        ?.takeIf { it.isNotBlank() && !spoilers.hidesOverview(unwatched) }
     val progress = episodeProgressFraction(
         positionSeconds = episode.userData?.positionSeconds,
         durationSeconds = episode.userData?.durationSeconds,
@@ -285,7 +287,7 @@ private fun EpisodeRailCard(
                     letterSpacing = 1.sp,
                     color = Color.White.copy(alpha = 0.55f),
                 )
-                if (showsEpisodeDetails && !episode.overview.isNullOrBlank() &&
+                if (showsEpisodeDetails && visibleOverview != null &&
                     hasMachineTranslatedOverview(episode.machineTranslatedFields)
                 ) {
                     DetailMachineTranslatedLabel(compact = true, iconSize = 11.dp)
@@ -328,11 +330,9 @@ private fun EpisodeRailCard(
                 }
                 // Spoiler protection omits the text; the fixed-height column
                 // keeps the card the same size.
-                val overview = episode.overview
-                    ?.takeIf { it.isNotBlank() && !spoilers.hidesOverview(unwatched) }
-                if (overview != null) {
+                if (visibleOverview != null) {
                     Text(
-                        text = overview,
+                        text = visibleOverview,
                         style = MaterialTheme.typography.bodySmall,
                         color = DetailSecondaryText,
                         maxLines = 3,

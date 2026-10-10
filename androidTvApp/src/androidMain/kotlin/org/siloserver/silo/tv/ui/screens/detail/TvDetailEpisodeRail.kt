@@ -364,6 +364,8 @@ private fun TvDetailEpisodeCard(
     val cardWidth = if (usesSeriesGeometry) tvEpisodeCardWidth() else 230.dp.cardScaled()
     val spoilers = LocalEpisodeSpoilerPrefs.current
     val unwatched = EpisodeSpoilers.isUnwatched(episode.userData)
+    val visibleOverview = episode.overview
+        ?.takeIf { it.isNotBlank() && !spoilers.hidesOverview(unwatched) }
     val stillHeight = if (usesSeriesGeometry) cardWidth * (9f / 16f) else 130.dp.cardScaled()
     val eyebrowFontSize = if (usesSeriesGeometry) 11.sp else 14.sp
     val eyebrowLineHeight = if (usesSeriesGeometry) 14.sp else 17.sp
@@ -530,7 +532,7 @@ private fun TvDetailEpisodeCard(
                         NowViewingTag()
                     }
                     if (!hidesEpisodeTitle && caption.showsMetadata &&
-                        !episode.overview.isNullOrBlank() &&
+                        visibleOverview != null &&
                         hasMachineTranslatedOverview(episode.machineTranslatedFields)
                     ) {
                         TvMachineTranslatedLabel(compact = true, iconSize = 12.dp)
@@ -572,9 +574,7 @@ private fun TvDetailEpisodeCard(
                     // identical vertical metrics. Spoiler protection blanks it
                     // the same way.
                     Text(
-                        text = episode.overview
-                            ?.takeIf { it.isNotBlank() && !spoilers.hidesOverview(unwatched) }
-                            .orEmpty(),
+                        text = visibleOverview.orEmpty(),
                         fontSize = 16.sp,
                         fontWeight = FontWeight.Normal,
                         color = SiloSecondaryText,

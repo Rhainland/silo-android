@@ -11,6 +11,7 @@ import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.api.SettingsApi
 import org.siloserver.silo.repository.SettingsRepository
 import io.ktor.client.HttpClient
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
@@ -153,12 +154,34 @@ class ProfileSettingsControllerTest {
     fun `committed language write invalidates cards even when settings reload is canceled`() = runTest {
         val revision = CatalogLanguageRevision()
         val api = FakeSettingsApi(effectiveHook = { throw kotlinx.coroutines.CancellationException("Settings closed") })
-        val controller = ProfileSettingsController(SettingsRepository(api), revision)
+        var invalidated = false
+        val controller = ProfileSettingsController(SettingsRepository(api), revision) { invalidated = true }
         kotlin.test.assertFailsWith<kotlinx.coroutines.CancellationException> {
             controller.setMetadataLanguage("de")
         }
         assertEquals(1L, revision.revision.value)
         assertEquals(1, api.calls.size)
+        assertTrue(invalidated)
+    }
+
+    @Test
+    fun `cancellation after committed language write still finishes durable invalidation`() = runTest {
+        val entered = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val release = kotlinx.coroutines.CompletableDeferred<Unit>()
+        var invalidated = false
+        val controller = ProfileSettingsController(SettingsRepository(FakeSettingsApi())) {
+            entered.complete(Unit)
+            release.await()
+            invalidated = true
+        }
+        val job = launch {
+            controller.setMetadataLanguage("de")
+        }
+        entered.await()
+        job.cancel()
+        release.complete(Unit)
+        job.join()
+        assertTrue(invalidated)
     }
 
     @Test

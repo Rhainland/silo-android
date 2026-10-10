@@ -1,5 +1,6 @@
 package org.siloserver.silo.android.ui.screens.home
 
+import org.siloserver.silo.domain.settings.CatalogLanguageRevision
 import org.siloserver.silo.android.ui.components.SiloDropdownMenuItem
 import org.siloserver.silo.android.ui.components.SiloDropdownMenu
 import androidx.compose.foundation.background
@@ -155,6 +156,8 @@ fun HomeScreen(
     }
     val context = LocalContext.current
     val catalogRepository: CatalogRepository = koinInject()
+    val catalogLanguage: CatalogLanguageRevision = koinInject()
+    val languageRevision by catalogLanguage.revision.collectAsState()
     val heroHandoff = LocalHeroSourceHandoff.current
     val continueWatchingWarmTargets = remember(regularSections) {
         regularSections
@@ -182,10 +185,10 @@ fun HomeScreen(
             .take(4)
             .toList()
     }
-    var warmedSeriesArtwork by remember(activeServerId, profileScopeId) {
+    var warmedSeriesArtwork by remember(activeServerId, profileScopeId, languageRevision) {
         mutableStateOf<Map<String, WarmedSeriesArtwork>>(emptyMap())
     }
-    LaunchedEffect(activeServerId, profileScopeId, continueWatchingWarmTargets) {
+    LaunchedEffect(activeServerId, profileScopeId, languageRevision, continueWatchingWarmTargets) {
         // Warm each Continue Watching destination in row order. Within one
         // title, its parent detail, exact episode and selector data run in
         // parallel. CatalogRepository keeps these calls alive/single-flight if
