@@ -5,6 +5,7 @@ import java.util.UUID
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withTimeoutOrNull
 import org.siloserver.silo.cast.SiloCastHandoffChallenge
 import org.siloserver.silo.cast.SiloCastHandoffOffer
 import org.siloserver.silo.cast.SiloCastHandoffReady
@@ -54,22 +55,36 @@ class RemotePlaybackIdentityManager(
             active.controllerDeviceId == controllerDeviceId
     }
 
+    /**
+     * Installs the phone's temporary identity once the server approves it.
+     * [beforeActivation] runs after approval and before anything changes, while
+     * the outgoing identity (the TV's own or an earlier phone's) still owns the
+     * credentials, so whatever is playing can close its server session under the
+     * identity it started with. An offer that fails or is denied leaves the
+     * current identity and playback alone.
+     */
     suspend fun prepare(
         offer: SiloCastHandoffOffer,
         controllerDeviceId: String,
         controllerDeviceName: String?,
         receiverRun: Long,
+        /** Called once the offer needs the full server exchange rather than a reuse. */
+        onFullHandoff: () -> Unit = {},
+        beforeActivation: suspend () -> Unit = {},
         onChallenge: suspend (SiloCastHandoffChallenge) -> Unit,
     ): SiloCastHandoffReady = mutex.withLock {
         validateOffer(offer)
 
+        // An end in flight has already unpublished its identity (see
+        // [endLocked]) and holds this lock, so an identity being ended is
+        // never reused: this waits for it and takes the full path.
         activeIdentity?.takeIf { matches(offer, controllerDeviceId) }?.let { active ->
             val reclaimed = active.copy(receiverRun = receiverRun)
             activeIdentity = reclaimed
             return@withLock reclaimed.toReady(offer.requestId, reused = true)
         }
 
-        endLocked()
+        onFullHandoff()
 
         val capability = deviceLoginApi.remotePlaybackCapabilityAt(offer.serverURL).successOrThrow()
         require(capability.remotePlaybackHandoff && SiloCastProtocol.version in capability.protocolVersions) {
@@ -111,6 +126,8 @@ class RemotePlaybackIdentityManager(
                             }
                             val expiresAtMs = poll.sessionExpiresAt?.let(::parseInstantMillis)
                                 ?: (System.currentTimeMillis() + DEFAULT_SESSION_MS)
+                            beforeActivation()
+                            endLocked()
                             val generationId = UUID.randomUUID().toString()
                             tokenManager.beginTemporaryScope(
                                 TemporaryAuthScope(
@@ -194,23 +211,29 @@ class RemotePlaybackIdentityManager(
 
     private suspend fun endLocked() {
         val active = activeIdentity
+        // Unpublish before the logout below: while it is in flight, readers
+        // outside the lock must not launch a title under this identity.
+        activeIdentity = null
         try {
             if (active != null && tokenManager.hasTemporaryScope()) {
-                deviceLoginApi.endRemotePlayback(
-                    AuthScopeSnapshot(
-                        serverId = active.serverId,
-                        serverUrl = active.serverUrl,
-                        profileId = active.profileId,
-                        profileToken = null,
-                        credentialGenerationId = active.generationId,
-                    ),
-                )
+                // Bounded: a handoff waiting on this lock must not sit behind
+                // an unreachable server's request timeout.
+                withTimeoutOrNull(LOGOUT_TIMEOUT_MS) {
+                    deviceLoginApi.endRemotePlayback(
+                        AuthScopeSnapshot(
+                            serverId = active.serverId,
+                            serverUrl = active.serverUrl,
+                            profileId = active.profileId,
+                            profileToken = null,
+                            credentialGenerationId = active.generationId,
+                        ),
+                    )
+                }
             }
         } finally {
             // Local credential teardown is mandatory even if the best-effort
             // server logout throws or the transport disappears mid-request.
             tokenManager.endTemporaryScope()
-            activeIdentity = null
         }
     }
 
@@ -257,5 +280,6 @@ class RemotePlaybackIdentityManager(
 
     private companion object {
         const val DEFAULT_SESSION_MS = 24 * 60 * 60 * 1_000L
+        const val LOGOUT_TIMEOUT_MS = 5_000L
     }
 }

@@ -84,8 +84,10 @@ val repositoryModule = module {
                 ?: org.siloserver.silo.repository.port.NoOpUserItemStatePort,
             catalogCache = getOrNull<org.siloserver.silo.repository.port.CatalogCachePort>()
                 ?: org.siloserver.silo.repository.port.NoOpCatalogCachePort,
+            hiddenLibraries = get(),
         )
     }
+    single { org.siloserver.silo.repository.HiddenLibrariesStore(get(), get()) }
     single { ProfileRepository(get(), get(), getOrNull(), get(), get(), get()) }
     // Resolved by each Application right after startKoin (guarded there, like
     // the other starters) so a stale-profile refusal from background work

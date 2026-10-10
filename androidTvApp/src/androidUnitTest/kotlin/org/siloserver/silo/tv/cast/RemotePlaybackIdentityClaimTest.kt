@@ -2,14 +2,15 @@ package org.siloserver.silo.tv.cast
 
 import android.app.Application
 import kotlin.test.*
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.async
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import org.siloserver.silo.cast.SiloCastHandoffOffer
-import org.siloserver.silo.cast.SiloCastProtocol
-import org.siloserver.silo.model.auth.DeviceLoginCapabilityResponse
-import org.siloserver.silo.model.auth.DeviceLoginPollResponse
 import org.siloserver.silo.model.auth.DeviceLoginStartResponse
 import org.siloserver.silo.network.AndroidServerRegistry
 import org.siloserver.silo.network.ApiResult
@@ -85,6 +86,33 @@ class RemotePlaybackIdentityClaimTest {
         assertTrue(tokens.hasTemporaryScope())
     }
 
+    @Test fun anIdentityBeingEndedIsNeverReused() = runTest {
+        val gated = GatedLogoutApi(api)
+        val manager = RemotePlaybackIdentityManager(gated, tokens, deviceNameProvider = { "TV" })
+        suspend fun prepareOn(run: Long) =
+            manager.prepare(offer(), CONTROLLER, controllerDeviceName = null, receiverRun = run) {}
+
+        prepareOn(STOPPED_RUN)
+        val ending = assertNotNull(manager.activeIdentity)
+        val logout = CompletableDeferred<Unit>()
+        gated.logoutGate = logout
+
+        val end = launch { manager.end(ending.generationId) }
+        runCurrent()
+        // The logout is in flight: nothing outside the lock may launch on it.
+        assertNull(manager.activeIdentity)
+
+        val sameOffer = async { prepareOn(NEXT_RUN) }
+        runCurrent()
+        logout.complete(Unit)
+        end.join()
+        val ready = sameOffer.await()
+
+        assertFalse(ready.reused)
+        assertEquals(2, gated.startCalls)
+        assertNotEquals(ending.generationId, manager.activeIdentity?.generationId)
+    }
+
     private suspend fun prepare(offer: SiloCastHandoffOffer, run: Long) =
         manager.prepare(offer, CONTROLLER, controllerDeviceName = null, receiverRun = run) {}
 
@@ -95,59 +123,24 @@ class RemotePlaybackIdentityClaimTest {
         profileId = profileId,
     )
 
-    private class FakeRemotePlaybackApi : DeviceLoginApi {
-        var endCalls = 0
-        var approvedProfileId = "profile-1"
-
-        override suspend fun remotePlaybackCapabilityAt(serverUrl: String) = ApiResult.Success(
-            DeviceLoginCapabilityResponse(
-                remotePlaybackHandoff = true,
-                protocolVersions = listOf(SiloCastProtocol.version),
-            ),
-        )
+    /** Counts handoff starts and can hold a logout open; the rest is [FakeRemotePlaybackApi]. */
+    private class GatedLogoutApi(private val inner: FakeRemotePlaybackApi) : DeviceLoginApi by inner {
+        var startCalls = 0
+        var logoutGate: CompletableDeferred<Unit>? = null
 
         override suspend fun startRemotePlaybackAt(
             serverUrl: String,
             deviceName: String?,
             devicePlatform: String?,
-        ) = ApiResult.Success(
-            DeviceLoginStartResponse(
-                deviceCode = "device-code",
-                userCode = "USER",
-                matchCode = "12",
-                verificationUri = "$serverUrl/pair",
-                verificationUriComplete = "$serverUrl/pair?code=USER",
-                expiresAt = "2099-01-01T00:00:00Z",
-                expiresIn = 60,
-                interval = 1,
-                deviceName = deviceName.orEmpty(),
-                devicePlatform = devicePlatform.orEmpty(),
-                clientPurpose = "remote_playback",
-                temporary = true,
-            ),
-        )
-
-        override suspend fun pollDeviceLoginAt(serverUrl: String, deviceCode: String) = ApiResult.Success(
-            DeviceLoginPollResponse(
-                status = "approved",
-                accessToken = "access",
-                refreshToken = "refresh",
-                profileId = approvedProfileId,
-                profileToken = "profile-token",
-                temporary = true,
-            ),
-        )
-
-        override suspend fun endRemotePlayback(scope: AuthScopeSnapshot): ApiResult<Unit> {
-            endCalls += 1
-            return ApiResult.Success(Unit)
+        ): ApiResult<DeviceLoginStartResponse> {
+            startCalls += 1
+            return inner.startRemotePlaybackAt(serverUrl, deviceName, devicePlatform)
         }
 
-        override suspend fun startDeviceLogin(deviceName: String?, devicePlatform: String?) = error("unused")
-        override suspend fun pollDeviceLogin(deviceCode: String) = error("unused")
-        override suspend fun lookupDeviceLogin(token: String?, code: String?) = error("unused")
-        override suspend fun approveDeviceLogin(token: String?, code: String?) = error("unused")
-        override suspend fun denyDeviceLogin(token: String?, code: String?) = error("unused")
+        override suspend fun endRemotePlayback(scope: AuthScopeSnapshot): ApiResult<Unit> {
+            logoutGate?.await()
+            return inner.endRemotePlayback(scope)
+        }
     }
 
     private companion object {

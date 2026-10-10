@@ -257,6 +257,7 @@ val androidModule = module {
             serverRegistry = get(),
             tokenManager = get(),
             deviceLoginApi = get(),
+            catalogRepository = get(),
             lastTargetStore = get(),
             deviceNameProvider = {
                 android.os.Build.MODEL?.trim()?.ifBlank { null } ?: "Android Phone"
@@ -455,13 +456,13 @@ val androidModule = module {
             get(), get(), get(),
             getOrNull<org.siloserver.silo.repository.port.UserItemStatePort>() ?: org.siloserver.silo.repository.port.NoOpUserItemStatePort,
             get(),
-            get<org.siloserver.silo.android.ui.screens.browse.BrowsePrefsStore>(),
+            get<org.siloserver.silo.common.settings.BrowsePrefsStore>(),
         )
     }
     viewModel { RecommendationsViewModel(get()) }
     viewModel { SearchViewModel(get()) }
     single {
-        org.siloserver.silo.android.ui.screens.browse.BrowsePrefsStore(
+        org.siloserver.silo.common.settings.BrowsePrefsStore(
             context = get(),
             serverRegistry = get(),
         )
@@ -528,6 +529,9 @@ val androidModule = module {
     }
     single {
         org.siloserver.silo.android.auth.SignOutTeardown(get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get())
+    }
+    single {
+        org.siloserver.silo.android.auth.ProfileSwitchTeardown(get(), get(), get(), get(), get(), get())
     }
     viewModel { SettingsViewModel(get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get()) }
     viewModel { DiagnosticsViewModel(get()) }
