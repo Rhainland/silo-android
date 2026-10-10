@@ -1,5 +1,6 @@
 package org.siloserver.silo.android.ui.screens.settings
 
+import android.widget.Toast
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
@@ -15,6 +16,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import org.koin.compose.koinInject
 import org.siloserver.silo.android.ui.components.SiloConfirmDialog
 import org.siloserver.silo.android.ui.components.SiloTopBar
@@ -24,6 +26,7 @@ import org.siloserver.silo.android.ui.theme.SettingsDimens
 import org.siloserver.silo.android.ui.theme.SiloSettingsBackground
 import org.siloserver.silo.android.ui.util.formatBytes
 import org.siloserver.silo.common.settings.TitleArtStore
+import org.siloserver.silo.common.settings.UseProfileSettingsCopy
 import org.siloserver.silo.model.feature.MetadataAiFeatureStore
 import org.siloserver.silo.model.metadata.MetadataAiOnView
 import org.siloserver.silo.model.settings.SeekMedia
@@ -121,6 +124,12 @@ fun SettingsInterfaceScreen(viewModel: SettingsViewModel, onBackClick: () -> Uni
 fun SettingsPlaybackScreen(viewModel: SettingsViewModel, onBackClick: () -> Unit) {
     val state by viewModel.uiState.collectAsState()
     val seekIntervals by viewModel.seekIntervals.state.collectAsState()
+    val context = LocalContext.current
+    LaunchedEffect(state.playbackOverridesReset) {
+        val landed = state.playbackOverridesReset ?: return@LaunchedEffect
+        Toast.makeText(context, UseProfileSettingsCopy.notice(landed), Toast.LENGTH_SHORT).show()
+        viewModel.onPlaybackOverridesResetShown()
+    }
 
     SettingsPageScaffold(title = "Playback", onBackClick = onBackClick) {
         item(key = "streaming") {
@@ -132,11 +141,13 @@ fun SettingsPlaybackScreen(viewModel: SettingsViewModel, onBackClick: () -> Unit
                 dolbyVisionEnabled = state.dolbyVisionEnabled,
                 dvProfile7HDR10Fallback = state.dvProfile7HDR10Fallback,
                 pictureInPictureEnabled = state.pictureInPictureEnabled,
+                deviceOverrides = state.deviceOverrides,
                 onQualityPresetSelected = viewModel::setQualityPreset,
                 onAudioLanguageChanged = viewModel::setAudioLanguage,
                 onDolbyVisionEnabledChanged = viewModel::setDolbyVisionEnabled,
                 onDvProfile7HDR10FallbackChanged = viewModel::setDvProfile7HDR10Fallback,
                 onPictureInPictureEnabledChanged = viewModel::setPictureInPictureEnabled,
+                onUseProfileSetting = viewModel::useProfileSetting,
             )
         }
         item(key = "episodes") {
@@ -147,12 +158,14 @@ fun SettingsPlaybackScreen(viewModel: SettingsViewModel, onBackClick: () -> Unit
                 autoSkipCredits = state.autoSkipCredits,
                 resumeRewindSeconds = state.resumeRewindSeconds,
                 passOutThreshold = state.passOutThreshold,
+                deviceOverrides = state.deviceOverrides,
                 onAutoPlayNextChanged = viewModel::setAutoPlayNext,
                 onNextUpPromptSecondsChanged = viewModel::setNextUpPromptSeconds,
                 onIntroSkipModeChanged = viewModel::setIntroSkipMode,
                 onAutoSkipCreditsChanged = viewModel::setAutoSkipCredits,
                 onResumeRewindSecondsChanged = viewModel::setResumeRewindSeconds,
                 onPassOutThresholdChanged = viewModel::setPassOutThreshold,
+                onUseProfileSetting = viewModel::useProfileSetting,
             )
         }
         SeekMedia.entries.forEach { media ->

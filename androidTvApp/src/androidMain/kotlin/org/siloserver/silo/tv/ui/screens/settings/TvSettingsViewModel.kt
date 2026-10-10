@@ -142,6 +142,17 @@ class TvSettingsViewModel(
         // Seconds before the end of an episode to surface the Up-Next prompt
         // (0 = at the very end). Mirrors tvOS `nextUpPromptSeconds`.
         val nextUpPromptSeconds: Int = 10,
+        /**
+         * Keys this device holds its own value for. A profile-layered control
+         * whose key is absent shows "Use profile setting" as its choice.
+         */
+        val deviceOverrides: Set<String> = emptySet(),
+        /**
+         * Outcome of the last "Use Profile Settings", until the screen has told
+         * the user: true when the server confirmed every clear, false when it
+         * couldn't (offline, refused, or interrupted).
+         */
+        val playbackOverridesReset: Boolean? = null,
         // Cards & Posters (`ui.card_presentation`), mirrored from
         // CardPresentationStore. Source drives the "Only This Device" toggle
         // and the "Use Profile Default" action; support gates the whole group.
@@ -385,6 +396,11 @@ class TvSettingsViewModel(
         viewModelScope.launch {
             playerSettingsStore.nextUpPromptSecondsFlow.collect { seconds ->
                 _uiState.update { it.copy(nextUpPromptSeconds = seconds) }
+            }
+        }
+        viewModelScope.launch {
+            playerSettingsStore.deviceOverrideKeysFlow.collect { keys ->
+                _uiState.update { it.copy(deviceOverrides = keys) }
             }
         }
         viewModelScope.launch {
@@ -733,11 +749,24 @@ class TvSettingsViewModel(
     }
 
     /**
-     * Clear every server-side device override for this device. Mirrors
-     * iOS tvOS "Reset Playback Overrides" (TVSettingsView.swift:137).
+     * "Use Profile Settings": clears every setting this device holds its own
+     * value for. Mirrors iOS tvOS "Reset Playback Overrides"
+     * (TVSettingsView.swift:137).
      */
     fun resetPlaybackOverrides() {
-        viewModelScope.launch { playerSettingsStore.resetAllDeviceSettings() }
+        viewModelScope.launch {
+            val landed = playerSettingsStore.resetAllDeviceSettings()
+            _uiState.update { it.copy(playbackOverridesReset = landed) }
+        }
+    }
+
+    fun onPlaybackOverridesResetShown() {
+        _uiState.update { it.copy(playbackOverridesReset = null) }
+    }
+
+    /** Goes back to the profile's value for one setting's control on this device. */
+    fun onUseProfileSetting(key: String) {
+        viewModelScope.launch { playerSettingsStore.resetDeviceSetting(key) }
     }
 
     /** Lifecycle hook — call from MainTvActivity.onStop. */

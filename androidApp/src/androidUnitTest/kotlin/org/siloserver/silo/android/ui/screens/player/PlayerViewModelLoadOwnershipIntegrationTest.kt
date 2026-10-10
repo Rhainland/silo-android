@@ -1740,7 +1740,7 @@ private class FakePlayerSettingsStore(
     override suspend fun setSubtitleMatchesDevice(enabled: Boolean) = Unit
     override suspend fun setShowAudiobooks(enabled: Boolean) = Unit
     override suspend fun resetDeviceSetting(key: String) = Unit
-    override suspend fun resetAllDeviceSettings() = Unit
+    override suspend fun resetAllDeviceSettings() = true
     override suspend fun flushPendingDeviceSettings() = Unit
 }
 

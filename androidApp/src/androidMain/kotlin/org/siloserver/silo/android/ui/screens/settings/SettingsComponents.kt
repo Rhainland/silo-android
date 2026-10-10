@@ -521,6 +521,12 @@ fun SettingsDropdownRow(
     description: String? = null,
     icon: ImageVector? = null,
     enabled: Boolean = true,
+    /**
+     * The option the menu checks. Defaults to [value]; differs when the row
+     * shows the value in effect but the choice is another option, such as
+     * "Use profile setting".
+     */
+    selectedOption: String = value,
 ) {
     var expanded by remember { mutableStateOf(false) }
 
@@ -553,7 +559,7 @@ fun SettingsDropdownRow(
                 options.forEach { option ->
                     SettingsMenuItem(
                         label = option,
-                        selected = option == value,
+                        selected = option == selectedOption,
                         onClick = {
                             onOptionSelected(option)
                             expanded = false
