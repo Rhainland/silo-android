@@ -588,7 +588,7 @@ fun TvPlayerScreen(
         !state.showControls && !state.hudOpen && !state.showNextUp
     val manualSkipTarget = tvManualMarkerSkipTarget(
         activeMarkerSkipTarget, canSeekInRoom, visibleIntroSkipState.isVisible,
-        state.isLoading, qualityOfferVisible,
+        state.isLoading || state.error != null, qualityOfferVisible,
     )
     val latestManualSkipTarget by rememberUpdatedState(manualSkipTarget)
     val latestRoomSnapshot by rememberUpdatedState(roomSnapshot)

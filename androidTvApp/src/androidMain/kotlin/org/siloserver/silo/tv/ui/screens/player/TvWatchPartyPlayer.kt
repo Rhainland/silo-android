@@ -269,15 +269,19 @@ internal fun TvPlaybackSpeedEffect(
     }
 }
 
-/** Keep the marker pill and hidden-controls OK action behind the visible quality offer. */
+/**
+ * Keep the marker pill and hidden-controls OK action behind the visible quality
+ * offer, and off while playback is loading or failed: the overlays still draw
+ * over the error screen.
+ */
 internal fun tvManualMarkerSkipTarget(
     active: MarkerSkipTarget?,
     canSeek: Boolean,
     introVisible: Boolean,
-    loading: Boolean,
+    playbackUnavailable: Boolean,
     qualityOfferVisible: Boolean,
 ): MarkerSkipTarget? = active?.takeIf {
-    canSeek && !introVisible && !loading && !qualityOfferVisible
+    canSeek && !introVisible && !playbackUnavailable && !qualityOfferVisible
 }
 
 /** Whether the viewer dismissed the current lower-quality offer. */
