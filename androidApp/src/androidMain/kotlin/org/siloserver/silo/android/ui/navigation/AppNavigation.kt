@@ -909,11 +909,16 @@ fun AppNavigation(
             // Once profile recovery has cleared the selection (a stale PIN
             // proof), Main has no profile to return to and every request there
             // would fail, so Back leaves the app, as it does when the picker is
-            // the first screen.
+            // the first screen. A picker opened from the server list or a
+            // sign-in screen (adding a server) has no profile yet either; Back
+            // there still returns to that screen.
             val pickerActivity = androidx.activity.compose.LocalActivity.current
             val selectedProfileId = serverRegistry.activeEntry.collectAsState().value?.profileId
+            val previousRoute = navController.previousBackStackEntry?.destination?.route
             androidx.activity.compose.BackHandler(
-                enabled = selectedProfileId.isNullOrBlank() && navController.previousBackStackEntry != null,
+                enabled = selectedProfileId.isNullOrBlank() &&
+                    previousRoute != null &&
+                    previousRoute !in ProfilePromptDeferredRoutes,
             ) {
                 pickerActivity?.finish()
             }
