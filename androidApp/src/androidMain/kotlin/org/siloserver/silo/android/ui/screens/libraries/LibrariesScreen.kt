@@ -192,6 +192,8 @@ data class LibrariesUiState(
     val catalogItems: List<BrowseItem> = emptyList(),
     val catalogTotal: Int = 0,
     val catalogHasMore: Boolean = false,
+    /** For an empty grid: false when the library itself is empty, true when filters hid everything, null when unknown (#451). */
+    val catalogLibraryHasItems: Boolean? = null,
     // Full filter model shared with the standalone Browse screen: facets
     // (genre/decade/rating/studio/language/series/...), match-all/any, and the
     // available-filter vocabulary from the server. Genre is a Categories facet
@@ -701,7 +703,7 @@ class LibrariesViewModel(
                 if (!isCatalogRequestCurrent(requestGeneration, requestIdentity, it)) {
                     it
                 } else if (reset) {
-                    it.copy(isLoadingCatalog = true, isLoadingMoreCatalog = false, catalogError = null)
+                    it.copy(isLoadingCatalog = true, isLoadingMoreCatalog = false, catalogError = null, catalogLibraryHasItems = null)
                 } else {
                     it.copy(isLoadingMoreCatalog = true, catalogError = null)
                 }
@@ -727,6 +729,17 @@ class LibrariesViewModel(
                     // Overlay local optimistic watched/favorite (mirrors Home/Browse).
                     val overlaid = overlayLocalState(result.data.items)
                     if (!isCatalogRequestCurrent(requestGeneration, requestIdentity)) return@launch
+                    // An empty first page only says this view matched nothing (#451).
+                    // With nothing narrowing it, the page was the whole library;
+                    // otherwise one unfiltered item decides. A Movies/Series view
+                    // of a mixed library asks within that type, as Apple does.
+                    // Loading stays up meanwhile, so the wrong message never flashes.
+                    val libraryHasItems = when {
+                        !reset || overlaid.isNotEmpty() -> null
+                        !requestState.filterState.hasActiveFilters && requestState.selectedNamePrefix == null -> false
+                        else -> catalogRepository.libraryHasItems(libraryId, requestState.mediaScope)
+                    }
+                    if (!isCatalogRequestCurrent(requestGeneration, requestIdentity)) return@launch
                     catalogContinuation = result.data.continuation
                     // Audiobook libraries expose book-native facets
                     // (author/narrator/series) — detected from the first item.
@@ -745,6 +758,7 @@ class LibrariesViewModel(
                                 catalogItems = if (reset) overlaid else it.catalogItems + overlaid,
                                 catalogTotal = result.data.total,
                                 catalogHasMore = result.data.hasMore,
+                                catalogLibraryHasItems = if (reset) libraryHasItems else it.catalogLibraryHasItems,
                                 browseMediaType = detectedMediaType ?: it.browseMediaType,
                                 catalogError = null,
                             )
@@ -1288,8 +1302,16 @@ private fun BrowseTabContent(
                 Column(modifier = Modifier.fillMaxSize().padding(top = topInset)) {
                     Box(modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) { controlsHeader() }
                     EmptyStateView(
-                        title = if (isCustomised) "No matches" else "No items found",
-                        subtitle = if (isCustomised) "No titles match the current sort or filters." else "Try switching libraries",
+                        title = when (state.catalogLibraryHasItems) {
+                            false -> "This library is empty"
+                            true -> "No matches"
+                            null -> if (isCustomised) "No matches" else "No items found"
+                        },
+                        subtitle = when (state.catalogLibraryHasItems) {
+                            false -> "There is nothing in this library yet."
+                            true -> "No titles match the current filters."
+                            null -> if (isCustomised) "No titles match the current sort or filters." else "Try switching libraries"
+                        },
                         icon = libraryIcon(state.libraries.firstOrNull { it.id == state.selectedLibraryId }?.type.orEmpty()),
                         modifier = Modifier.weight(1f),
                     )

@@ -641,7 +641,13 @@ private fun LibraryGrid(
                 }
             } else if (state.browseItems.isEmpty()) {
                 item(span = { GridItemSpan(maxLineSpan) }, key = "empty") {
-                    TvCatalogEmptyState(message = "No titles match the current filters.")
+                    TvCatalogEmptyState(
+                        message = if (state.browseLibraryHasItems == false) {
+                            "This library is empty."
+                        } else {
+                            "No titles match the current filters."
+                        },
+                    )
                 }
             } else {
                 itemsIndexed(
