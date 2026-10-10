@@ -146,7 +146,7 @@ class SettingsViewModelOfflinePreferencesTest {
             vm.onPlaybackOverridesResetShown()
             assertNull(vm.uiState.value.playbackOverridesReset)
 
-            // Offline: the clears are queued, and the notice must say so.
+            // Unconfirmed (offline, refused): the notice must not claim success.
             landed = false
             vm.resetPlaybackOverrides()
             runCurrent()

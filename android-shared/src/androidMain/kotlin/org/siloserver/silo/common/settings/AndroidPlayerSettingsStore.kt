@@ -1048,6 +1048,9 @@ class AndroidPlayerSettingsStore(
             store.edit { prefs ->
                 if (!current()) return@edit
                 writeRawString(prefs, scope, key, raw)
+                // The server now holds it at device scope, so it shows as this
+                // device's own even before a refresh confirms it.
+                markDeviceOverride(prefs, scope, key)
                 if (key == PlaybackSettingsKeys.SubtitleAppearance) {
                     val appearance = SubtitleAppearance.decode(raw).sanitized()
                     prefs[stringPreferencesKey(scope.keyPrefix + SAVED_CUSTOM_SUBTITLE_APPEARANCE)] = raw

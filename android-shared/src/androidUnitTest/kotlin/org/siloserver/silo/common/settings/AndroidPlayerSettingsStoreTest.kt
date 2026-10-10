@@ -144,6 +144,10 @@ class AndroidPlayerSettingsStoreTest {
             assertEquals("720p",store.preferredQualityFlow.first())
             assertEquals(2000,store.maxBitrateKbpsFlow.first())
             assertFalse(store.autoPlayNextFlow.first())
+            assertEquals(
+                setOf(PlaybackSettingsKeys.PreferredQuality, PlaybackSettingsKeys.MaxBitrateKbps, PlaybackSettingsKeys.AutoPlayNext),
+                store.deviceOverrideKeysFlow.first(),
+            )
             assertTrue(fakeFlusher.calls.isEmpty())
         } finally { client.close() }
     }

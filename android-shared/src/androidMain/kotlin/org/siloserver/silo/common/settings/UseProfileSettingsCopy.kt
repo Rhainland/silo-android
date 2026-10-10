@@ -36,11 +36,16 @@ object UseProfileSettingsCopy {
     /** Accessibility label for the row under [setting]'s switch. */
     fun rowDescription(setting: String): String = "Use profile setting for $setting"
 
-    /** The notice after the reset; [landed] is false while clears wait to reach the server. */
+    /**
+     * The notice after the reset. [landed] is false whenever the server's
+     * answer didn't confirm it: offline, a refused delete, or a profile switch
+     * mid-reset. The queue is in memory and drops what it can't retry, so the
+     * text promises nothing about later; running the reset again is safe.
+     */
     fun notice(landed: Boolean): String =
         if (landed) {
             "Now using your profile's settings."
         } else {
-            "Your profile's settings will apply when this device reconnects."
+            "Couldn't confirm the change with the server. Try again later."
         }
 }

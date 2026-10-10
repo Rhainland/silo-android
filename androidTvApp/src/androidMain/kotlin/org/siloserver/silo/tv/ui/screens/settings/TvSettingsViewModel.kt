@@ -149,8 +149,8 @@ class TvSettingsViewModel(
         val deviceOverrides: Set<String> = emptySet(),
         /**
          * Outcome of the last "Use Profile Settings", until the screen has told
-         * the user: true when every clear reached the server, false when some
-         * are queued until the device reconnects.
+         * the user: true when the server confirmed every clear, false when it
+         * couldn't (offline, refused, or interrupted).
          */
         val playbackOverridesReset: Boolean? = null,
         // Cards & Posters (`ui.card_presentation`), mirrored from

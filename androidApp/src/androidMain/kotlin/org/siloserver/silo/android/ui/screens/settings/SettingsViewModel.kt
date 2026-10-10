@@ -109,8 +109,8 @@ data class SettingsUiState(
     val deviceOverrides: Set<String> = emptySet(),
     /**
      * Outcome of the last "Use Profile Settings", until the screen has told the
-     * user: true when every clear reached the server, false when some are
-     * queued until the device reconnects.
+     * user: true when the server confirmed every clear, false when it
+     * couldn't (offline, refused, or interrupted).
      */
     val playbackOverridesReset: Boolean? = null,
     // Seconds to skip back on resume (0 = off); consecutive auto-advances
