@@ -2420,13 +2420,14 @@ private fun ItemDetail.withEpisodeDescription(row: EpisodeListItem): ItemDetail 
     )
 }
 
+/** Watched and unwatched both reset resume progress, as the server does. */
 private fun ItemDetail.withWatchedPlaybackState(watched: Boolean): ItemDetail {
     val current = userData ?: LeafItemUserData()
     return copy(
         userData = current.copy(
             played = watched,
-            isInProgress = if (watched) false else current.isInProgress,
-            positionSeconds = if (watched) null else current.positionSeconds,
+            isInProgress = false,
+            positionSeconds = null,
         ),
     )
 }

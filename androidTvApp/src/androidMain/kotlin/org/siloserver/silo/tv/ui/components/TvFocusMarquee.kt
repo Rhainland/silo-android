@@ -46,6 +46,7 @@ import org.siloserver.silo.common.ui.components.ThumbhashImage
 import org.siloserver.silo.model.catalog.hasMachineTranslatedOverview
 import org.siloserver.silo.tv.ui.theme.SiloOnSurface
 import org.siloserver.silo.tv.ui.theme.SiloSecondaryText
+import org.siloserver.silo.common.cards.LocalEpisodeSpoilerPrefs
 
 /**
  * Passive Skyline billboard, anchored bottom-left, that previews whichever row
@@ -88,6 +89,7 @@ fun TvFocusMarquee(
         // animation — a cold entry paints the finished marquee block instead
         // of fading it up. Focus-driven swaps keep the crossfade.
         var hasDisplayedContent by remember { mutableStateOf(false) }
+        val spoilerPrefs = LocalEpisodeSpoilerPrefs.current
         val snapInitialContent = content != null && !hasDisplayedContent
         LaunchedEffect(content != null) {
             if (content != null) hasDisplayedContent = true
@@ -110,8 +112,15 @@ fun TvFocusMarquee(
                     contentAlignment = Alignment.BottomStart,
                 ) {
                     if (value != null) {
+                        // A layer for the item still shown takes its current
+                        // copy at once, so a synopsis protection now hides
+                        // doesn't fade out.
                         TvMarqueeBlock(
-                            content = value,
+                            content = if (content != null && value.id == content.id) {
+                                content
+                            } else {
+                                value.underPrefs(spoilerPrefs)
+                            },
                             detailLine = detailLine.takeIf { value.id == content?.id },
                             translation = translation.takeIf { it?.contentId == value.contentId },
                             footer = footer,
