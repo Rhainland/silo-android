@@ -233,15 +233,20 @@ fun PlayerOverlay(
     // An AI job that fails while its sheet is closed would otherwise go unseen.
     // It uses the notice surface, which fits the whole reason in landscape.
     var aiFailureNotice by remember { mutableStateOf<PlayerNotice?>(null) }
-    LaunchedEffect(viewModel) {
-        viewModel.aiJobFailures.collect { message ->
+    val aiJobFailure by viewModel.aiJobFailure.collectAsState()
+    LaunchedEffect(aiJobFailure) {
+        aiJobFailure?.let { failure ->
+            // An open sheet shows the reason itself.
             if (!aiTranslateVisible) {
-                aiFailureNotice = PlayerNotice("AI subtitles failed. $message", NoticeTone.Warning)
+                aiFailureNotice = PlayerNotice("AI subtitles failed. ${failure.message}", NoticeTone.Warning)
             }
+            viewModel.consumeAiJobFailure(failure)
         }
     }
-    LaunchedEffect(aiFailureNotice) {
-        if (aiFailureNotice != null) {
+    // A session notice outranks the failure below, so the countdown runs only
+    // while the failure is the notice on screen.
+    LaunchedEffect(aiFailureNotice, notice) {
+        if (aiFailureNotice != null && notice == null) {
             kotlinx.coroutines.delay(AI_FAILURE_NOTICE_MS)
             aiFailureNotice = null
         }

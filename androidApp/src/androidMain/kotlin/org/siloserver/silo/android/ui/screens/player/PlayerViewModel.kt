@@ -3319,13 +3319,19 @@ class PlayerViewModel(
 
     /** The latest server refusal of the room's file, until the screen takes it to the room. */
     val roomRefusal: StateFlow<RoomRefusal?> = _roomRefusal.asStateFlow()
-    private val _aiJobFailures = MutableSharedFlow<String>(
-        extraBufferCapacity = 1,
-        onBufferOverflow = BufferOverflow.DROP_OLDEST,
-    )
+    private val _aiJobFailure = MutableStateFlow<AiJobFailure?>(null)
+    private var aiJobFailureCounter = 0L
 
-    /** Reasons of AI subtitle jobs that failed, for a notice when the AI sheet is closed. */
-    val aiJobFailures: SharedFlow<String> = _aiJobFailures.asSharedFlow()
+    /**
+     * The latest failed AI subtitle job, held until the overlay takes it, so a
+     * failure during picture-in-picture or casting (no overlay) is not lost.
+     */
+    val aiJobFailure: StateFlow<AiJobFailure?> = _aiJobFailure.asStateFlow()
+
+    /** The overlay took [failure]; a newer failure stays pending. */
+    fun consumeAiJobFailure(failure: AiJobFailure) {
+        _aiJobFailure.compareAndSet(failure, null)
+    }
     private val _roomQualityChanges = MutableSharedFlow<Unit>(
         extraBufferCapacity = 1,
         onBufferOverflow = BufferOverflow.DROP_OLDEST,
@@ -4579,7 +4585,7 @@ class PlayerViewModel(
                         is SubtitlesRepository.SubtitleJobOutcome.Failed -> {
                             val message = outcome.message ?: "Job failed"
                             _subtitleTools.update { it.copy(activeJob = null, translateError = message) }
-                            _aiJobFailures.tryEmit(message)
+                            _aiJobFailure.value = AiJobFailure(++aiJobFailureCounter, message)
                         }
                         SubtitlesRepository.SubtitleJobOutcome.Cancelled -> _subtitleTools.update {
                             it.copy(activeJob = null)
@@ -5890,3 +5896,6 @@ internal fun keepsPickedQuality(
         currentRoom.roomId == room.roomId &&
         currentRoom.selectionRevision == room.selectionRevision
 }
+
+/** A failed AI subtitle job's reason; [id] keeps repeated identical reasons distinct. */
+data class AiJobFailure(val id: Long, val message: String)
