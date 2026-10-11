@@ -82,5 +82,6 @@ class SubtitleTrackDisplayLabelTest {
 
         assertEquals("English → German", title("English → German (AI) (translated)"))
         assertEquals("English", title("English (AI transcribed)"))
+        assertEquals("English → Portuguese (Brazil)", title("English → Portuguese (Brazil) (AI) (translated)"))
     }
 }

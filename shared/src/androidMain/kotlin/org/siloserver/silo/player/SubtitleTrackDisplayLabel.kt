@@ -67,7 +67,7 @@ enum class AiSubtitleKind(val displayName: String) {
 
 private val aiTranscribedLabel = Regex("""(?i)\bAI transcribed\b""")
 private val aiTranslatedMarker = Regex("""(?i)\(\s*AI\s*\)""")
-private val trailingParentheticals = Regex("""(\s*\([^)]*\))+\s*$""")
+private val trailingAiMarkers = Regex("""(?i)(\s*\(\s*(?:AI|AI transcribed|translated|transcribed)\s*\))+\s*$""")
 
 /**
  * The AI kind a server label names: stored AI tracks carry a "(translated)" or
@@ -92,7 +92,7 @@ fun aiSubtitleKind(rawLabel: String?): AiSubtitleKind? {
  * ("English → German", "English"), for a track with no language field to name it.
  */
 fun aiSubtitleSourceLabel(rawLabel: String?): String? =
-    rawLabel?.replace(trailingParentheticals, "")?.trim()?.takeUnless { it.isBlank() }
+    rawLabel?.replace(trailingAiMarkers, "")?.trim()?.takeUnless { it.isBlank() }
 
 /**
  * The facts [formatSubtitleTrackDisplayLabel] joins into one string, kept
