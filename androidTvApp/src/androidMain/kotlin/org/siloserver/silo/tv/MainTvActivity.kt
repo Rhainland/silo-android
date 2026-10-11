@@ -359,8 +359,9 @@ class MainTvActivity : ComponentActivity() {
         val registry = get<ServerRegistry>(ServerRegistry::class.java)
         val tokenManager = get<TokenManager>(TokenManager::class.java)
         val processStart = !hasResolvedLaunchProfile
-        hasResolvedLaunchProfile = true
-        if (processStart) {
+        // An unreadable registry hides which servers remember a profile, so
+        // settle on a later launch rather than mistake this TV for a new one.
+        if (processStart && !registry.stateLoadFailed) {
             // The setting is device-wide, so a profile saved for any server
             // makes this an existing TV, not just one on the active server.
             val hasRememberedProfile = registry.entries.value.any { !it.profileId.isNullOrBlank() } ||
@@ -368,6 +369,9 @@ class MainTvActivity : ComponentActivity() {
             get<TvProfileLaunchPreferences>(TvProfileLaunchPreferences::class.java)
                 .settleFirstLaunch(hasRememberedProfile = hasRememberedProfile)
         }
+        // Only once settled: an Activity recreated while this was suspended
+        // must still settle.
+        hasResolvedLaunchProfile = true
 
         val activeEntry = registry.activeEntry.value
             ?: return TvRoute.ServerSetup.route

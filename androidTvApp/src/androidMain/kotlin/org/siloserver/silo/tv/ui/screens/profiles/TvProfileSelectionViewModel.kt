@@ -94,11 +94,21 @@ class TvProfileSelectionViewModel(
         val recovery = profileVerificationRecovery ?: return
         viewModelScope.launch {
             recovery.profileCleared.collect {
-                // An open remember offer was for the profile just cleared.
-                _uiState.update { it.copy(rememberOffer = null) }
+                dropStaleRememberOffer()
                 loadProfiles()
             }
         }
+    }
+
+    /**
+     * Closes an open remember offer whose profile is no longer the active one
+     * (cleared by recovery, or another identity took over). An offer from a
+     * commit that landed after this check began stays.
+     */
+    private suspend fun dropStaleRememberOffer() {
+        val offer = _uiState.value.rememberOffer ?: return
+        if (profileRepository.getActiveProfileId() == offer.id) return
+        _uiState.update { if (it.rememberOffer == offer) it.copy(rememberOffer = null) else it }
     }
 
     /** Cancel on a re-prompt for the primary's PIN ends the session; manage mode goes with it. */
@@ -168,9 +178,11 @@ class TvProfileSelectionViewModel(
                         canManageProfiles = false,
                         isManageMode = false,
                         deleteCandidate = null,
-                        rememberOffer = null,
                     )
                 }
+                // A pick committed while this load was in flight also moves
+                // the identity; its offer is still current.
+                dropStaleRememberOffer()
                 return@launch
             }
             when (val result = listed) {
