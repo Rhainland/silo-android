@@ -1,9 +1,12 @@
 package org.siloserver.silo.android.ui.screens.player
 
 import org.siloserver.silo.model.playback.PlayerSubtitleInfo
+import org.siloserver.silo.player.AiSubtitleKind
+import org.siloserver.silo.player.aiSubtitleKind
 import org.siloserver.silo.player.formatSubtitleTrackDisplayLabel
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNull
 
 class SubtitleTrackDisplayLabelTest {
 
@@ -61,5 +64,23 @@ class SubtitleTrackDisplayLabelTest {
         assertEquals(listOf("AI Transcription"), chips("English (AI transcribed) (transcribed)", "en"))
         assertEquals(listOf("AI Transcription"), chips("English (AI transcribed)", "en"))
         assertEquals(emptyList(), chips("English (opensubtitles)", "en"))
+    }
+
+    @Test
+    fun onlyTheServerAiMarkerMakesATranslation() {
+        assertNull(aiSubtitleKind("AI.srt"))
+        assertNull(aiSubtitleKind("Commentary AI"))
+        assertEquals(AiSubtitleKind.TRANSLATION, aiSubtitleKind("English → German (AI)"))
+    }
+
+    @Test
+    fun aiTracksWithoutALanguageKeepTheServerLabel() {
+        fun title(label: String) = subtitleTrackPresentation(
+            PlayerSubtitleInfo(index = 0, language = null, codec = "srt", label = label, forced = null, url = "/s.vtt"),
+            index = 0,
+        ).title
+
+        assertEquals("English → German", title("English → German (AI) (translated)"))
+        assertEquals("English", title("English (AI transcribed)"))
     }
 }

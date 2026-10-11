@@ -33,6 +33,18 @@ class TvSubtitleChoiceLabelsTest {
     }
 
     @Test
+    fun aiRowsWithoutALanguageKeepTheServerLabel() {
+        assertEquals(
+            "English → German — AI Translation · SRT",
+            subtitleChoiceLabel(row(codec = "srt", label = "English → German (AI)"), 0),
+        )
+        assertEquals(
+            "English — AI Transcription · SRT",
+            subtitleChoiceLabel(row(codec = "srt", label = "English (AI transcribed)"), 1),
+        )
+    }
+
+    @Test
     fun hudRowsChipTheAiKind() {
         val translated = tvSubtitleRowParts(
             subtitleChoiceLabel(row(language = "de", codec = "srt", label = "English → German (AI)", source = "downloaded"), 0),

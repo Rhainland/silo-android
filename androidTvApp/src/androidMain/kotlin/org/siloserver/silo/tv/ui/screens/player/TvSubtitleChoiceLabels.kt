@@ -2,6 +2,7 @@ package org.siloserver.silo.tv.ui.screens.player
 
 import org.siloserver.silo.model.playback.PlayerSubtitleInfo
 import org.siloserver.silo.player.aiSubtitleKind
+import org.siloserver.silo.player.aiSubtitleSourceLabel
 import org.siloserver.silo.player.trackLanguageDisplayName
 import java.util.Locale
 
@@ -20,9 +21,15 @@ internal fun subtitleChoiceLabel(row: PlayerSubtitleInfo, position: Int): String
         row.codec?.trim()?.takeIf { it.isNotBlank() }
             ?: row.url.substringBefore('?').substringBefore('#').substringAfterLast('.', ""),
     )
-    // An AI track names how it was made instead of its release-style title.
-    val aiKind = aiSubtitleKind(row.catalogLabel ?: row.label)
-    val title = meaningfulSubtitleRowTitle(row, language, format).takeIf { aiKind == null }
+    // An AI track names how it was made instead of its release-style title,
+    // keeping the server label only when there is no language to show.
+    val rawLabel = row.catalogLabel ?: row.label
+    val aiKind = aiSubtitleKind(rawLabel)
+    val title = when {
+        aiKind == null -> meaningfulSubtitleRowTitle(row, language, format)
+        language == null -> aiSubtitleSourceLabel(rawLabel)
+        else -> null
+    }
     val base = language ?: title ?: "Track ${position + 1}"
     val detail = buildList {
         aiKind?.let { add(it.displayName) }
