@@ -36,7 +36,6 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -507,16 +506,26 @@ internal fun TvDialogCyclerRow(
             )
             // One line: a long value (an audio track like "German AAC Stereo
             // (Deutsch)") must not grow the row and push the dialog's other
-            // rows out of D-pad reach.
-            Text(
-                text = "‹  $value  ›",
-                style = MaterialTheme.typography.titleMedium.copy(fontSize = 16.sp),
-                color = if (isFocused) FocusedContent else Color.White.copy(alpha = 0.80f),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                textAlign = TextAlign.End,
+            // rows out of D-pad reach. Only the value truncates; both chevrons
+            // stay visible as the cue that Left/Right cycle it.
+            val valueStyle = MaterialTheme.typography.titleMedium.copy(fontSize = 16.sp)
+            val valueColor = if (isFocused) FocusedContent else Color.White.copy(alpha = 0.80f)
+            Row(
                 modifier = Modifier.weight(1f),
-            )
+                horizontalArrangement = Arrangement.End,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(text = "‹  ", style = valueStyle, color = valueColor, maxLines = 1)
+                Text(
+                    text = value,
+                    style = valueStyle,
+                    color = valueColor,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false),
+                )
+                Text(text = "  ›", style = valueStyle, color = valueColor, maxLines = 1)
+            }
         }
     }
 }
