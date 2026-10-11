@@ -14,6 +14,9 @@ import org.siloserver.silo.network.ApiResult
  */
 data class CatalogCacheWriteLease(val identityGeneration: Long)
 
+/** The durable cache owner, without credentials or a device session. */
+data class CatalogCacheScope(val serverId: String, val profileId: String)
+
 /**
  * Offline read cache for catalog browse (Track B). Backs repository-level
  * cache-with-fallback in [org.siloserver.silo.repository.PersonalDataRepository]
@@ -28,7 +31,7 @@ data class CatalogCacheWriteLease(val identityGeneration: Long)
  */
 interface CatalogCachePort {
     /** Drop localized details, seasons, and episodes for the active profile. */
-    suspend fun invalidateDetailMetadata() {}
+    suspend fun invalidateDetailMetadata(scope: CatalogCacheScope? = null) {}
 
     /** V2 library-section cache entries require the exact initiating authority. */
     suspend fun cacheLibrarySectionsV2(libraryId: Int, sections: List<ResolvedSection>, owner: org.siloserver.silo.network.AuthScopeSnapshot) {}

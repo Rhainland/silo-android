@@ -11,6 +11,7 @@ import org.siloserver.silo.network.SiloJson
 import org.siloserver.silo.network.api.CatalogApi
 import org.siloserver.silo.repository.port.CatalogCachePort
 import org.siloserver.silo.repository.port.CatalogCacheWriteLease
+import org.siloserver.silo.repository.port.CatalogCacheScope
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.MockEngineConfig
@@ -58,7 +59,9 @@ class CatalogRepositoryDetailCacheTest {
                 preset = detail
             }
         }
-        override suspend fun invalidateDetailMetadata() {
+        val invalidatedScopes = mutableListOf<CatalogCacheScope?>()
+        override suspend fun invalidateDetailMetadata(scope: CatalogCacheScope?) {
+            invalidatedScopes += scope
             preset = null
             seasonsPreset = null
             episodesPreset = null
@@ -451,6 +454,23 @@ class CatalogRepositoryDetailCacheTest {
         val repository = CatalogRepository(CatalogApi(client), cache, catalogLanguage = language)
         repository.invalidateLocalizedMetadata()
         assertEquals(null, repository.getCachedItemDetail("c1"))
+    }
+
+    @Test
+    fun languageInvalidationTracksEveryWriterAndOnlyAcknowledgesItsOwnRevision() = runTest {
+        val language = org.siloserver.silo.domain.settings.CatalogLanguageRevision()
+        val a = CatalogCacheScope("server", "a")
+        val b = CatalogCacheScope("server", "b")
+        language.changed(a)
+        language.changed(b)
+        val cache = FakeCache()
+        val client = HttpClient(MockEngine { error("No live request expected") })
+        val repository = CatalogRepository(CatalogApi(client), cache, catalogLanguage = language)
+        repository.invalidateLocalizedMetadata()
+        assertEquals<List<CatalogCacheScope?>>(listOf(a, b), cache.invalidatedScopes)
+        language.changed(a)
+        repository.invalidateLocalizedMetadata()
+        assertEquals<List<CatalogCacheScope?>>(listOf(a, b, a), cache.invalidatedScopes)
     }
 
 }

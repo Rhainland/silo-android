@@ -5,7 +5,9 @@ import kotlinx.coroutines.withContext
 import org.siloserver.silo.model.settings.EffectiveSettingValue
 import org.siloserver.silo.model.settings.SettingKeys
 import org.siloserver.silo.network.ApiResult
+import org.siloserver.silo.network.AuthScopeSnapshot
 import org.siloserver.silo.repository.SettingsRepository
+import org.siloserver.silo.repository.port.CatalogCacheScope
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonPrimitive
@@ -31,6 +33,7 @@ import kotlinx.serialization.json.jsonPrimitive
 class ProfileSettingsController(
     private val repository: SettingsRepository,
     private val catalogLanguage: CatalogLanguageRevision = CatalogLanguageRevision(),
+    private val captureAuthority: (suspend () -> AuthScopeSnapshot?)? = null,
     private val invalidateCatalogMetadata: suspend () -> Unit = {},
 ) {
 
@@ -114,8 +117,8 @@ class ProfileSettingsController(
      * caller should surface: the write landed, and the optimistic value is
      * still the best guess until the next load.
      */
-    private suspend fun reresolve(): Snapshot? =
-        when (val result = repository.getEffectiveValues(PROFILE_KEYS)) {
+    private suspend fun reresolve(authority: AuthScopeSnapshot? = null): Snapshot? =
+        when (val result = repository.getEffectiveValues(PROFILE_KEYS, authority = authority)) {
             is ApiResult.Success -> snapshotOf(result.data)
             is ApiResult.Error, is ApiResult.NetworkError -> null
         }
@@ -133,37 +136,39 @@ class ProfileSettingsController(
 
     /** [language] is a BCP 47 tag, or "" to inherit the library's language. */
     suspend fun setMetadataLanguage(language: String): WriteResult {
-        val result = writeLanguage(SettingKeys.CATALOG_METADATA_LANGUAGE, language)
+        val authority = captureAuthority?.invoke()
+        if (captureAuthority != null && authority?.profileId == null) return WriteResult(false, null)
+        val result = writeLanguage(SettingKeys.CATALOG_METADATA_LANGUAGE, language, authority)
         // The write committed even if the following settings read is canceled.
         if (result is ApiResult.Success) {
-            catalogLanguage.changed()
+            catalogLanguage.changed(authority?.let { CatalogCacheScope(it.serverId, requireNotNull(it.profileId)) })
             // Complete durable invalidation even if the post-write reload is
             // canceled, so a later app launch cannot revive the old language.
             withContext(NonCancellable) {
                 invalidateCatalogMetadata()
             }
         }
-        return resolved(result)
+        return resolved(result, authority)
     }
 
-    private suspend fun resolved(write: ApiResult<Unit>): WriteResult =
+    private suspend fun resolved(write: ApiResult<Unit>, authority: AuthScopeSnapshot? = null): WriteResult =
         if (write is ApiResult.Success) {
-            WriteResult(succeeded = true, snapshot = reresolve())
+            WriteResult(succeeded = true, snapshot = reresolve(authority))
         } else {
             WriteResult(succeeded = false, snapshot = null)
         }
 
-    private suspend fun writeLanguage(key: String, language: String): ApiResult<Unit> {
+    private suspend fun writeLanguage(key: String, language: String, authority: AuthScopeSnapshot? = null): ApiResult<Unit> {
         val tag = language.trim()
         // The store spells "no preference" as the empty string; the contract
         // spells it as no row at all (the server's language_tag validator
         // refuses ""). Clearing rather than writing null keeps the two the
         // same statement and matches how the server mirrors the legacy column.
-        return if (tag.isEmpty()) repository.clearProfileValue(key) else write(key, JsonPrimitive(tag))
+        return if (tag.isEmpty()) repository.clearProfileValue(key, authority) else write(key, JsonPrimitive(tag), authority)
     }
 
-    private suspend fun write(key: String, value: JsonElement): ApiResult<Unit> =
-        when (val result = repository.setProfileValue(key, value)) {
+    private suspend fun write(key: String, value: JsonElement, authority: AuthScopeSnapshot? = null): ApiResult<Unit> =
+        when (val result = repository.setProfileValue(key, value, authority)) {
             is ApiResult.Success -> ApiResult.Success(Unit)
             is ApiResult.Error -> result
             is ApiResult.NetworkError -> result

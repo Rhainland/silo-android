@@ -171,4 +171,34 @@ class RoomCatalogCacheRepositoryTest {
         assertEquals(episodes, repo.getCachedEpisodes("c1", 1))
     }
 
+    @Test
+    fun languagePurgeAfterProfileSwitchDeletesTheWriterAndRetainsTheActiveProfilesMetadata() = runTest {
+        val owner = scope!!
+        val detail = org.siloserver.silo.model.catalog.ItemDetail(contentId = "c1", type = "series", title = "Cached")
+        val seasons = org.siloserver.silo.model.catalog.SeasonsResponse()
+        val episodes = org.siloserver.silo.model.catalog.EpisodesResponse()
+        suspend fun populate() {
+            repo.cacheItemDetail("c1", detail)
+            repo.cacheSeasons("c1", seasons)
+            repo.cacheEpisodes("c1", 1, episodes)
+        }
+        populate()
+        val language = org.siloserver.silo.domain.settings.CatalogLanguageRevision()
+        language.changed(org.siloserver.silo.repository.port.CatalogCacheScope(owner.serverId, owner.profileId!!))
+        scope = owner.copy(profileId = "p2")
+        populate()
+        val client = io.ktor.client.HttpClient(io.ktor.client.engine.mock.MockEngine { error("No live request expected") })
+        val catalog = org.siloserver.silo.repository.CatalogRepository(
+            org.siloserver.silo.network.api.CatalogApi(client), repo, catalogLanguage = language,
+        )
+        catalog.invalidateLocalizedMetadata()
+        assertEquals(detail, repo.getCachedItemDetail("c1"))
+        assertEquals(seasons, repo.getCachedSeasons("c1"))
+        assertEquals(episodes, repo.getCachedEpisodes("c1", 1))
+        scope = owner
+        assertNull(catalog.getCachedItemDetail("c1"))
+        assertNull(catalog.getCachedSeasons("c1"))
+        assertNull(catalog.getCachedEpisodes("c1", 1))
+    }
+
 }

@@ -1,6 +1,7 @@
 package org.siloserver.silo.repository
 
 import org.siloserver.silo.domain.settings.CatalogLanguageRevision
+import org.siloserver.silo.repository.port.CatalogCacheScope
 import org.siloserver.silo.model.catalog.CatalogFiltersResponse
 import org.siloserver.silo.model.catalog.CatalogQueryGroup
 import org.siloserver.silo.model.catalog.CatalogResponse
@@ -436,11 +437,9 @@ class CatalogRepository(
     }
 
     private val localizedCacheMutex = Mutex()
-    // Durable rows predate any language change observed by this process,
-    // including a change that occurs before this singleton is constructed.
-    private var cachedLanguageRevision = 0L
+    private val invalidatedLanguageRevisions = mutableMapOf<CatalogCacheScope?, Long>()
     private val currentLanguageRevision: Long
-        get() = catalogLanguage?.revision?.value ?: 0L
+        get() = catalogLanguage?.changes?.revision ?: 0L
 
     /** Purge durable descriptions before a new language can reuse them. */
     suspend fun invalidateLocalizedMetadata() {
@@ -450,12 +449,16 @@ class CatalogRepository(
     // Called with localizedCacheMutex held, including across Room writes. An
     // old write completes before the purge, or fails its language check after it.
     private suspend fun synchronizeLocalizedCache(): Long {
-        val revision = currentLanguageRevision
-        if (revision != cachedLanguageRevision) {
-            catalogCache.invalidateDetailMetadata()
-            cachedLanguageRevision = revision
+        val changes = catalogLanguage?.changes ?: return 0L
+        // Purge the writer's scope even after a profile/server switch. Track
+        // each owner independently, including changes before lazy construction.
+        for ((scope, revision) in changes.scopes) {
+            if (revision > (invalidatedLanguageRevisions[scope] ?: 0L)) {
+                catalogCache.invalidateDetailMetadata(scope)
+                invalidatedLanguageRevisions[scope] = revision
+            }
         }
-        return revision
+        return changes.revision
     }
 
     private suspend fun <T> readLocalizedCache(read: suspend () -> T?): T? =

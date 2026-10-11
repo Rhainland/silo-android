@@ -67,6 +67,7 @@ val repositoryModule = module {
         CatalogRepository(
             catalogApi = get(),
             catalogLanguage = get(),
+            identityTransitions = get(),
             catalogCache = getOrNull<org.siloserver.silo.repository.port.CatalogCachePort>()
                 ?: org.siloserver.silo.repository.port.NoOpCatalogCachePort,
         )
@@ -135,7 +136,9 @@ val repositoryModule = module {
     single { org.siloserver.silo.domain.settings.CatalogLanguageRevision() }
     single {
         org.siloserver.silo.domain.settings.ProfileSettingsController(
-            get(), get(), invalidateCatalogMetadata = { get<CatalogRepository>().invalidateLocalizedMetadata() },
+            get(), get(),
+            captureAuthority = { get<TokenManager>().snapshotCurrentScope() },
+            invalidateCatalogMetadata = { get<CatalogRepository>().invalidateLocalizedMetadata() },
         )
     }
     single { LibraryPlaybackPrefsRepository(get()) }

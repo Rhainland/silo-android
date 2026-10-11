@@ -8,6 +8,8 @@ import org.siloserver.silo.model.settings.SettingKeys
 import org.siloserver.silo.model.settings.SettingsContractCapabilities
 import org.siloserver.silo.model.settings.StoredSettingValue
 import org.siloserver.silo.network.ApiResult
+import org.siloserver.silo.network.AuthScopeSnapshot
+import org.siloserver.silo.repository.port.CatalogCacheScope
 import org.siloserver.silo.network.api.SettingsApi
 import org.siloserver.silo.repository.SettingsRepository
 import io.ktor.client.HttpClient
@@ -39,9 +41,12 @@ class ProfileSettingsControllerTest {
         },
         val deleteResult: ApiResult<Unit> = ApiResult.Success(Unit),
         val effectiveHook: suspend () -> Unit = {},
+        val deleteHook: suspend () -> Unit = {},
     ) : SettingsApi(org.siloserver.silo.network.apiv2.SettingsV2Api(HttpClient(), org.siloserver.silo.network.TokenManagerImpl(), org.siloserver.silo.network.apiv2.ApiV2Gate.Unrestricted)) {
 
         val calls = mutableListOf<Call>()
+        val writeAuthorities = mutableListOf<AuthScopeSnapshot?>()
+        val readAuthorities = mutableListOf<AuthScopeSnapshot?>()
 
         override suspend fun getContractCapabilities(): ApiResult<SettingsContractCapabilities> = capabilities
 
@@ -51,6 +56,7 @@ class ProfileSettingsControllerTest {
             seriesIds: List<String>,
             authority: org.siloserver.silo.network.AuthScopeSnapshot?,
         ): ApiResult<EffectiveSettingValuesResponse> {
+            readAuthorities += authority
             effectiveHook()
             return effective
         }
@@ -62,6 +68,7 @@ class ProfileSettingsControllerTest {
             profileId: String?,
         authority: org.siloserver.silo.network.AuthScopeSnapshot?,
         ): ApiResult<StoredSettingValue> {
+            writeAuthorities += authority
             calls += Call.Put(key, scope.scope, value)
             return putResult(key)
         }
@@ -72,7 +79,9 @@ class ProfileSettingsControllerTest {
             profileId: String?,
         authority: org.siloserver.silo.network.AuthScopeSnapshot?,
         ): ApiResult<Unit> {
+            writeAuthorities += authority
             calls += Call.Delete(key, scope.scope)
+            deleteHook()
             return deleteResult
         }
     }
@@ -182,6 +191,42 @@ class ProfileSettingsControllerTest {
         release.complete(Unit)
         job.join()
         assertTrue(invalidated)
+    }
+
+    @Test
+    fun `metadata write clear signal and reread retain the initiating owner after a switch`() = runTest {
+        val a = AuthScopeSnapshot("server", "a", "https://example.test", null)
+        val b = a.copy(profileId = "b")
+        for (tag in listOf("de", "")) {
+            var active = a
+            val language = CatalogLanguageRevision()
+            val api = FakeSettingsApi(
+                putResult = {
+                    active = b
+                    ApiResult.Success(StoredSettingValue(key = it, scope = "profile"))
+                },
+                deleteHook = { active = b },
+            )
+            val controller = ProfileSettingsController(
+                SettingsRepository(api), language, captureAuthority = { active },
+            )
+            assertTrue(controller.setMetadataLanguage(tag).succeeded)
+            assertEquals(b, active)
+            assertEquals<List<AuthScopeSnapshot?>>(listOf(a), api.writeAuthorities)
+            assertEquals<List<AuthScopeSnapshot?>>(listOf(a), api.readAuthorities)
+            assertEquals<Map<CatalogCacheScope?, Long>>(mapOf(CatalogCacheScope("server", "a") to 1L), language.changes.scopes)
+        }
+    }
+
+    @Test
+    fun `metadata change without a captured profile sends no request or signal`() = runTest {
+        val api = FakeSettingsApi()
+        val language = CatalogLanguageRevision()
+        val controller = ProfileSettingsController(SettingsRepository(api), language, captureAuthority = { null })
+        assertFalse(controller.setMetadataLanguage("de").succeeded)
+        assertTrue(api.calls.isEmpty())
+        assertTrue(api.readAuthorities.isEmpty())
+        assertEquals(0L, language.revision.value)
     }
 
     @Test
