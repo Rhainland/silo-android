@@ -47,7 +47,7 @@ fun formatSubtitleTrackDisplayLabel(
     val label = subtitleTrackLabelParts(rawLabel, language, codecOrMime, isForced)
     val parts = buildList {
         label.languageName?.let { add(it) }
-        if (label.aiGenerated) add("AI Translation")
+        label.aiKind?.let { add(it.displayName) }
         if (label.forced) add("Forced")
         if (label.sdh) add("SDH")
         label.descriptor?.let { add(it) }
@@ -59,21 +59,50 @@ fun formatSubtitleTrackDisplayLabel(
         ?: "Subtitle ${index + 1}"
 }
 
+/** How the server made an AI subtitle track. */
+enum class AiSubtitleKind(val displayName: String) {
+    TRANSLATION("AI Translation"),
+    TRANSCRIPTION("AI Transcription"),
+}
+
+private val aiTranscribedLabel = Regex("""(?i)\bAI transcribed\b""")
+private val aiToken = Regex("""(?i)\bAI\b""")
+
+/**
+ * The AI kind a server label names: stored AI tracks carry a "(translated)" or
+ * "(transcribed)" provider suffix, and their release names read
+ * "English → German (AI)" or "English (AI transcribed)". Null for any other track.
+ */
+fun aiSubtitleKind(rawLabel: String?): AiSubtitleKind? {
+    val cleanRaw = rawLabel?.trim().takeUnless { it.isNullOrBlank() } ?: return null
+    // The whole label: a bare "(AI transcribed)" also parses as a provider suffix.
+    val providerId = providerIdentifier(cleanRaw)
+    return when {
+        providerId == "transcribed" || aiTranscribedLabel.containsMatchIn(cleanRaw) ->
+            AiSubtitleKind.TRANSCRIPTION
+        providerId == "translated" || aiToken.containsMatchIn(cleanRaw) ->
+            AiSubtitleKind.TRANSLATION
+        else -> null
+    }
+}
+
 /**
  * The facts [formatSubtitleTrackDisplayLabel] joins into one string, kept
  * apart so a picker can lay them out: the language as the row title, Forced
  * and SDH as chips, the format and provider as a detail line. The provider
- * and descriptor are null for an AI translation, which is labelled as one.
+ * and descriptor are null for an AI track, which is labelled by its [aiKind].
  */
 data class SubtitleTrackLabelParts(
     val languageName: String?,
     val forced: Boolean,
     val sdh: Boolean,
-    val aiGenerated: Boolean,
+    val aiKind: AiSubtitleKind?,
     val descriptor: String?,
     val format: String?,
     val provider: String?,
-)
+) {
+    val aiGenerated: Boolean get() = aiKind != null
+}
 
 fun subtitleTrackLabelParts(
     rawLabel: String?,
@@ -82,19 +111,18 @@ fun subtitleTrackLabelParts(
     isForced: Boolean,
 ): SubtitleTrackLabelParts {
     val cleanRaw = rawLabel?.trim().takeUnless { it.isNullOrBlank() }
-    val providerId = providerIdentifier(cleanRaw)
     val labelWithoutProvider = cleanRaw?.replace(providerSuffix, "")?.trim()
     val inferredLanguage = languageCodeFor(language) ?: inferLanguageCode(labelWithoutProvider)
     val languageName = languageDisplayName(inferredLanguage)
     val forced = isForced || labelWithoutProvider?.let { forcedToken.containsMatchIn(it) } == true
     val sdh = labelWithoutProvider?.let { sdhToken.containsMatchIn(it) } == true
-    val aiGenerated = providerId == "translated" ||
-        labelWithoutProvider?.contains(Regex("""(?i)\bAI\b""")) == true
+    val aiKind = aiSubtitleKind(cleanRaw)
+    val aiGenerated = aiKind != null
     return SubtitleTrackLabelParts(
         languageName = languageName,
         forced = forced,
         sdh = sdh,
-        aiGenerated = aiGenerated,
+        aiKind = aiKind,
         descriptor = meaningfulDescriptor(
             rawLabel = labelWithoutProvider,
             languageName = languageName,

@@ -36,4 +36,30 @@ class SubtitleTrackDisplayLabelTest {
 
         assertEquals("Dutch • AI Translation • SRT", label)
     }
+
+    @Test
+    fun sharedFormatterMarksAiTranscriptions() {
+        val label = formatSubtitleTrackDisplayLabel(
+            rawLabel = "English (AI transcribed) (transcribed)",
+            language = "en",
+            codecOrMime = "srt",
+            isForced = false,
+            index = 2,
+        )
+
+        assertEquals("English • AI Transcription • SRT", label)
+    }
+
+    @Test
+    fun trackSheetChipsTellTranslationsFromTranscriptions() {
+        fun chips(label: String, language: String) = subtitleTrackPresentation(
+            PlayerSubtitleInfo(index = 3, language = language, codec = "srt", label = label, forced = null, url = "/s.vtt"),
+            index = 3,
+        ).chips
+
+        assertEquals(listOf("AI Translation"), chips("English → German (AI) (translated)", "de"))
+        assertEquals(listOf("AI Transcription"), chips("English (AI transcribed) (transcribed)", "en"))
+        assertEquals(listOf("AI Transcription"), chips("English (AI transcribed)", "en"))
+        assertEquals(emptyList(), chips("English (opensubtitles)", "en"))
+    }
 }
