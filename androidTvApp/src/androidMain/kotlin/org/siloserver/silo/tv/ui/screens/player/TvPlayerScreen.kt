@@ -365,8 +365,8 @@ fun TvPlayerScreen(
     val hudSubtitleSync by viewModel.hudSubtitleSync.collectAsState()
     val remoteMessage by viewModel.remoteMessage.collectAsState()
     LaunchedEffect(remoteMessage?.id) {
-        if (remoteMessage != null) {
-            kotlinx.coroutines.delay(5_000)
+        remoteMessage?.let { message ->
+            kotlinx.coroutines.delay(message.durationMs)
             viewModel.clearRemoteMessage()
         }
     }

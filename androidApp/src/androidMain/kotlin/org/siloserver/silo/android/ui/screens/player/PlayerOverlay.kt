@@ -53,6 +53,8 @@ import org.siloserver.silo.common.player.video.markerSkipTarget
 import org.siloserver.silo.common.player.video.ManualMarkerKind
 import androidx.compose.ui.res.stringResource
 import org.siloserver.silo.android.R
+import org.siloserver.silo.common.player.NoticeTone
+import org.siloserver.silo.common.player.PlayerNotice
 import org.siloserver.silo.common.player.SessionState
 import org.siloserver.silo.common.player.SleepTimerState
 import org.siloserver.silo.model.playback.PlaybackQualityOption
@@ -63,6 +65,9 @@ import org.siloserver.silo.watchtogether.RoomTransportIntent
 import org.siloserver.silo.watchtogether.roomTransportAuthorized
 import org.siloserver.silo.playback.statusLabelFor
 import org.siloserver.silo.playback.timingActionsFor
+
+/** How long a failed AI subtitle job stays on screen when its sheet was closed. */
+private const val AI_FAILURE_NOTICE_MS = 8_000L
 
 /**
  * Full-screen overlay composable that layers gesture handling, transport controls,
@@ -225,6 +230,23 @@ fun PlayerOverlay(
         }
     }
 
+    // An AI job that fails while its sheet is closed would otherwise go unseen.
+    // It uses the notice surface, which fits the whole reason in landscape.
+    var aiFailureNotice by remember { mutableStateOf<PlayerNotice?>(null) }
+    LaunchedEffect(viewModel) {
+        viewModel.aiJobFailures.collect { message ->
+            if (!aiTranslateVisible) {
+                aiFailureNotice = PlayerNotice("AI subtitles failed. $message", NoticeTone.Warning)
+            }
+        }
+    }
+    LaunchedEffect(aiFailureNotice) {
+        if (aiFailureNotice != null) {
+            kotlinx.coroutines.delay(AI_FAILURE_NOTICE_MS)
+            aiFailureNotice = null
+        }
+    }
+
     // Lazy one-shot AI status probe on first TracksSheet open (web parity).
     LaunchedEffect(tracksSheetVisible) {
         if (tracksSheetVisible) viewModel.onTracksSheetOpened()
@@ -316,7 +338,8 @@ fun PlayerOverlay(
                 .padding(top = 16.dp, start = 16.dp),
             contentAlignment = Alignment.TopStart,
         ) {
-            PlayerNoticeOverlay(notice = notice)
+            // A session notice (reconnecting, suspended) outranks an AI failure.
+            PlayerNoticeOverlay(notice = notice ?: aiFailureNotice)
         }
 
         // Subtitle sync card (top-right, below the top bar's actions): follows

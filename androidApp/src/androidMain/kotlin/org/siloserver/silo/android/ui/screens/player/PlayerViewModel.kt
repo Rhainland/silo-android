@@ -3319,6 +3319,13 @@ class PlayerViewModel(
 
     /** The latest server refusal of the room's file, until the screen takes it to the room. */
     val roomRefusal: StateFlow<RoomRefusal?> = _roomRefusal.asStateFlow()
+    private val _aiJobFailures = MutableSharedFlow<String>(
+        extraBufferCapacity = 1,
+        onBufferOverflow = BufferOverflow.DROP_OLDEST,
+    )
+
+    /** Reasons of AI subtitle jobs that failed, for a notice when the AI sheet is closed. */
+    val aiJobFailures: SharedFlow<String> = _aiJobFailures.asSharedFlow()
     private val _roomQualityChanges = MutableSharedFlow<Unit>(
         extraBufferCapacity = 1,
         onBufferOverflow = BufferOverflow.DROP_OLDEST,
@@ -4569,8 +4576,10 @@ class PlayerViewModel(
                             doRefreshSubtitles(autoSelectSubtitleId = outcome.resultSubtitleId)
                             if (ownsRequest()) _subtitleTools.update { it.copy(activeJob = null, jobJustCompleted = true) }
                         }
-                        is SubtitlesRepository.SubtitleJobOutcome.Failed -> _subtitleTools.update {
-                            it.copy(activeJob = null, translateError = outcome.message ?: "Job failed")
+                        is SubtitlesRepository.SubtitleJobOutcome.Failed -> {
+                            val message = outcome.message ?: "Job failed"
+                            _subtitleTools.update { it.copy(activeJob = null, translateError = message) }
+                            _aiJobFailures.tryEmit(message)
                         }
                         SubtitlesRepository.SubtitleJobOutcome.Cancelled -> _subtitleTools.update {
                             it.copy(activeJob = null)
