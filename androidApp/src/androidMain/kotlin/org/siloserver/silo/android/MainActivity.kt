@@ -552,10 +552,14 @@ class MainActivity : ComponentActivity() {
         // in this process follows the return rule the away tracker evaluated
         // in onStart. Applied below, after the offline check.
         val launchPreferences = get<ProfileLaunchPreferences>(ProfileLaunchPreferences::class.java)
+        val profileAwayTracker = get<ProfileAwayTracker>(ProfileAwayTracker::class.java)
         val requiresSelection = if (processStart) {
-            launchPreferences.requiresSelectionAtLaunch()
+            // A process the playback service started (Android's media
+            // resumption) can already be playing this profile's audiobook;
+            // that is use of the profile, as on a return.
+            launchPreferences.requiresSelectionAtLaunch() && !profileAwayTracker.keepsProfileActive()
         } else {
-            get<ProfileAwayTracker>(ProfileAwayTracker::class.java).selectionRequired.value
+            profileAwayTracker.selectionRequired.value
         }
 
         // Offline-with-downloads fast path: if local media exists and either
@@ -591,8 +595,10 @@ class MainActivity : ComponentActivity() {
                 return Route.ProfileSelection.route
             }
             // The away interval stays recorded, so Silo asks once the server
-            // can be reached again.
-            ProfileLaunchAction.KeepProfileOffline -> Unit
+            // can be reached again (AppNavigation watches for it). Every Time
+            // can ask with none recorded, so start one.
+            ProfileLaunchAction.KeepProfileOffline ->
+                if (launchPreferences.state.value.backgroundedAtMs == null) launchPreferences.markBackgrounded()
             ProfileLaunchAction.KeepProfile -> if (processStart) launchPreferences.clearBackgroundedAt()
         }
         if (startsOnDownloads) return Route.Downloads.route

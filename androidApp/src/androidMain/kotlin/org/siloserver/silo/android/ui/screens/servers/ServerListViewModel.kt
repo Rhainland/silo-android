@@ -13,7 +13,6 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import org.siloserver.silo.android.auth.ActiveProfileReset
-import org.siloserver.silo.common.profiles.ProfileLaunchPreferences
 
 /**
  * Where to land after a successful server switch. The list view emits this
@@ -41,8 +40,7 @@ class ServerListViewModel(
     private val serverRegistry: ServerRegistry,
     private val tokenManager: TokenManager,
     private val authRepository: AuthRepository,
-    private val profileLaunchPreferences: ProfileLaunchPreferences? = null,
-    private val activeProfileReset: ActiveProfileReset? = null,
+    private val activeProfileReset: ActiveProfileReset,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(ServerListUiState())
@@ -89,10 +87,7 @@ class ServerListViewModel(
                 // Profile Selection asks on a server switch as it does at
                 // launch, so a protected profile there needs its PIN. Cleared
                 // before navigating, so the picker loads under the new server.
-                profileLaunchPreferences?.requiresSelectionAtLaunch() == true -> {
-                    activeProfileReset?.clearActiveProfile()
-                    ServerSwitchDestination.ProfileSelection
-                }
+                activeProfileReset.clearIfSelectionRequired() -> ServerSwitchDestination.ProfileSelection
                 else -> ServerSwitchDestination.Home
             }
 
@@ -129,6 +124,16 @@ class ServerListViewModel(
             val promotedId = serverRegistry.activeServerId.value
             if (wasActive && promotedId != null) {
                 authRepository.switchToServer(promotedId)
+                // A promotion is a server switch too: when Profile Selection
+                // asks, the promoted server's saved profile needs choosing
+                // (and its PIN) again, so leave for Who's Watching rather
+                // than back to a shell that would reopen it. Without a
+                // saved profile there is nothing to protect.
+                val hasProfile = !tokenManager.getAccessToken().isNullOrBlank() &&
+                    !(serverRegistry.activeEntry.value?.profileId ?: tokenManager.getProfileId()).isNullOrBlank()
+                if (hasProfile && activeProfileReset.clearIfSelectionRequired()) {
+                    _uiState.update { it.copy(switchedTo = ServerSwitchDestination.ProfileSelection) }
+                }
             }
         }
     }

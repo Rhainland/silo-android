@@ -2,6 +2,11 @@
 
 package org.siloserver.silo.android.di
 
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.launchIn
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.onEach
 import org.siloserver.silo.common.downloads.DownloadEnqueuer
 import org.siloserver.silo.common.downloads.DownloadSubscriptionEvaluatorFactory
 import org.siloserver.silo.common.downloads.DownloadSubscriptionWorker
@@ -89,6 +94,7 @@ import org.siloserver.silo.android.cast.SharedPrefsSiloCastLastTargetStore
 import org.siloserver.silo.android.cast.SiloCastController
 import org.siloserver.silo.android.cast.SiloCastLastTargetStore
 import org.siloserver.silo.android.cast.SiloCastSessionManager
+import org.siloserver.silo.android.cast.SiloCastState
 import org.koin.android.ext.koin.androidContext
 import org.koin.androidx.workmanager.dsl.worker
 import org.koin.core.module.dsl.viewModel
@@ -545,9 +551,26 @@ val androidModule = module {
     }
     single {
         val cast = get<SiloCastSessionManager>()
-        org.siloserver.silo.common.profiles.ProfileAwayTracker(get(), get(), isCasting = { cast.castState.value.isConnected })
+        // Casting counts as use only while the receiver plays: a session left
+        // connected after a pause or the end of a title does not hold the profile.
+        fun SiloCastState.castPlaying() = isConnected && isPlaying
+        org.siloserver.silo.common.profiles.ProfileAwayTracker(
+            get(),
+            get(),
+            isCasting = { cast.castState.value.castPlaying() },
+        ).also { tracker ->
+            // Cast playback that stops or disconnects while Silo is hidden
+            // starts the away clock then, as a local player's stop does.
+            cast.castState.map { it.castPlaying() }.distinctUntilChanged().drop(1)
+                .onEach { tracker.onRemotePlaybackChanged() }
+                .launchIn(
+                    kotlinx.coroutines.CoroutineScope(
+                        kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.Main.immediate,
+                    ),
+                )
+        }
     }
-    single { org.siloserver.silo.android.auth.ActiveProfileReset(get(), get(), get(), get(), get(), get(), get()) }
+    single { org.siloserver.silo.android.auth.ActiveProfileReset(get(), get(), get(), get(), get(), get(), get(), get(), get()) }
     viewModel { SettingsViewModel(get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get()) }
     viewModel { DiagnosticsViewModel(get()) }
     viewModel { DownloadsViewModel(get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get()) }
@@ -567,7 +590,7 @@ val androidModule = module {
     viewModel { ProfileSelectionViewModel(get(), get(), profileVerificationRecovery = getOrNull()) }
     viewModel { CreateProfileViewModel(get()) }
     viewModel { EditProfileViewModel(get()) }
-    viewModel { ServerListViewModel(get(), get(), get(), get(), get()) }
+    viewModel { ServerListViewModel(get(), get(), get(), get()) }
     viewModel { params ->
         val args = params.get<Pair<String?, String?>>()
         val authRepository = get<org.siloserver.silo.repository.AuthRepository>()

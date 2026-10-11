@@ -1,6 +1,7 @@
 package org.siloserver.silo.common.profiles
 
 import android.content.SharedPreferences
+import org.siloserver.silo.common.player.ActivePlayerHolder
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -166,6 +167,34 @@ class ProfileLaunchPreferencesTest {
         store.settleFirstLaunch(hasRememberedProfile = false)
         store.setBehavior(ProfileLaunchBehavior.AfterOneHour)
         assertFalse(ProfileLaunchPreferences(prefs) { start }.isRememberOfferPending)
+    }
+
+    @Test
+    fun `Cast that stops while Silo is hidden starts the away clock, so Every Time asks`() {
+        val store = ProfileLaunchPreferences(InMemoryPrefs()) { start }
+        store.setBehavior(ProfileLaunchBehavior.EveryTime)
+        var casting = true
+        val tracker = ProfileAwayTracker(store, ActivePlayerHolder(), isCasting = { casting })
+
+        tracker.onBackground()
+        assertNull(store.state.value.backgroundedAtMs)
+
+        casting = false
+        tracker.onRemotePlaybackChanged()
+        assertEquals(start, store.state.value.backgroundedAtMs)
+
+        tracker.onForeground()
+        assertTrue(tracker.selectionRequired.value)
+    }
+
+    @Test
+    fun `a Cast change while Silo is in use starts no away clock`() {
+        val store = ProfileLaunchPreferences(InMemoryPrefs()) { start }
+        store.setBehavior(ProfileLaunchBehavior.EveryTime)
+        val tracker = ProfileAwayTracker(store, ActivePlayerHolder(), isCasting = { false })
+
+        tracker.onRemotePlaybackChanged()
+        assertNull(store.state.value.backgroundedAtMs)
     }
 }
 

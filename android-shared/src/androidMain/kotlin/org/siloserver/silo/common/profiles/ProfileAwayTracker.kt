@@ -78,13 +78,31 @@ class ProfileAwayTracker(
     }
 
     /**
+     * Ask now, while Silo is in the foreground: the phone uses it once the
+     * server is reachable again after it kept a profile offline for its
+     * downloads. The navigation graph handles it as it does a return.
+     */
+    fun requestSelection() {
+        _selectionRequired.value = true
+    }
+
+    /**
+     * Playback on another screen (the phone's Cast session) started or
+     * stopped. While Silo is hidden this moves the away clock, as a local
+     * player's events do; no local player hears about it.
+     */
+    fun onRemotePlaybackChanged() {
+        if (returningFromBackground) markAwayStart()
+    }
+
+    /**
      * Playback that keeps going while Silo is hidden (an audiobook, or video
      * in background play or picture-in-picture) is still use of the profile,
      * as on Apple. The TV player stops video when Silo is hidden, so there
      * only audio qualifies. Uses play intent rather than `isPlaying` so a
      * rebuffer does not count as leaving.
      */
-    private fun keepsProfileActive(): Boolean {
+    fun keepsProfileActive(): Boolean {
         if (isCasting()) return true
         val player = activePlayerHolder.player.value ?: return false
         return player.playWhenReady &&

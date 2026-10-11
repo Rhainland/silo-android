@@ -16,6 +16,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.rememberCoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -25,6 +27,7 @@ import org.siloserver.silo.android.profiles.ProfileLaunchAction
 import org.siloserver.silo.android.profiles.profileLaunchAction
 import org.siloserver.silo.common.downloads.DownloadStorage
 import org.siloserver.silo.common.network.ServerReachabilityMonitor
+import org.siloserver.silo.common.network.ServerReachabilityStatus
 import org.siloserver.silo.common.profiles.ProfileAwayTracker
 import org.siloserver.silo.common.profiles.ProfileLaunchPreferences
 import org.siloserver.silo.model.profile.ActiveProfileStore
@@ -369,12 +372,15 @@ fun AppNavigation(
     // MainActivity chose: after its process was killed in the background.
     // When Profile Selection has already cleared the profile at launch, that
     // brings back the previous profile's screens with no profile behind them,
-    // so go to Who's Watching instead.
+    // so go to Who's Watching instead. Look beneath the top too: Manage
+    // Servers over Home would otherwise let Back reach Home with no profile
+    // chosen, and every stack of profile screens has a tab at its root.
     LaunchedEffect(navController) {
         val restoredRoute = navController.currentBackStackEntryFlow.first().destination.route
+        val restoresProfileScreens = (restoredRoute != null && restoredRoute !in ProfileFreeRoutes) ||
+            Tab.entries.any { tab -> runCatching { navController.getBackStackEntry(tab.route) }.isSuccess }
         if (startDestination == Route.ProfileSelection.route &&
-            restoredRoute != null &&
-            restoredRoute !in ProfileFreeRoutes &&
+            restoresProfileScreens &&
             !tokenManager.getAccessToken().isNullOrBlank() &&
             tokenManager.getProfileId().isNullOrBlank()
         ) {
@@ -426,8 +432,8 @@ fun AppNavigation(
                 return@collect
             }
             // Leave the profile's screens before clearing its state, as
-            // Switch Profile does. MainActivity.onStop already flushed
-            // pending device-setting writes under this profile.
+            // Switch Profile does. The reset pushes pending device-setting
+            // writes under this profile before it drops it.
             navController.navigate(Route.ProfileSelection.route) {
                 popUpTo(0) { inclusive = true }
                 launchSingleTop = true
@@ -441,6 +447,32 @@ fun AppNavigation(
                 }
             }
             profileAwayTracker.onSelectionHandled()
+        }
+    }
+
+    // The offline exception above keeps a profile for its downloads while the
+    // server cannot be reached, with the away interval still recorded. Ask
+    // once the server answers again, without waiting for the next return.
+    // Playback and reading keep going until the user leaves them, as the
+    // profile-verification prompt waits.
+    LaunchedEffect(reachabilityMonitor) {
+        kotlinx.coroutines.flow.combine(
+            reachabilityMonitor.state.map { it.status == ServerReachabilityStatus.Reachable }.distinctUntilChanged(),
+            navController.currentBackStackEntryFlow,
+        ) { reachable, entry -> reachable to entry.destination.route }.collect { (reachable, route) ->
+            if (!reachable || route == null || route in ProfilePromptDeferredRoutes || route in ProfileFreeRoutes) {
+                return@collect
+            }
+            // In use with a profile, a recorded interval that requires
+            // selection is only left behind by that exception: every other
+            // path ends the interval or asks.
+            if (profileAwayTracker.selectionRequired.value ||
+                !profileLaunchPreferences.requiresSelectionAfterBackground() ||
+                tokenManager.getProfileId().isNullOrBlank()
+            ) {
+                return@collect
+            }
+            profileAwayTracker.requestSelection()
         }
     }
 
@@ -519,8 +551,17 @@ fun AppNavigation(
     LaunchedEffect(pendingExternalRoute?.generation) {
         consumeExternalRouteOnce(
             pendingExternalRoute = pendingExternalRoute,
-            currentDestinationRoutes = navController.currentBackStackEntryFlow
-                .map { entry -> entry.destination.route },
+            // While Profile Selection is replacing the previous profile's
+            // screens, those screens are not a place to deliver a link: it
+            // would open (or start playing) under the profile being cleared,
+            // then be wiped. Wait until the request is handled; Who's
+            // Watching then holds the link as it does at launch.
+            currentDestinationRoutes = kotlinx.coroutines.flow.combine(
+                navController.currentBackStackEntryFlow,
+                profileAwayTracker.selectionRequired,
+            ) { entry, selectionRequired -> entry.destination.route to selectionRequired }
+                .filter { (_, selectionRequired) -> !selectionRequired }
+                .map { (route, _) -> route },
             isAlreadyAtRoute = { route ->
                 navController.isDisplayingExactPlayerRoute(
                     route = route,
@@ -885,6 +926,12 @@ fun AppNavigation(
                             onSwitch = {
                                 pairingScope.launch {
                                     authRepository.switchToServer(resolved.entry.id)
+                                    // Profile Selection covers this switch as
+                                    // it does the server list's: a saved
+                                    // profile there needs choosing (and its
+                                    // PIN) again, which routes through the
+                                    // picker below.
+                                    activeProfileReset.clearIfSelectionRequired()
                                     // Re-queue ONLY if the target server will send
                                     // the user through auth: that flow ends at
                                     // profile selection, whose popUpTo(0) wipes this
