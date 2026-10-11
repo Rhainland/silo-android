@@ -93,7 +93,11 @@ class TvProfileSelectionViewModel(
     private fun reloadWhenStaleProfileCleared() {
         val recovery = profileVerificationRecovery ?: return
         viewModelScope.launch {
-            recovery.profileCleared.collect { loadProfiles() }
+            recovery.profileCleared.collect {
+                // An open remember offer was for the profile just cleared.
+                _uiState.update { it.copy(rememberOffer = null) }
+                loadProfiles()
+            }
         }
     }
 
@@ -164,6 +168,7 @@ class TvProfileSelectionViewModel(
                         canManageProfiles = false,
                         isManageMode = false,
                         deleteCandidate = null,
+                        rememberOffer = null,
                     )
                 }
                 return@launch
@@ -416,11 +421,20 @@ class TvProfileSelectionViewModel(
         }
     }
 
-    /** Answers the new TV's offer and continues into the picked profile. */
+    /**
+     * Answers the new TV's offer and continues into the picked profile. The
+     * dialog can stay up indefinitely, so an answer for a profile that is no
+     * longer the active one (cleared by recovery meanwhile) neither saves nor
+     * navigates; the offer stays pending for the next pick.
+     */
     fun answerRememberOffer(remember: Boolean) {
         val profile = _uiState.value.rememberOffer ?: return
-        launchPreferences?.answerRememberOffer(remember)
-        _uiState.update { it.copy(rememberOffer = null, selectedProfileId = profile.id) }
+        _uiState.update { it.copy(rememberOffer = null) }
+        viewModelScope.launch {
+            if (profileRepository.getActiveProfileId() != profile.id) return@launch
+            launchPreferences?.answerRememberOffer(remember)
+            _uiState.update { it.copy(selectedProfileId = profile.id) }
+        }
     }
 
     fun onSelectionConsumed() {

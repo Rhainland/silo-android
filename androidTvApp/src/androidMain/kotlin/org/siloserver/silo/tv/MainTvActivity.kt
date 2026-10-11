@@ -361,8 +361,12 @@ class MainTvActivity : ComponentActivity() {
         val processStart = !hasResolvedLaunchProfile
         hasResolvedLaunchProfile = true
         if (processStart) {
+            // The setting is device-wide, so a profile saved for any server
+            // makes this an existing TV, not just one on the active server.
+            val hasRememberedProfile = registry.entries.value.any { !it.profileId.isNullOrBlank() } ||
+                !tokenManager.getProfileId().isNullOrBlank()
             get<TvProfileLaunchPreferences>(TvProfileLaunchPreferences::class.java)
-                .settleFirstLaunch(hasRememberedProfile = !tokenManager.getProfileId().isNullOrBlank())
+                .settleFirstLaunch(hasRememberedProfile = hasRememberedProfile)
         }
 
         val activeEntry = registry.activeEntry.value

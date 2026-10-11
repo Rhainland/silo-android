@@ -170,7 +170,7 @@ class TvProfileLaunchPreferencesTest {
 }
 
 /** Just enough SharedPreferences for the store: strings, longs and booleans. */
-private class InMemoryPrefs : SharedPreferences {
+internal class InMemoryPrefs : SharedPreferences {
     private val values = mutableMapOf<String, Any?>()
 
     override fun getAll(): MutableMap<String, *> = values.toMutableMap()
