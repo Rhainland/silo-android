@@ -20,6 +20,7 @@ import org.siloserver.silo.common.player.FinalPlaybackPosition
 import org.siloserver.silo.common.player.FinalPlaybackPositionWriter
 import org.siloserver.silo.common.player.Playability
 import org.siloserver.silo.common.player.PlaybackSessionLifecycle
+import org.siloserver.silo.common.player.isPlaybackSessionEnded
 import org.siloserver.silo.common.player.PlaybackSessionManager
 import org.siloserver.silo.common.player.PlaybackTeardownGate
 import org.siloserver.silo.common.player.VideoSessionStartV3
@@ -1040,6 +1041,11 @@ class PlayerViewModel(
                         }
                     }
                 }
+            }
+        }
+        viewModelScope.launch {
+            sessionLifecycle.sessionEndedEvents.collect { endedSessionId ->
+                if (_uiState.value.sessionId == endedSessionId) leaveServerEndedSession()
             }
         }
         viewModelScope.launch {
@@ -2317,7 +2323,11 @@ class PlayerViewModel(
                         }
                     }
                 }
-                is ApiResult.Error -> onReplanRequestFailed(classification, notice, result.message)
+                is ApiResult.Error -> if (result.isPlaybackSessionEnded()) {
+                    leaveServerEndedSession()
+                } else {
+                    onReplanRequestFailed(classification, notice, result.message)
+                }
                 is ApiResult.NetworkError ->
                     onReplanRequestFailed(classification, notice, result.exception.message)
             }
@@ -3599,6 +3609,16 @@ class PlayerViewModel(
     fun remoteTogglePlayPause() { onPlayPause() }
     fun remoteSeek(positionSeconds: Double) { seekImmediate(positionSeconds) }
     fun remoteStop() { _remoteStopRequests.tryEmit(Unit) }
+
+    /**
+     * The server ended this session for good: an administrator stopped it
+     * while the control socket could not reach this player. Leave the way a
+     * remote stop does rather than renewing into a fresh session.
+     */
+    private fun leaveServerEndedSession() {
+        Log.i(TAG, "The server ended this playback session; leaving playback")
+        remoteStop()
+    }
     // Carry a monotonic id so an identical message repeated within the toast
     // window still re-triggers (StateFlow would dedup equal values otherwise).
     fun remoteDisplayMessage(message: String) {

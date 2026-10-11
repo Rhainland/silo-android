@@ -19,6 +19,7 @@ import org.siloserver.silo.tv.data.preferences.PlaybackQuality
 import org.siloserver.silo.common.player.PlaybackAnalyticsListener
 import org.siloserver.silo.common.player.PlaybackCapabilityDetector
 import org.siloserver.silo.common.player.PlaybackSessionLifecycle
+import org.siloserver.silo.common.player.isPlaybackSessionEnded
 import org.siloserver.silo.common.player.PlaybackSessionManager
 import org.siloserver.silo.common.player.PlaybackTeardownGate
 import org.siloserver.silo.common.player.video.MountedAudioTrack
@@ -1644,6 +1645,11 @@ class TvPlayerViewModel(
             }
         }
         viewModelScope.launch {
+            sessionLifecycle.sessionEndedEvents.collect { endedSessionId ->
+                if (_uiState.value.sessionId == endedSessionId) leaveServerEndedSession()
+            }
+        }
+        viewModelScope.launch {
             sessionLifecycle.missingSessionEvents.collect { renewal ->
                 val state = _uiState.value
                 if (
@@ -2951,7 +2957,11 @@ class TvPlayerViewModel(
                 }
                 is ApiResult.Error -> {
                     cancelPendingCatalogSubtitle()
-                    onReplanRequestFailed(classification, notice, result.message)
+                    if (result.isPlaybackSessionEnded()) {
+                        leaveServerEndedSession()
+                    } else {
+                        onReplanRequestFailed(classification, notice, result.message)
+                    }
                 }
                 is ApiResult.NetworkError -> {
                     cancelPendingCatalogSubtitle()
@@ -4302,6 +4312,16 @@ class TvPlayerViewModel(
     fun remoteTogglePlayPause() = onPlayPause()
     fun remoteSeek(positionSeconds: Double) = seekImmediate(positionSeconds)
     fun remoteStop() { _remoteStopRequests.tryEmit(Unit) }
+
+    /**
+     * The server ended this session for good: an administrator stopped it
+     * while the control socket could not reach this player. Leave the way a
+     * remote stop does rather than renewing into a fresh session.
+     */
+    private fun leaveServerEndedSession() {
+        Log.i(TAG, "The server ended this playback session; leaving playback")
+        remoteStop()
+    }
     fun remoteDisplayMessage(message: String) {
         _remoteMessage.value = RemoteMessage(++remoteMessageCounter, message)
     }
