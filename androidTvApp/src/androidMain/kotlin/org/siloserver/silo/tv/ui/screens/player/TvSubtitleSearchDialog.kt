@@ -36,6 +36,7 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -501,13 +502,20 @@ internal fun TvDialogCyclerRow(
                     fontSize = 17.sp,
                     fontWeight = FontWeight.SemiBold,
                 ),
-                modifier = Modifier.weight(1f),
+                maxLines = 1,
                 color = if (isFocused) FocusedContent else Color.White,
             )
+            // One line: a long value (an audio track like "German AAC Stereo
+            // (Deutsch)") must not grow the row and push the dialog's other
+            // rows out of D-pad reach.
             Text(
                 text = "‹  $value  ›",
                 style = MaterialTheme.typography.titleMedium.copy(fontSize = 16.sp),
                 color = if (isFocused) FocusedContent else Color.White.copy(alpha = 0.80f),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                textAlign = TextAlign.End,
+                modifier = Modifier.weight(1f),
             )
         }
     }
