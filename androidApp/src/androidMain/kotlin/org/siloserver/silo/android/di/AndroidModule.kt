@@ -551,9 +551,10 @@ val androidModule = module {
     }
     single {
         val cast = get<SiloCastSessionManager>()
-        // Casting counts as use only while the receiver plays: a session left
-        // connected after a pause or the end of a title does not hold the profile.
-        fun SiloCastState.castPlaying() = isConnected && isPlaying
+        // Casting counts as use only while the receiver plays (a rebuffer
+        // included): a session left connected after a pause or the end of a
+        // title does not hold the profile.
+        fun SiloCastState.castPlaying() = isConnected && isPlaybackActive
         org.siloserver.silo.common.profiles.ProfileAwayTracker(
             get(),
             get(),

@@ -501,7 +501,6 @@ class MainActivity : ComponentActivity() {
         val registry = get<ServerRegistry>(ServerRegistry::class.java)
         val tokenManager = get<TokenManager>(TokenManager::class.java)
         val processStart = !hasResolvedLaunchProfile
-        hasResolvedLaunchProfile = true
 
         // NOTE: a device link is deliberately NOT returned as the start
         // destination. It used to be, which put Pair Device at the root of a
@@ -592,6 +591,7 @@ class MainActivity : ComponentActivity() {
                 // Cleared before the picker loads; losing its PIN proof makes
                 // a protected profile ask for its PIN again.
                 get<ActiveProfileReset>(ActiveProfileReset::class.java).clearActiveProfile()
+                hasResolvedLaunchProfile = true
                 return Route.ProfileSelection.route
             }
             // The away interval stays recorded, so Silo asks once the server
@@ -601,6 +601,9 @@ class MainActivity : ComponentActivity() {
                 if (launchPreferences.state.value.backgroundedAtMs == null) launchPreferences.markBackgrounded()
             ProfileLaunchAction.KeepProfile -> if (processStart) launchPreferences.clearBackgroundedAt()
         }
+        // Only once applied, as on the TV: an Activity recreated while this
+        // was suspended must still apply the launch rule.
+        hasResolvedLaunchProfile = true
         if (startsOnDownloads) return Route.Downloads.route
 
         // A warm start would otherwise bypass the tour gate entirely (e.g.
