@@ -22,6 +22,16 @@ class NoNativeRequestModerationSourceTest {
         """/admin/requests|\bAdminRequest(Action|Capabilities|ActionBody)\b|\bcanModerate\b|\bRequestApprovals\w*|requests/approvals|\bmoderat(e|ion)\w*\(""",
     )
 
+    // The phone app keeps a redirect-only alias for the removed Approvals route
+    // so a back stack saved by an older build restores onto Requests instead of
+    // crashing. Only these exact lines in AppNavigation.kt may name the route.
+    private val legacyRouteAliasFile =
+        "androidApp/src/androidMain/kotlin/org/siloserver/silo/android/ui/navigation/AppNavigation.kt"
+    private val legacyRouteAliasLines = setOf(
+        """composable("requests/approvals") {""",
+        """popUpTo("requests/approvals") { inclusive = true }""",
+    )
+
     @Test
     fun noAndroidSourceExposesRequestModeration() {
         val repoRoot = generateSequence(File("").absoluteFile) { it.parentFile }
@@ -34,9 +44,11 @@ class NoNativeRequestModerationSourceTest {
             root.walkTopDown()
                 .filter { it.isFile && it.extension == "kt" }
                 .flatMap { file ->
+                    val path = file.relativeTo(repoRoot).invariantSeparatorsPath
                     file.readLines().mapIndexedNotNull { index, line ->
-                        if (forbidden.containsMatchIn(line)) {
-                            "${file.relativeTo(repoRoot).invariantSeparatorsPath}:${index + 1}: ${line.trim()}"
+                        val allowedAlias = path == legacyRouteAliasFile && line.trim() in legacyRouteAliasLines
+                        if (forbidden.containsMatchIn(line) && !allowedAlias) {
+                            "$path:${index + 1}: ${line.trim()}"
                         } else {
                             null
                         }

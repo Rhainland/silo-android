@@ -1207,6 +1207,18 @@ fun AppNavigation(
                 }
             }
         }
+        // The request Approvals screen was removed (request administration is
+        // web admin only); a saved back stack from an older build can still
+        // hold its route, so keep a hidden redirect to Requests rather than
+        // crash on restore. Registered, never rendered.
+        composable("requests/approvals") {
+            LaunchedEffect(Unit) {
+                navController.navigate(Route.Requests.route) {
+                    popUpTo("requests/approvals") { inclusive = true }
+                    launchSingleTop = true
+                }
+            }
+        }
         composable(Route.Settings.route) {
             SettingsScreen(
                 onOpenInterface = { navController.navigate(Route.SettingsInterface.route) },
