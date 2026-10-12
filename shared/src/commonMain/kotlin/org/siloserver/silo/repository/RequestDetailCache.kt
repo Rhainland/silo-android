@@ -69,6 +69,12 @@ class RequestDetailCache(
         ownRecords = if (record.outcome == RequestOutcome.Cancelled) ownRecords - key else ownRecords + (key to record)
     }
 
+    /** Patches the title's request state wherever the cache holds it, so the next first frame agrees. */
+    fun patchRequestState(key: Key, transform: (RequestState) -> RequestState) {
+        details[key]?.let { details[key] = it.copy(request = transform(it.request)) }
+        seeds[key]?.let { seeds[key] = it.copy(request = transform(it.request)) }
+    }
+
     fun seed(result: RequestMediaResult) {
         seeds[Key(result.mediaType, result.tmdbId)] = result
     }

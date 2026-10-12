@@ -13,18 +13,24 @@ import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import org.siloserver.silo.model.feature.RequestsFeatureStore
 import org.siloserver.silo.model.request.CreateMediaRequest
 import org.siloserver.silo.model.request.MediaRequest
 import org.siloserver.silo.model.request.RequestActionHold
 import org.siloserver.silo.model.request.RequestActionCopy
 import org.siloserver.silo.model.request.RequestDisplayState
+import org.siloserver.silo.model.request.RequestFollowEvent
 import org.siloserver.silo.model.request.RequestMediaDetail
 import org.siloserver.silo.model.request.RequestMediaResult
 import org.siloserver.silo.model.request.RequestMediaType
 import org.siloserver.silo.model.request.RequestMutationFailure
 import org.siloserver.silo.model.request.RequestOutcome
 import org.siloserver.silo.model.request.RequestProgress
+import org.siloserver.silo.model.request.RequestReason
+import org.siloserver.silo.model.request.RequestState
 import org.siloserver.silo.model.request.RequestUnconfirmedToken
+import org.siloserver.silo.model.request.applyingFollow
+import org.siloserver.silo.model.request.applyingFollowUpdate
 import org.siloserver.silo.model.request.toRequestState
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.errorMessage
@@ -67,6 +73,12 @@ data class RequestDetailUiState(
     val isCancelUnconfirmed: Boolean = false,
     /** Inline message near the action for a failed create or cancel. */
     val actionErrorMessage: String? = null,
+    /** The server takes follows (`follow_supported`). */
+    val followSupported: Boolean = false,
+    /** A follow or unfollow is in flight; the action keeps its place and label. */
+    val isFollowPending: Boolean = false,
+    /** Confirms the last follow or unfollow, in the slot the action error uses. */
+    val followNotice: String? = null,
     /** Bumped when the server accepts a new request, for the success haptic. */
     val submittedCount: Int = 0,
 ) {
@@ -123,6 +135,34 @@ data class RequestDetailUiState(
             if (isCancelling || isCancelUnconfirmed) return false
             return RequestDisplayState.of(record).isCancelable
         }
+
+    /**
+     * Someone else's open request: the viewer can ask to hear when the title
+     * lands instead of requesting it again (the web's "Notify me when
+     * available"). Not for the requester, or a title in the library or one
+     * that can be requested.
+     */
+    val canFollow: Boolean
+        get() {
+            val detail = detail ?: return false
+            if (!followSupported) return false
+            val request = detail.request
+            if (request.requestable || request.requestedByViewer || request.reason != RequestReason.AlreadyRequested) return false
+            val state = RequestDisplayState.of(detail.availability, request)
+            return state != null && state != RequestDisplayState.InLibrary && state !is RequestDisplayState.Unavailable
+        }
+
+    /** The viewer will hear when the title becomes available. */
+    val isFollowing: Boolean
+        get() = detail?.request?.following == true
+
+    /** The follow action's label (the web's wording). */
+    val followActionTitle: String
+        get() = if (isFollowing) "Stop notifying me" else "Notify me when available"
+
+    /** The follow confirmation, while the follow action is on the page and no error replaces it. */
+    val shownFollowNotice: String?
+        get() = followNotice?.takeIf { canFollow && actionErrorMessage == null }
 
     /** Recommendations this client can route (movies and series). */
     val recommendations: List<RequestMediaResult>
@@ -187,6 +227,7 @@ class RequestDetailViewModel(
     private val repository: RequestsRepository,
     private val mediaType: String,
     private val tmdbId: Int,
+    private val featureStore: RequestsFeatureStore? = null,
     private val holdLifetime: Duration = RequestActionHold.Lifetime,
     private val timeSource: TimeSource = TimeSource.Monotonic,
 ) : ViewModel() {
@@ -214,10 +255,31 @@ class RequestDetailViewModel(
                 detail = detail,
                 record = cache.ownRecord(key),
                 isLoading = detail == null,
+                followSupported = featureStore?.followSupported?.value == true,
             ),
         )
         uiState = _uiState.asStateFlow()
         load()
+        featureStore?.let { store ->
+            viewModelScope.launch {
+                store.followSupported.collect { supported -> _uiState.update { it.copy(followSupported = supported) } }
+            }
+        }
+        viewModelScope.launch {
+            // A follow from another page for this title or one of its recommendations.
+            repository.lastFollow.drop(1).filterNotNull().collect { event ->
+                _uiState.update { state ->
+                    val detail = state.detail ?: return@update state
+                    val own = event.mediaType == mediaType && event.tmdbId == tmdbId
+                    state.copy(
+                        detail = detail.copy(
+                            request = if (own) detail.request.applyingFollow(event) else detail.request,
+                            recommendations = detail.recommendations.applyingFollowUpdate(event),
+                        ),
+                    )
+                }
+            }
+        }
         viewModelScope.launch {
             // Another surface mutated this title (a cancel from My Requests while
             // this page sits in the back stack).
@@ -357,6 +419,42 @@ class RequestDetailViewModel(
                 else -> _uiState.update {
                     it.copy(isCancelling = false, actionErrorMessage = RequestActionCopy.failure(result, "Couldn't cancel the request"))
                 }
+            }
+        }
+    }
+
+    /**
+     * Follows or unfollows the title. Both calls are idempotent, so a failure
+     * just says so and leaves the action where it was; the user can press again.
+     */
+    fun toggleFollow() {
+        val state = _uiState.value
+        if (!state.canFollow || state.isFollowPending) return
+        val follow = !state.isFollowing
+        _uiState.update { it.copy(isFollowPending = true, actionErrorMessage = null, followNotice = null) }
+        viewModelScope.launch {
+            val result: ApiResult<*> = if (follow) repository.follow(mediaType, tmdbId) else repository.unfollow(mediaType, tmdbId)
+            if (result is ApiResult.Success) {
+                // The repository's broadcast patches the page too; applying it
+                // here as well keeps the answer when that broadcast is dropped.
+                val event = RequestFollowEvent(mediaType, tmdbId, following = follow, state = result.data as? RequestState, sequence = 0)
+                _uiState.update { current ->
+                    current.copy(
+                        isFollowPending = false,
+                        detail = current.detail?.let { it.copy(request = it.request.applyingFollow(event)) },
+                        followNotice = if (follow) RequestActionCopy.Followed else RequestActionCopy.Unfollowed,
+                    )
+                }
+                return@launch
+            }
+            _uiState.update {
+                it.copy(isFollowPending = false, actionErrorMessage = RequestActionCopy.failure(result, "Failed to update notification"))
+            }
+            when {
+                // The feature went off: hide the action rather than let it fail again.
+                RequestActionCopy.isCapabilityOff(result) -> featureStore?.refresh()
+                // The request ended (or was never there): show what the title is now.
+                result is ApiResult.Error && result.error == "conflict" -> fetch(ownMaxAge = Duration.ZERO)
             }
         }
     }

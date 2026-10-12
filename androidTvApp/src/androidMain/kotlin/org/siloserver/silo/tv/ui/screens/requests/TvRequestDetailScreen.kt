@@ -24,10 +24,16 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Notifications
+import androidx.compose.material.icons.filled.NotificationsOff
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
@@ -88,7 +94,9 @@ import org.siloserver.silo.viewmodel.RequestPrimaryAction
  *
  * Focus: the primary action is one stable node whose label and look follow
  * [RequestPrimaryAction], so focus stays put across request → requesting →
- * pending.
+ * pending. Notify me is likewise one node whose label flips. A secondary pill
+ * that leaves the row while focused hands focus to the primary action
+ * ([RequestActionFocusFallback]).
  */
 @Composable
 fun TvRequestDetailScreen(
@@ -150,6 +158,23 @@ fun TvRequestDetailScreen(
         if (result == TvObservedFocusResult.Focused) onInitialContentFocus()
     }
 
+    // A focused pill that leaves the row (Cancel once cancelled, Notify me once
+    // the title is requestable or in the library) hands its focus to the
+    // synopsis; put it back on the primary action, which never leaves.
+    val actionFocusFallback = remember { RequestActionFocusFallback() }
+    val actionFocusChecks = actionFocusFallback.checks
+    LaunchedEffect(actionFocusChecks) {
+        if (actionFocusChecks == 0) return@LaunchedEffect
+        withFrameNanos { }
+        if (!actionFocusFallback.takeShouldReclaim()) return@LaunchedEffect
+        requestFocusUntilObserved(
+            maxAttempts = TvContentInitialFocusMaxAttempts,
+            awaitAttempt = { withFrameNanos { } },
+            requestFocus = primaryActionFocusRequester::requestFocus,
+            isFocused = { primaryHasFocus },
+        )
+    }
+
     BackHandler(enabled = backEnabled) { onBack() }
 
     val backdropUrl = state.detail?.let { requestBackdropUrl(it.backdropPath) ?: requestPosterUrl(it.posterPath) }
@@ -181,6 +206,8 @@ fun TvRequestDetailScreen(
                     }
                 },
                 onCancel = viewModel::cancel,
+                onToggleFollow = viewModel::toggleFollow,
+                actionFocusFallback = actionFocusFallback,
                 onOpenRecommendation = router::openResult,
             )
             state.error != null -> TvErrorScreen(message = state.error.orEmpty(), onRetry = viewModel::load)
@@ -215,6 +242,8 @@ private fun RequestDetailContent(
     onPrimaryFocusChanged: (Boolean) -> Unit,
     onPrimary: () -> Unit,
     onCancel: () -> Unit,
+    onToggleFollow: () -> Unit,
+    actionFocusFallback: RequestActionFocusFallback,
     onOpenRecommendation: (RequestMediaResult) -> Unit,
 ) {
     val progress = state.progress?.takeIf { state.showsStatus }
@@ -239,6 +268,7 @@ private fun RequestDetailContent(
                 playbackSummary = progress?.let { { RequestStatusStrip(progress = it, state = state) } },
                 actions = {
                     Row(
+                        modifier = Modifier.onFocusChanged { actionFocusFallback.onRowFocusChanged(it.hasFocus) },
                         horizontalArrangement = Arrangement.spacedBy(9.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
@@ -249,9 +279,21 @@ private fun RequestDetailContent(
                             modifier = Modifier.onFocusChanged { onPrimaryFocusChanged(it.hasFocus) },
                         )
                         if (state.canCancel) {
-                            RequestActionPill(icon = Icons.Filled.Close, title = "Cancel Request", onClick = onCancel)
+                            RequestActionPill(icon = Icons.Filled.Close, title = "Cancel Request", onClick = onCancel, focusFallback = actionFocusFallback)
                         }
-                        state.actionErrorMessage?.let { message ->
+                        if (state.canFollow) {
+                            // One node across toggles: only the label and icon change, so focus stays.
+                            key("follow") {
+                                RequestActionPill(
+                                    icon = if (state.isFollowing) Icons.Filled.NotificationsOff else Icons.Filled.Notifications,
+                                    title = state.followActionTitle,
+                                    pending = state.isFollowPending,
+                                    onClick = onToggleFollow,
+                                    focusFallback = actionFocusFallback,
+                                )
+                            }
+                        }
+                        (state.actionErrorMessage ?: state.shownFollowNotice)?.let { message ->
                             Text(
                                 text = message,
                                 style = MaterialTheme.typography.bodySmall.copy(fontSize = 14.sp),
@@ -327,11 +369,21 @@ private fun RequestPrimaryActionPill(
 }
 
 /**
- * A secondary action in the hero row (Cancel), in the row's 38dp capsule so
- * every control in it shares one height.
+ * A secondary action in the hero row (Cancel, Notify me), in the row's 38dp
+ * capsule so every control in it shares one height.
  */
 @Composable
-private fun RequestActionPill(icon: ImageVector, title: String, onClick: () -> Unit) {
+private fun RequestActionPill(
+    icon: ImageVector,
+    title: String,
+    onClick: () -> Unit,
+    pending: Boolean = false,
+    /** Told when this pill leaves the row, so focus it held can return to the primary action. */
+    focusFallback: RequestActionFocusFallback? = null,
+) {
+    DisposableEffect(focusFallback) {
+        onDispose { focusFallback?.onPillRemoved() }
+    }
     SquaredPillSurface(
         kind = PillKind.Secondary,
         onClick = onClick,
@@ -342,7 +394,11 @@ private fun RequestActionPill(icon: ImageVector, title: String, onClick: () -> U
         contentPadding = PaddingValues(horizontal = 18.dp),
     ) { foreground ->
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Icon(icon, contentDescription = null, tint = foreground, modifier = Modifier.size(16.dp))
+            if (pending) {
+                CircularProgressIndicator(color = foreground, strokeWidth = 2.dp, modifier = Modifier.size(14.dp))
+            } else {
+                Icon(icon, contentDescription = null, tint = foreground, modifier = Modifier.size(16.dp))
+            }
             Text(
                 text = title,
                 style = MaterialTheme.typography.titleLarge.copy(fontSize = 14.sp),
@@ -352,6 +408,61 @@ private fun RequestActionPill(icon: ImageVector, title: String, onClick: () -> U
         }
     }
 }
+
+/**
+ * Notices a focused secondary pill leaving the action row. Compose hands the
+ * focus of a removed node to the nearest focusable, which here is the synopsis
+ * above the row, so Select would open the overview instead of acting. A TV has
+ * no touch fallback, so focus must return to the primary action.
+ *
+ * Whether the pill held focus is judged from the row: either the row still has
+ * focus when the pill is disposed, or it loses focus in the same frame (the
+ * order of the two callbacks is not guaranteed). Each signal bumps [checks];
+ * the screen waits a frame, then reclaims for the primary action. A pill that
+ * leaves while focus is outside the row (the top bar, a rail, another page)
+ * changes nothing; one that leaves while the primary action is focused makes
+ * the reclaim a no-op.
+ */
+@Stable
+internal class RequestActionFocusFallback {
+    private var rowHasFocus = false
+    private var rowLostFocus = false
+    private var pillRemoved = false
+    private var rowFocusedAtRemoval = false
+
+    var checks by mutableIntStateOf(0)
+        private set
+
+    fun onRowFocusChanged(hasFocus: Boolean) {
+        if (rowHasFocus && !hasFocus) {
+            rowLostFocus = true
+            checks++
+        }
+        rowHasFocus = hasFocus
+    }
+
+    fun onPillRemoved() {
+        pillRemoved = true
+        if (rowHasFocus) rowFocusedAtRemoval = true
+        checks++
+    }
+
+    /** Whether to reclaim focus now; clears the signals either way. */
+    fun takeShouldReclaim(): Boolean {
+        val reclaim = shouldReclaimRequestActionFocus(
+            pillRemoved = pillRemoved,
+            rowFocusedAtRemoval = rowFocusedAtRemoval,
+            rowLostFocus = rowLostFocus,
+        )
+        rowLostFocus = false
+        pillRemoved = false
+        rowFocusedAtRemoval = false
+        return reclaim
+    }
+}
+
+internal fun shouldReclaimRequestActionFocus(pillRemoved: Boolean, rowFocusedAtRemoval: Boolean, rowLostFocus: Boolean): Boolean =
+    pillRemoved && (rowFocusedAtRemoval || rowLostFocus)
 
 /** Extra hero height for the status strip and labeled track. */
 private val StatusStripHeight = 64.dp

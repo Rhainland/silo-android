@@ -28,6 +28,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Notifications
+import androidx.compose.material.icons.filled.NotificationsOff
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
@@ -140,6 +142,7 @@ fun RequestDetailScreen(
                             }
                         },
                         onCancel = viewModel::cancel,
+                        onToggleFollow = viewModel::toggleFollow,
                         router = router,
                     )
                 }
@@ -158,6 +161,7 @@ private fun RequestDetailContent(
     scroll: DetailScrollState,
     onPrimary: () -> Unit,
     onCancel: () -> Unit,
+    onToggleFollow: () -> Unit,
     router: RequestRouter,
 ) {
     val itemDetail = remember(detail) { detail.toHeroDetail() }
@@ -199,7 +203,7 @@ private fun RequestDetailContent(
                         dominantColor = dominantColor,
                         directorText = detail.creditText(),
                         actions = {
-                            RequestDetailActions(state = state, onPrimary = onPrimary, onCancel = onCancel)
+                            RequestDetailActions(state = state, onPrimary = onPrimary, onCancel = onCancel, onToggleFollow = onToggleFollow)
                         },
                     )
                 }
@@ -222,16 +226,20 @@ private fun RequestDetailContent(
     }
 }
 
-/** The primary action, its hint or error, the status card, and Cancel. */
+/** The primary action, Notify me, its hint or error, the status card, and Cancel. */
 @Composable
 private fun RequestDetailActions(
     state: RequestDetailUiState,
     onPrimary: () -> Unit,
     onCancel: () -> Unit,
+    onToggleFollow: () -> Unit,
 ) {
     Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         PrimaryActionButton(state = state, onClick = onPrimary)
-        val message = state.actionErrorMessage
+        if (state.canFollow) {
+            FollowButton(state = state, onClick = onToggleFollow)
+        }
+        val message = state.actionErrorMessage ?: state.shownFollowNotice
         if (message != null) {
             Text(
                 text = message,
@@ -267,6 +275,41 @@ private fun RequestDetailActions(
                     .padding(vertical = 12.dp),
             )
         }
+    }
+}
+
+/**
+ * Someone else already requested the title: hear when it lands instead of
+ * requesting it again. A quiet secondary action, like Cancel, whose label
+ * flips in place.
+ */
+@Composable
+private fun FollowButton(state: RequestDetailUiState, onClick: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = 44.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .clickable(enabled = !state.isFollowPending, onClick = onClick),
+        horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        if (state.isFollowPending) {
+            CircularProgressIndicator(color = SiloSecondaryText, strokeWidth = 2.dp, modifier = Modifier.size(16.dp))
+        } else {
+            Icon(
+                imageVector = if (state.isFollowing) Icons.Filled.NotificationsOff else Icons.Filled.Notifications,
+                contentDescription = null,
+                tint = SiloOnSurface,
+                modifier = Modifier.size(18.dp),
+            )
+        }
+        Text(
+            text = state.followActionTitle,
+            fontSize = 15.sp,
+            fontWeight = FontWeight.SemiBold,
+            color = SiloOnSurface,
+        )
     }
 }
 

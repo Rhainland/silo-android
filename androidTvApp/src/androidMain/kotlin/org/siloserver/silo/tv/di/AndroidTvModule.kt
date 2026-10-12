@@ -454,7 +454,7 @@ val androidTvModule = module {
     viewModel { TvServerListViewModel(get(), get(), get(), get(), get()) }
 
     viewModel { params ->
-        org.siloserver.silo.viewmodel.RequestDetailViewModel(get(), params.get(), params.get())
+        org.siloserver.silo.viewmodel.RequestDetailViewModel(get(), params.get(), params.get(), featureStore = get())
     }
     viewModel { params ->
         val args = params.get<Pair<String?, String?>>()

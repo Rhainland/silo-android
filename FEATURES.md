@@ -88,7 +88,7 @@ Shown only while Settings → Experimental → Watch Party is on (default on in 
 | Release calendar | ✅ | ✅ | Top-level mobile tab and TV top-menu tab |
 | Live home refresh (events websocket) | ✅ | ✅ | `HomeRealtimeCoordinator`: user_state/catalog channels, 2s debounce; TV also refreshes on resume |
 | System "Watch Next" row integration | ➖ | ✅ | `WatchNextRepository` (tvprovider) |
-| Requests | ✅ | ✅ | Server-gated by `requests_enabled`; phone: profile menu + search; TV: top-bar tab + search; request administration stays in web admin |
+| Requests | ✅ | ✅ | Server-gated by `requests_enabled`; phone: profile menu + search; TV: top-bar tab + search; "Notify me when available" on titles someone else requested (when the server reports `follow_supported`); request administration stays in web admin |
 
 ## Reading (ebooks)
 
@@ -135,7 +135,7 @@ Shown only while Settings → Experimental → Watch Party is on (default on in 
 | Favorites & watchlist | ✅ | ✅ | TV: from Settings |
 | Ratings | ✅ | ✅ | |
 | Watch history | ✅ | ✅ | |
-| Content requests (browse/search TMDB, status tracking) | ✅ | ✅ | Four-step status track, My Requests; see Requests above |
+| Content requests (browse/search TMDB, status tracking) | ✅ | ✅ | Four-step status track, My Requests, notify me when someone else's request becomes available; see Requests above |
 | Release calendar | ✅ | ✅ | |
 | Notifications inbox (paginated, realtime updates, mark-read) | ✅ | ✅ | REST + WebSocket |
 

@@ -57,7 +57,14 @@ object RequestActionCopy {
         else -> result.errorMessage(fallback)
     }
 
+    /** The server refused because the feature is off: the caller should re-read its capability. */
+    fun isCapabilityOff(result: ApiResult<*>): Boolean = result is ApiResult.Error && result.error in CapabilityOff
+
     private val CapabilityOff = setOf("capability_disabled", "capability_not_configured", "capability_unsupported")
+
+    /** Confirmations for following a title someone else requested (the web's toasts). */
+    const val Followed = "We'll let you know when it's available"
+    const val Unfollowed = "Notification turned off"
 }
 
 /**
@@ -117,3 +124,27 @@ fun RequestMediaResult.applying(record: MediaRequest): RequestMediaResult =
 
 fun List<RequestMediaResult>.applyingRequestUpdate(record: MediaRequest): List<RequestMediaResult> =
     map { it.applying(record) }
+
+/**
+ * The viewer started or stopped following one title. [state] is the server's
+ * answer to a follow; an unfollow answers with no body, so it is null and only
+ * [following] changes.
+ */
+data class RequestFollowEvent(
+    val mediaType: String,
+    val tmdbId: Int,
+    val following: Boolean,
+    val state: RequestState?,
+    val sequence: Long,
+)
+
+/**
+ * This state after the viewer's follow or unfollow: the server's answer to a
+ * follow when there is one, keeping the request id it may leave out, or just
+ * the flag for an unfollow, which answers with no body.
+ */
+fun RequestState.applyingFollow(event: RequestFollowEvent): RequestState =
+    event.state?.let { it.copy(requestId = it.requestId ?: requestId) } ?: copy(following = event.following)
+
+fun List<RequestMediaResult>.applyingFollowUpdate(event: RequestFollowEvent): List<RequestMediaResult> =
+    map { if (it.mediaType == event.mediaType && it.tmdbId == event.tmdbId) it.copy(request = it.request.applyingFollow(event)) else it }

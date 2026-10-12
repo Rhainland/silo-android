@@ -30,6 +30,10 @@ class RequestsFeatureStore(
     /** A probe has answered (or failed) since the last [reset]; until then [isEnabled] is only a default. */
     val isResolved: StateFlow<Boolean> = _isResolved.asStateFlow()
 
+    private val _followSupported = MutableStateFlow(false)
+    /** The server lets a viewer follow a title someone else requested (`follow_supported`). */
+    val followSupported: StateFlow<Boolean> = _followSupported.asStateFlow()
+
     // Written on the UI dispatcher (reset) and read after IO resumption
     // (refresh); Volatile gives the stale-response guard a happens-before.
     @kotlin.concurrent.Volatile
@@ -37,14 +41,18 @@ class RequestsFeatureStore(
 
     suspend fun refresh() {
         val refreshGeneration = generation
-        val enabled = when (val result = repository.status()) {
-            is ApiResult.Success -> result.data.isAvailable
+        val status = repository.status()
+        val enabled = when (status) {
+            is ApiResult.Success -> status.data.isAvailable
             // A transient failure shouldn't yank an already-visible entry point.
             is ApiResult.Error,
             is ApiResult.NetworkError,
             -> _isEnabled.value
         }
+        // Like [isEnabled], a failed probe keeps the previous answer.
+        val follows = enabled && ((status as? ApiResult.Success)?.data?.followSupported ?: _followSupported.value)
         if (refreshGeneration != generation) return
+        _followSupported.value = follows
         _isEnabled.value = enabled
         _isResolved.value = true
     }
@@ -53,6 +61,7 @@ class RequestsFeatureStore(
         generation += 1
         repository.reset()
         _isEnabled.value = false
+        _followSupported.value = false
         _isResolved.value = false
     }
 }

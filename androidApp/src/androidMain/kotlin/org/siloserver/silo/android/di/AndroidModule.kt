@@ -528,6 +528,7 @@ val androidModule = module {
             repository = get(),
             mediaType = args.first,
             tmdbId = args.second,
+            featureStore = get(),
         )
     }
     single {

@@ -4,6 +4,7 @@ import org.siloserver.silo.model.request.CreateMediaRequest
 import org.siloserver.silo.model.request.MediaRequest
 import org.siloserver.silo.model.request.RequestMediaDetail
 import org.siloserver.silo.model.request.RequestMediaPage
+import org.siloserver.silo.model.request.RequestState
 import org.siloserver.silo.model.request.RequestsDiscoverResponse
 import org.siloserver.silo.model.request.RequestsFeatureStatus
 import org.siloserver.silo.model.request.RequestsListResponse
@@ -15,9 +16,11 @@ import org.siloserver.silo.network.TokenManager
 import org.siloserver.silo.network.authScope
 import org.siloserver.silo.network.ApiResult
 import io.ktor.client.HttpClient
+import io.ktor.client.request.delete
 import io.ktor.client.request.get
 import io.ktor.client.request.parameter
 import io.ktor.client.request.post
+import io.ktor.client.request.put
 import io.ktor.client.request.setBody
 import io.ktor.http.ContentType
 import io.ktor.http.contentType
@@ -54,6 +57,19 @@ interface RequestsApi {
     suspend fun get(id: String): ApiResult<MediaRequest>
 
     suspend fun cancel(id: String): ApiResult<MediaRequest>
+
+    /**
+     * `PUT /api/v2/requests/follows/{media_type}/{tmdb_id}`: notify the viewer
+     * when a title someone else requested becomes available. Answers with the
+     * title's request state. Idempotent. Fakes that don't exercise following
+     * inherit these refusals.
+     */
+    suspend fun follow(mediaType: String, tmdbId: Int): ApiResult<RequestState> =
+        ApiResult.Error(0, "capability_unsupported", "Following is not supported.")
+
+    /** `DELETE` of the same path: stop the notification. Answers 204 whether or not the viewer followed. */
+    suspend fun unfollow(mediaType: String, tmdbId: Int): ApiResult<Unit> =
+        ApiResult.Error(0, "capability_unsupported", "Following is not supported.")
 }
 
 class DefaultRequestsApi(
@@ -163,5 +179,13 @@ class DefaultRequestsApi(
             contentType(ContentType.Application.Json)
             setBody(kotlinx.serialization.json.JsonObject(emptyMap()))
         }
+    }
+
+    override suspend fun follow(mediaType: String, tmdbId: Int): ApiResult<RequestState> = safeApiV2Call(gate) {
+        client.put("/api/v2/requests/follows/$mediaType/$tmdbId")
+    }
+
+    override suspend fun unfollow(mediaType: String, tmdbId: Int): ApiResult<Unit> = safeApiV2Call(gate) {
+        client.delete("/api/v2/requests/follows/$mediaType/$tmdbId")
     }
 }

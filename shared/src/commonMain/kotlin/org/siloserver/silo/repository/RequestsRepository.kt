@@ -2,10 +2,13 @@ package org.siloserver.silo.repository
 
 import org.siloserver.silo.model.request.CreateMediaRequest
 import org.siloserver.silo.model.request.MediaRequest
+import org.siloserver.silo.model.request.RequestFollowEvent
 import org.siloserver.silo.model.request.RequestMediaDetail
 import org.siloserver.silo.model.request.RequestMediaPage
+import org.siloserver.silo.model.request.RequestState
 import org.siloserver.silo.model.request.RequestsDiscoverResponse
 import org.siloserver.silo.model.request.RequestsFeatureStatus
+import org.siloserver.silo.model.request.applyingFollow
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.api.RequestsApi
 import kotlin.time.Duration
@@ -55,6 +58,10 @@ class RequestsRepository(
     private val _lastUpdate = MutableStateFlow<RequestEvent?>(null)
     /** The most recent create or cancel of the signed-in user's own request. */
     val lastUpdate: StateFlow<RequestEvent?> = _lastUpdate.asStateFlow()
+
+    private val _lastFollow = MutableStateFlow<RequestFollowEvent?>(null)
+    /** The most recent follow or unfollow, so cards and pages showing the title agree. */
+    val lastFollow: StateFlow<RequestFollowEvent?> = _lastFollow.asStateFlow()
 
     suspend fun status(): ApiResult<RequestsFeatureStatus> = api.status()
 
@@ -121,6 +128,13 @@ class RequestsRepository(
     suspend fun cancel(id: String): ApiResult<MediaRequest> =
         mutate({ api.cancel(id) }, ::publish)
 
+    /** Get notified when a title someone else requested becomes available. */
+    suspend fun follow(mediaType: String, tmdbId: Int): ApiResult<RequestState> =
+        mutate({ api.follow(mediaType, tmdbId) }) { publishFollow(mediaType, tmdbId, following = true, state = it) }
+
+    suspend fun unfollow(mediaType: String, tmdbId: Int): ApiResult<Unit> =
+        mutate({ api.unfollow(mediaType, tmdbId) }) { publishFollow(mediaType, tmdbId, following = false, state = null) }
+
     /** Warms the first rows' details so opening them lands on a finished page. */
     fun prefetch(records: List<MediaRequest>) {
         cache.prefetch(records) { key -> api.detail(key.mediaType, key.tmdbId) }
@@ -131,6 +145,7 @@ class RequestsRepository(
         mineReadAt = null
         _mine.value = emptyList()
         _lastUpdate.value = null
+        _lastFollow.value = null
         cache.clear()
     }
 
@@ -164,6 +179,12 @@ class RequestsRepository(
         upsertMine(request)
         cache.storeOwnRecord(request)
         _lastUpdate.value = RequestEvent(request, ++eventSequence)
+    }
+
+    private fun publishFollow(mediaType: String, tmdbId: Int, following: Boolean, state: RequestState?) {
+        val event = RequestFollowEvent(mediaType, tmdbId, following, state, ++eventSequence)
+        cache.patchRequestState(RequestDetailCache.Key(mediaType, tmdbId)) { it.applyingFollow(event) }
+        _lastFollow.value = event
     }
 
     private fun upsertMine(request: MediaRequest) {

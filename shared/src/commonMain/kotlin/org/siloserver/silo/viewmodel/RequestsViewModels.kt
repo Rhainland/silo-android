@@ -12,6 +12,7 @@ import org.siloserver.silo.model.request.RequestMediaResult
 import org.siloserver.silo.model.request.RequestMediaType
 import org.siloserver.silo.model.request.RequestMutationFailure
 import org.siloserver.silo.model.request.RequestOutcome
+import org.siloserver.silo.model.request.applyingFollowUpdate
 import org.siloserver.silo.model.request.applyingRequestUpdate
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.errorMessage
@@ -79,6 +80,16 @@ class RequestsViewModel(
 
     init {
         if (loadOnInit) load()
+        viewModelScope.launch {
+            repository.lastFollow.drop(1).filterNotNull().collect { event ->
+                _uiState.update { state ->
+                    state.copy(
+                        searchResults = state.searchResults.applyingFollowUpdate(event),
+                        sections = state.sections.map { it.copy(results = it.results.applyingFollowUpdate(event)) },
+                    )
+                }
+            }
+        }
         viewModelScope.launch {
             repository.lastUpdate.drop(1).filterNotNull().collect { applyRequestUpdate(it.record) }
         }
@@ -233,6 +244,11 @@ class RequestSearchViewModel(
         viewModelScope.launch {
             repository.lastUpdate.drop(1).filterNotNull().collect { event ->
                 _uiState.update { it.copy(results = it.results.applyingRequestUpdate(event.record)) }
+            }
+        }
+        viewModelScope.launch {
+            repository.lastFollow.drop(1).filterNotNull().collect { event ->
+                _uiState.update { it.copy(results = it.results.applyingFollowUpdate(event)) }
             }
         }
     }
