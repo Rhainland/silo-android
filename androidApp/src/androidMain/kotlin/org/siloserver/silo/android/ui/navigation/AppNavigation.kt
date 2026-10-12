@@ -112,7 +112,6 @@ import org.siloserver.silo.android.ui.screens.profiles.CreateProfileScreen
 import org.siloserver.silo.android.ui.screens.profiles.EditProfileScreen
 import org.siloserver.silo.android.ui.screens.profiles.ProfileSelectionScreen
 import org.siloserver.silo.android.ui.screens.requests.MyRequestsScreen
-import org.siloserver.silo.android.ui.screens.requests.RequestApprovalsScreen
 import org.siloserver.silo.android.ui.screens.requests.RequestDetailScreen
 import org.siloserver.silo.android.ui.screens.requests.RequestsScreen
 import org.siloserver.silo.android.ui.screens.search.MobileSearchMediaType
@@ -1339,21 +1338,12 @@ fun AppNavigation(
             RequestsScreen(
                 onBackClick = { navController.popBackStack() },
                 onMyRequestsClick = { navController.navigate(Route.MyRequests.route) },
-                onApprovalsClick = { navController.navigate(Route.RequestApprovals.route) },
                 onRequestDetailClick = openRequestDetail,
                 onLibraryItemClick = openRequestLibraryItem,
             )
         }
         composable(Route.MyRequests.route) {
             MyRequestsScreen(
-                onBackClick = { navController.popBackStack() },
-                onApprovalsClick = { navController.navigate(Route.RequestApprovals.route) },
-                onRequestDetailClick = openRequestDetail,
-                onLibraryItemClick = openRequestLibraryItem,
-            )
-        }
-        composable(Route.RequestApprovals.route) {
-            RequestApprovalsScreen(
                 onBackClick = { navController.popBackStack() },
                 onRequestDetailClick = openRequestDetail,
                 onLibraryItemClick = openRequestLibraryItem,
