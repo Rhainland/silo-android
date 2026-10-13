@@ -24,6 +24,7 @@ class PushMessageHandler(
         }
         presenter.present(
             deliveryId = deliveryId,
+            issuer = issuerFrom(data),
             fallbackTitle = fallbackTitle ?: data["title"],
             fallbackBody = fallbackBody ?: data["body"],
         )
@@ -35,13 +36,29 @@ class PushMessageHandler(
             data[key]?.trim()?.takeIf { it.isNotEmpty() }
         }
 
+    /**
+     * Null only when the push names neither, as servers and relays that predate
+     * them do. Naming one without the other still says the push may be another
+     * server's, so it never falls back to the active one: its blank half matches
+     * no target.
+     */
+    private fun issuerFrom(data: Map<String, String>): PushIssuer? {
+        if (SERVER_ID_KEY !in data && PROFILE_ID_KEY !in data) return null
+        return PushIssuer(data[SERVER_ID_KEY]?.trim().orEmpty(), data[PROFILE_ID_KEY]?.trim().orEmpty())
+    }
+
     companion object {
-        // The Silo push relay sends data-only messages carrying exactly
-        // silo_delivery_id and silo_mode; the legacy keys stay as fallbacks.
+        // The Silo push relay sends data-only messages carrying silo_delivery_id
+        // and silo_mode, plus silo_server_id and silo_profile_id from servers
+        // that send them; the legacy delivery keys stay as fallbacks.
         const val SILO_DELIVERY_ID_KEY = "silo_delivery_id"
         const val DELIVERY_ID_KEY = "delivery_id"
         const val MODE_KEY = "silo_mode"
         const val MODE_BACKGROUND_WAKE = "background_wake"
+
+        /** The server deployment and profile the push was sent for. */
+        const val SERVER_ID_KEY = "silo_server_id"
+        const val PROFILE_ID_KEY = "silo_profile_id"
         private val DELIVERY_ID_KEYS =
             listOf(SILO_DELIVERY_ID_KEY, DELIVERY_ID_KEY, "deliveryId", "deliveryID", "id")
     }
@@ -92,7 +109,8 @@ internal suspend fun <T> withinPushBudget(block: suspend () -> T): T? =
  *
  * Both callbacks run on the SDK's intent-handling executor (never the main
  * thread), so running inline is safe; [PUSH_WORK_BUDGET_MS] keeps each one
- * inside the window FCM allows.
+ * inside the window FCM allows. A token rotation reaches the saved servers it
+ * can within that one budget; the next foreground registers the rest.
  */
 class SiloFirebaseMessagingService : FirebaseMessagingService() {
 
@@ -117,7 +135,7 @@ class SiloFirebaseMessagingService : FirebaseMessagingService() {
         val registrar = runCatching { get<AndroidPushRegistrar>(AndroidPushRegistrar::class.java) }.getOrNull()
             ?: return
         runBlocking {
-            withinPushBudget { registrar.registerToken(token) }
+            withinPushBudget { registrar.registerRotatedToken(token) }
         }
     }
 }

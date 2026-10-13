@@ -1900,7 +1900,17 @@ private fun delaySecondsLabel(valueMs: Int): String {
  * Labels arrive as "English — SRT · Forced · External" from
  * [subtitleChoiceLabel], or "English • SRT" from a player-only track.
  */
-internal data class TvSubtitleRowParts(val title: String, val chips: List<String>, val detail: String?)
+/**
+ * A subtitle row split for layout. [aiKind] names how an AI track was made
+ * ("Translation", "Transcription"); the row shows it as an "AI" chip plus the
+ * first detail word, since the narrow pane has no room for a longer chip.
+ */
+internal data class TvSubtitleRowParts(
+    val title: String,
+    val chips: List<String>,
+    val detail: String?,
+    val aiKind: String? = null,
+)
 
 internal fun tvSubtitleRowParts(label: String): TvSubtitleRowParts {
     val separator = listOf(" — ", " • ").firstOrNull { it in label }
@@ -1912,11 +1922,12 @@ internal fun tvSubtitleRowParts(label: String): TvSubtitleRowParts {
         ?.filter(String::isNotEmpty)
         .orEmpty()
     val chips = facts.mapNotNull { fact -> TvSubtitleChipNames[fact.lowercase(java.util.Locale.US)] }
+    val aiKind = facts.firstNotNullOfOrNull { fact -> TvSubtitleAiKinds[fact.lowercase(java.util.Locale.US)] }
     val detail = facts
         .filter { fact -> fact.lowercase(java.util.Locale.US) !in TvSubtitleChipNames }
         .joinToString(" · ")
         .ifBlank { null }
-    return TvSubtitleRowParts(title = title.trim(), chips = chips.distinct(), detail = detail)
+    return TvSubtitleRowParts(title = title.trim(), chips = chips.distinct(), detail = detail, aiKind = aiKind)
 }
 
 private val TvSubtitleChipNames = mapOf(
@@ -1924,6 +1935,12 @@ private val TvSubtitleChipNames = mapOf(
     "sdh" to "SDH",
     "cc" to "CC",
     "ai translation" to "AI",
+    "ai transcription" to "AI",
+)
+
+private val TvSubtitleAiKinds = mapOf(
+    "ai translation" to "Translation",
+    "ai transcription" to "Transcription",
 )
 
 /**
@@ -1945,7 +1962,9 @@ private fun HudSubtitleTrackRow(
     val isFocused by interactionSource.collectIsFocusedAsState()
     val colors = hudRowColors(focused = isFocused, current = row.checked)
     val parts = remember(row.label) { tvSubtitleRowParts(row.label) }
+    // The AI kind leads so it survives the detail's ellipsis.
     val detail = listOfNotNull(
+        parts.aiKind,
         row.status ?: syncStatus,
         parts.detail,
     ).joinToString(" · ").ifBlank { null }

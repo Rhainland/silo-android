@@ -611,8 +611,11 @@ enum class VideoFillMode {
     Stretch,
 }
 
+/** The in-player notice for an AI subtitle job that failed out of sight. */
+internal fun aiFailureNotice(message: String): String = "AI subtitles failed. $message"
+
 /** A transient remote "display_message"; [id] makes repeats re-trigger the toast. */
-data class RemoteMessage(val id: Long, val text: String)
+data class RemoteMessage(val id: Long, val text: String, val durationMs: Long = 5_000L)
 
 /** The resolved next episode for auto-advance / "Up next". */
 data class NextEpisodeState(
@@ -2056,6 +2059,9 @@ class TvPlayerViewModel(
         // Capture this pipeline's generation; a later loadContent bump makes
         // this one inert before it can touch _uiState.
         val generation = ++contentLoadGeneration
+        // The previous load's AI job poll goes inert with the generation, so
+        // its phase (progress or failure) must not carry into this content.
+        _aiTranslate.update { it.copy(phase = AiJobPhase.Idle) }
         if (recoveryStartParams != null) {
             pendingInitialSubtitleIndex = recoveryStartParams.subtitleTrackIndex
             // A recovery restores the selection the session was already
@@ -4250,9 +4256,9 @@ class TvPlayerViewModel(
     }
 
     /** A short in-player message (Watch Party notices share the remote-message toast). */
-    fun showPlayerMessage(text: String) {
+    fun showPlayerMessage(text: String, durationMs: Long = 5_000L) {
         if (text.isBlank()) return
-        _remoteMessage.value = RemoteMessage(++remoteMessageCounter, text)
+        _remoteMessage.value = RemoteMessage(++remoteMessageCounter, text, durationMs)
     }
 
     private fun roomSeekPending(state: UiState): Boolean =
@@ -5628,7 +5634,8 @@ class TvPlayerViewModel(
 
     fun openAiTranslateDialog() {
         refreshAiQuota() // spec: quota refreshed on open
-        _aiTranslate.update { it.copy(phase = AiJobPhase.Idle) }
+        // Keep the phase: a running job shows its progress and a failure keeps
+        // its reason; the form stays usable for a new request in both cases.
         _uiState.update { it.copy(showAiTranslateDialog = true) }
     }
 
@@ -6004,8 +6011,12 @@ class TvPlayerViewModel(
                         }
                     }
                 }
-                is SubtitlesRepository.SubtitleJobOutcome.Failed -> _aiTranslate.update {
-                    it.copy(phase = AiJobPhase.Failed(outcome.message ?: "Translation failed"))
+                is SubtitlesRepository.SubtitleJobOutcome.Failed -> {
+                    val message = outcome.message ?: "Translation failed"
+                    _aiTranslate.update { it.copy(phase = AiJobPhase.Failed(message)) }
+                    // The dialog may have been closed while the job ran; a reason
+                    // is a full sentence, so it stays up long enough to read on a TV.
+                    if (!_uiState.value.showAiTranslateDialog) showPlayerMessage(aiFailureNotice(message), 10_000L)
                 }
                 SubtitlesRepository.SubtitleJobOutcome.Cancelled -> _aiTranslate.update {
                     it.copy(phase = AiJobPhase.Idle)
