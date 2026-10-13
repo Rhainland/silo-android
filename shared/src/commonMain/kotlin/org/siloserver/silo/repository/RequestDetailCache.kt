@@ -169,6 +169,8 @@ class RequestDetailCache(
                 requestable = false,
                 reason = RequestReason.AlreadyRequested,
                 requestId = record.id,
+                // The user's own record: nothing to follow.
+                requestedByViewer = true,
             ),
         )
     }

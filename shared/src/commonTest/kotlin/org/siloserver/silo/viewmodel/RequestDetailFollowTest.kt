@@ -12,6 +12,7 @@ import io.ktor.http.HttpMethod
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.headersOf
 import io.ktor.serialization.kotlinx.json.json
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.StandardTestDispatcher
@@ -22,9 +23,11 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import org.siloserver.silo.model.feature.RequestsFeatureStore
 import org.siloserver.silo.model.request.RequestActionCopy
+import org.siloserver.silo.model.request.MediaRequest
 import org.siloserver.silo.model.request.RequestAvailability
 import org.siloserver.silo.model.request.RequestMediaDetail
 import org.siloserver.silo.model.request.RequestMediaType
+import org.siloserver.silo.model.request.RequestOutcome
 import org.siloserver.silo.model.request.RequestReason
 import org.siloserver.silo.model.request.RequestState
 import org.siloserver.silo.model.request.RequestStatus
@@ -67,6 +70,8 @@ class RequestDetailFollowTest {
         var respondTo: (HttpRequestData) -> Pair<HttpStatusCode, String>,
     ) {
         val calls = mutableListOf<String>()
+        /** When set, detail reads wait for it, so a read can be held out across a follow. */
+        var detailGate: CompletableDeferred<Unit>? = null
     }
 
     private fun TestScope.harness(server: Server): Triple<RequestsRepository, RequestsFeatureStore, RequestDetailViewModel> {
@@ -89,7 +94,11 @@ class RequestDetailFollowTest {
                         """{"page":1,"total_pages":1,"total_results":1,"results":[${titleJson(following = false)}]}""",
                         headers = json,
                     )
-                    path.startsWith("/api/v2/requests/detail/") -> respond(server.detail, headers = json)
+                    path.startsWith("/api/v2/requests/detail/") -> {
+                        val body = server.detail
+                        server.detailGate?.await()
+                        respond(body, headers = json)
+                    }
                     path.startsWith("/api/v2/requests/follows/") -> {
                         val (status, body) = server.respondTo(request)
                         respond(body, status, if (status.value >= 400) problem else json)
@@ -208,6 +217,29 @@ class RequestDetailFollowTest {
     }
 
     @Test
+    fun aReadSentBeforeAFollowDoesNotUndoIt() = runTest {
+        val server = Server(detail = titleJson(following = false)) {
+            HttpStatusCode.OK to """{"status":"approved","state":"approved","requestable":false,"reason":"already_requested","following":true,"requested_by_viewer":false}"""
+        }
+        val (repository, _, viewModel) = ready(server)
+        // A re-read leaves before the follow and answers after it, with the old state.
+        val gate = CompletableDeferred<Unit>()
+        server.detailGate = gate
+        viewModel.load()
+        advanceUntilIdle()
+        viewModel.toggleFollow()
+        advanceUntilIdle()
+        assertTrue(viewModel.uiState.value.isFollowing)
+
+        gate.complete(Unit)
+        advanceUntilIdle()
+
+        assertTrue(viewModel.uiState.value.isFollowing)
+        assertEquals("Stop notifying me", viewModel.uiState.value.followActionTitle)
+        assertEquals(true, repository.cache.detail(RequestDetailCache.Key(RequestMediaType.Series, 1399))?.request?.following)
+    }
+
+    @Test
     fun theRequesterAndAServerWithoutFollowsAreNotOfferedIt() {
         val othersRequest = RequestMediaDetail(
             mediaType = RequestMediaType.Movie,
@@ -226,6 +258,18 @@ class RequestDetailFollowTest {
         // The viewer's own request: nothing to follow.
         val own = othersRequest.copy(request = othersRequest.request.copy(requestedByViewer = true, following = true))
         assertFalse(RequestDetailUiState(detail = own, followSupported = true).canFollow)
+        // The first frame built from the viewer's own record, before the read lands.
+        val record = MediaRequest(
+            id = "r1",
+            mediaType = RequestMediaType.Movie,
+            tmdbId = 7,
+            title = "Film",
+            status = RequestStatus.Pending,
+            outcome = RequestOutcome.Active,
+            createdAt = "2026-01-01T00:00:00Z",
+            updatedAt = "2026-01-01T00:00:00Z",
+        )
+        assertFalse(RequestDetailUiState(detail = RequestDetailCache.provisionalDetail(record), record = record, followSupported = true).canFollow)
         // A title anyone can request: Request, not Notify me.
         val requestable = othersRequest.copy(request = RequestState(requestable = true))
         assertFalse(RequestDetailUiState(detail = requestable, followSupported = true).canFollow)
