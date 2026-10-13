@@ -541,6 +541,7 @@ val androidTvModule = module {
             tokenManager = get(),
             identityTransitions = get(),
             capabilityDetector = get(),
+            seriesSubtitleChoiceWriter = get(),
         )
     }
     // Watch Party: the shared hub, lobby (keyed per room; roomId is the
@@ -602,6 +603,7 @@ val androidTvModule = module {
             launchArgs = params.get<TvPlayerLaunchArgs>(),
             shuffleFeatureStore = get(),
             sectionRepository = get(),
+            seriesSubtitleChoiceWriter = get(),
         )
     }
 
