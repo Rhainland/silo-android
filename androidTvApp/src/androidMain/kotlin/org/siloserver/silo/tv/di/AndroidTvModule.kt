@@ -232,6 +232,7 @@ val androidTvModule = module {
             sessionLifecycle = get(),
             reachabilityMonitor = get(),
             userItemStatePort = get(),
+            seriesSubtitleChoiceWriter = get(),
         )
     }
     factory {
