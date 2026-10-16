@@ -2321,7 +2321,7 @@ fun TvPlayerScreen(
                             subtitleSync = hudSubtitleSync,
                             onSyncSubtitle = viewModel::requestSubtitleSync,
                             onResetSubtitleTiming = viewModel::resetSubtitleTiming,
-                            onSearchSubtitles = if (state.mediaFileId != null) {
+                            onSearchSubtitles = if (state.mediaFileId != null && subtitleSearch.providerAvailable == true) {
                                 {
                                     viewModel.closeHUD()
                                     viewModel.openSubtitleSearchDialog()
