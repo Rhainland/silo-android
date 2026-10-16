@@ -65,6 +65,7 @@ import org.siloserver.silo.model.catalog.VersionChapter
 import org.siloserver.silo.model.catalog.TimeRange
 import org.siloserver.silo.model.settings.SubtitleAppearance
 import org.siloserver.silo.model.playback.PlayMethod
+import org.siloserver.silo.model.playback.SUBTITLE_HLS_RENDITION_FAILED_CLASSIFICATION
 import org.siloserver.silo.model.playback.PlaybackDelivery
 import org.siloserver.silo.model.playback.PlaybackExecutionPlan
 import org.siloserver.silo.model.playback.playbackQualityMenu
@@ -596,6 +597,14 @@ class PlayerViewModel(
         onEmbeddedSubtitleFailure = { serverIndex ->
             startProtocolV3Replan(
                 classification = "subtitle_embedded_failed",
+                notice = "Embedded subtitles couldn't load. Retrying with a sidecar.",
+                state = _uiState.value,
+                subtitleTrackIndexOverride = serverIndex,
+            )
+        },
+        onHlsRenditionSubtitleFailure = { serverIndex ->
+            startProtocolV3Replan(
+                classification = SUBTITLE_HLS_RENDITION_FAILED_CLASSIFICATION,
                 notice = "Embedded subtitles couldn't load. Retrying with a sidecar.",
                 state = _uiState.value,
                 subtitleTrackIndexOverride = serverIndex,

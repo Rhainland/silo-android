@@ -87,6 +87,8 @@ import org.siloserver.silo.model.catalog.TimeRange
 import org.siloserver.silo.model.catalog.VersionChapter
 import org.siloserver.silo.model.settings.SubtitleAppearance
 import org.siloserver.silo.model.playback.AutoSubtitleCandidate
+import org.siloserver.silo.model.playback.SUBTITLE_HLS_RENDITION_FAILED_CLASSIFICATION
+import org.siloserver.silo.model.playback.SUBTITLE_SELECTION_FAILURE_CLASSIFICATIONS
 import org.siloserver.silo.model.playback.executableMedia3ClientTransformations
 import org.siloserver.silo.model.playback.AutoSubtitleContext
 import org.siloserver.silo.model.playback.inventoryAutoSubtitleCandidates
@@ -1356,6 +1358,14 @@ class TvPlayerViewModel(
         onEmbeddedSubtitleFailure = { serverIndex ->
             startProtocolV3Replan(
                 classification = "subtitle_embedded_failed",
+                notice = "Embedded subtitles couldn't load. Retrying with a sidecar.",
+                state = _uiState.value,
+                subtitleTrackIndexOverride = serverIndex,
+            )
+        },
+        onHlsRenditionSubtitleFailure = { serverIndex ->
+            startProtocolV3Replan(
+                classification = SUBTITLE_HLS_RENDITION_FAILED_CLASSIFICATION,
                 notice = "Embedded subtitles couldn't load. Retrying with a sidecar.",
                 state = _uiState.value,
                 subtitleTrackIndexOverride = serverIndex,
@@ -2705,7 +2715,7 @@ class TvPlayerViewModel(
             // replans stay dropped — onPlayerError re-raises those. Embedded
             // mount failures have no player-error retry, so retain those too.
             if (classification in PlaybackSessionManager.USER_INVALIDATION_CLASSIFICATIONS ||
-                classification == "subtitle_embedded_failed"
+                classification in SUBTITLE_SELECTION_FAILURE_CLASSIFICATIONS
             ) {
                 queuedRecoveryReplan = QueuedRecoveryReplan(
                     classification = classification,
@@ -2924,7 +2934,7 @@ class TvPlayerViewModel(
                         )
                     }
                     is VideoSessionStartV3.Terminal -> {
-                        if (classification == "subtitle_embedded_failed") {
+                        if (classification in SUBTITLE_SELECTION_FAILURE_CLASSIFICATIONS) {
                             onReplanRequestFailed(classification, notice, decision.message)
                             return@launch
                         }
@@ -2970,7 +2980,7 @@ class TvPlayerViewModel(
                     }
                     VideoSessionStartV3.ServerUpgradeRequired -> {
                         cancelPendingCatalogSubtitle()
-                        if (classification == "subtitle_embedded_failed") {
+                        if (classification in SUBTITLE_SELECTION_FAILURE_CLASSIFICATIONS) {
                             onReplanRequestFailed(classification, notice, "Server upgrade required")
                             return@launch
                         }
@@ -3027,7 +3037,7 @@ class TvPlayerViewModel(
      */
     private fun onReplanRequestFailed(classification: String, notice: String, detail: String?) {
         if (classification in PlaybackSessionManager.USER_INVALIDATION_CLASSIFICATIONS ||
-            classification == "subtitle_embedded_failed"
+            classification in SUBTITLE_SELECTION_FAILURE_CLASSIFICATIONS
         ) {
             Log.w(TAG, "Invalidation replan failed ($classification): $detail")
             _uiState.update { it.copy(isLoading = false, isBuffering = false) }

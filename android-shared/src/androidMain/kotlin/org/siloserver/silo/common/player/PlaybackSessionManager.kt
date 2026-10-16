@@ -26,6 +26,7 @@ import org.siloserver.silo.model.playback.SEEK_REANCHOR_V3_FEATURE
 import org.siloserver.silo.model.playback.SEEK_REANCHOR_V3_OPERATION
 import org.siloserver.silo.model.playback.TRACK_CHANGE_V3_OPERATION
 import org.siloserver.silo.model.playback.playbackClientFeaturesV3
+import org.siloserver.silo.model.playback.SUBTITLE_SELECTION_FAILURE_CLASSIFICATIONS
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.TokenManager
 import org.siloserver.silo.network.AuthScopeSnapshot
@@ -755,7 +756,7 @@ open class PlaybackSessionManager(
                 operation = replanOperationForClassification(classification),
                 // A rejected subtitle retry must not tear down healthy video.
                 // Reuse staged rejection cleanup while successful retries still commit.
-                preserveImmediateOutcomes = classification != "subtitle_embedded_failed",
+                preserveImmediateOutcomes = classification !in SUBTITLE_SELECTION_FAILURE_CLASSIFICATIONS,
             )
         ) {
             is ApiResult.Success -> when (val value = prepared.data) {
@@ -1762,7 +1763,8 @@ open class PlaybackSessionManager(
             return if (selected == null &&
                 subtitle.mode == PlaybackSubtitleModeV3.OFF &&
                 subtitle.trackId == null &&
-                subtitle.artifact == null
+                subtitle.artifact == null &&
+                subtitle.hlsRendition == null
             ) {
                 null
             } else {
@@ -1792,6 +1794,11 @@ open class PlaybackSessionManager(
             -> {
                 if (subtitle.embedded != null && candidate.delivery == org.siloserver.silo.model.playback.PlaybackDelivery.ORIGINAL_HTTP &&
                     subtitle.embedded?.containerTrackId != null && subtitle.artifact == null
+                ) return null
+                // The transcode carries the track in its own playlist; there is
+                // no artifact to check, and validateForMedia3 vetted the shape.
+                if (subtitle.hlsRendition != null && candidate.delivery == org.siloserver.silo.model.playback.PlaybackDelivery.SERVER_TRANSCODE_HLS &&
+                    subtitle.artifact == null
                 ) return null
                 val artifact = subtitle.artifact
                 if (artifact == null ||
@@ -2027,6 +2034,7 @@ open class PlaybackSessionManager(
             subtitle.trackId == current.subtitle.trackId &&
             subtitle.artifact?.mimeType == current.subtitle.artifact?.mimeType &&
             subtitle.artifact?.format == current.subtitle.artifact?.format &&
+            subtitle.hlsRendition == current.subtitle.hlsRendition &&
             subtitleFidelityPolicy == current.subtitleFidelityPolicy &&
             transformations.toSet() == current.transformations.toSet() &&
             appliedQuirks.toSet() == current.appliedQuirks.toSet() &&

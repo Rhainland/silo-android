@@ -175,6 +175,7 @@ internal class MobileSubtitleTransactionAdapter(
     ) -> MobileSubtitleAdoptionResult = { MobileSubtitleAdoptionResult.Adopted },
     private val onCommittedPlaybackFailure: suspend (String) -> Unit = {},
     private val onEmbeddedSubtitleFailure: (Int) -> Unit = {},
+    private val onHlsRenditionSubtitleFailure: (Int) -> Unit = {},
 ) {
     private data class PendingLocalSelection(
         val generation: Long,
@@ -1029,7 +1030,7 @@ internal class MobileSubtitleTransactionAdapter(
         if (!ownedSelection && !ownedRestore) return
         val failedIdentity = (if (ownedSelection) pendingLocalSelection?.identity else pendingLocalRestore?.identity)
             as? SubtitleIdentity.Embedded
-        if (failedIdentity?.containerTrackId != null) {
+        if (failedIdentity?.isServerSelected == true) {
             // An adopted native plan is not a mounted subtitle. Clear a failed
             // restore now so a failed sidecar recovery cannot leave it selected.
             // Keep the requested index for recovery and do not persist Off.
@@ -1042,7 +1043,11 @@ internal class MobileSubtitleTransactionAdapter(
             failureMessage = "Embedded subtitles couldn't load. Retrying with a sidecar."
             qualityChangeFailed = false
             publish()
-            onEmbeddedSubtitleFailure(failedIdentity.serverIndex)
+            if (failedIdentity.hlsRendition != null) {
+                onHlsRenditionSubtitleFailure(failedIdentity.serverIndex)
+            } else {
+                onEmbeddedSubtitleFailure(failedIdentity.serverIndex)
+            }
             return
         }
         invalidateLocalMount()
@@ -1304,8 +1309,8 @@ private fun MobileStagedSubtitleCandidate.validationFailure(
         return validationFailure(returnedIdentity)
     }
     if (selectedSubtitleIdentity is SubtitleIdentity.Embedded &&
-        selectedSubtitleIdentity.containerTrackId != null &&
-        selectedSubtitleIndex == expectedSubtitleIndex && subtitleMode == PlaybackSubtitleModeV3.RENDER && !hasSidecar
+        selectedSubtitleIndex == expectedSubtitleIndex &&
+        selectedSubtitleIdentity.matchesServerSelectedPlan(subtitleMode, hasSidecar)
     ) return null
     return when (requested.identity) {
         is SubtitleIdentity.Embedded,
@@ -1386,8 +1391,9 @@ private fun MobileStagedSubtitleCandidate.validationFailure(
             "The candidate did not burn in the requested subtitle."
         else -> null
     }
-    is SubtitleIdentity.Embedded -> if (identity.containerTrackId != null &&
-        selectedSubtitleIndex == identity.serverIndex && subtitleMode == PlaybackSubtitleModeV3.RENDER && !hasSidecar
+    is SubtitleIdentity.Embedded -> if (
+        selectedSubtitleIndex == identity.serverIndex &&
+        identity.matchesServerSelectedPlan(subtitleMode, hasSidecar)
     ) null else "The candidate omitted the exact embedded subtitle."
     is SubtitleIdentity.Downloaded,
     is SubtitleIdentity.LocalMedia3,

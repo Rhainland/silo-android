@@ -225,6 +225,32 @@ class PlaybackProtocolV3ConformanceTest {
         )
     }
 
+    @Test
+    fun hlsSubtitleRenditionDecisionDecodesRoundTripsAndValidates() {
+        val raw = fixture("hls-subtitle-rendition-decision_response.json")
+
+        val decoded = json.decodeFromString(PlaybackDecisionResponseV3.serializer(), raw)
+
+        assertTrue(HLS_SUBTITLE_RENDITIONS_V1_FEATURE in decoded.serverFeatures)
+        val plan = assertNotNull(decoded.playbackPlan)
+        assertEquals(PlaybackDelivery.SERVER_TRANSCODE_HLS, plan.delivery)
+        assertEquals(
+            PlaybackSubtitleHlsRenditionV3(groupId = "subs", name = "Subtitles", format = "vtt", mimeType = "text/vtt"),
+            plan.subtitle.hlsRendition,
+        )
+        assertNull(plan.subtitle.artifact)
+        assertNull(plan.subtitle.embedded)
+        // The inventory still publishes the sidecar for this track.
+        assertTrue(plan.subtitle.inventory.single().url!!.isNotBlank())
+        assertClientReadsEveryFieldExcept(
+            raw,
+            json.encodeToJsonElement(PlaybackDecisionResponseV3.serializer(), decoded),
+            UNMODELLED_SOURCE_DETAIL,
+        )
+        val production = SiloJson.decodeFromString(PlaybackDecisionResponseV3.serializer(), raw)
+        assertTrue(production.validateForMedia3() is PlaybackV3Validation.Playable)
+    }
+
     /**
      * A tolerant plan decoder is load-bearing — [TolerantPlaybackPlanV3Serializer]
      * turns an unreadable plan into a null the negotiation layer can gate on,

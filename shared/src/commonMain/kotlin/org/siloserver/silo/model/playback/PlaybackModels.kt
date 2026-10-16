@@ -72,9 +72,32 @@ data class PlayerSubtitleInfo(
     @SerialName("server_delivery") val serverDelivery: String? = null,
     /** Exact original-container track ID selected by a v3 embedded decision. */
     @SerialName("native_container_track_id") val nativeContainerTrackId: String? = null,
+    /**
+     * The HLS rendition a v3 transcode decision carries this selected row in.
+     * Such a row has no URL: the stream itself delivers the track.
+     */
+    @SerialName("hls_rendition") val hlsRendition: SubtitleHlsRendition? = null,
     /** The inventory's `sync_key`: present when the server can sync this track to the audio. */
     @SerialName("sync_key") val syncKey: String? = null,
 )
+
+/**
+ * An HLS `SUBTITLES` rendition (`EXT-X-MEDIA` with `GROUP-ID` [groupId] and
+ * `NAME` [name]) in the stream Media3 is playing.
+ */
+@Serializable
+data class SubtitleHlsRendition(
+    @SerialName("group_id") val groupId: String,
+    val name: String,
+) {
+    /**
+     * The `Format.id` Media3's `HlsPlaylistParser` gives the rendition:
+     * `"<GROUP-ID>:<NAME>"`, kept unchanged by `HlsMediaPeriod`. A merged
+     * source prefixes it with its child index (`0:subs:Subtitles`).
+     */
+    val media3TrackId: String
+        get() = "$groupId:$name"
+}
 
 /**
  * Whether this row represents a subtitle artifact downloaded onto this Android
