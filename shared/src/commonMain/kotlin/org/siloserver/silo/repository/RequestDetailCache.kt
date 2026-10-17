@@ -114,6 +114,12 @@ class RequestDetailCache(
                 val result = loader(key)
                 if (session != generation) return@launch
                 if (result is ApiResult.Success) store(result.data)
+                // A refusal means the profile lost access, so the rest of
+                // the queue would be refused too, each re-reading the capability.
+                if (result is ApiResult.Error && result.code == 403) {
+                    prefetchQueue.clear()
+                    break
+                }
             }
             if (session == generation) prefetchJob = null
         }

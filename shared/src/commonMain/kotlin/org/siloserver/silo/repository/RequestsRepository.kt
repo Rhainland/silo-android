@@ -69,7 +69,7 @@ class RequestsRepository(
     private val follows = mutableMapOf<RequestDetailCache.Key, RequestFollowEvent>()
 
     /**
-     * Runs after a discovery, create, or follow call is refused with 403
+     * Runs after a discovery, detail, create, or follow call is refused with 403
      * `permission_denied`: a household manager blocked this profile from
      * requests while it was in use. [org.siloserver.silo.model.feature.RequestsFeatureStore]
      * re-reads the capability here, so the Requests entry points go away.
@@ -90,7 +90,7 @@ class RequestsRepository(
     ): ApiResult<RequestMediaPage> = gated { api.search(query, mediaType, page) }
 
     suspend fun detail(mediaType: String, tmdbId: Int): ApiResult<RequestMediaDetail> =
-        gated { read({ fetchDetail(mediaType, tmdbId) }) { cache.store(it) } }
+        read({ fetchDetail(mediaType, tmdbId) }) { cache.store(it) }
 
     suspend fun get(id: String): ApiResult<MediaRequest> = api.get(id)
 
@@ -165,11 +165,14 @@ class RequestsRepository(
 
     /**
      * A call that a profile blocked from requests is refused. Listing and
-     * cancelling its own requests stay allowed, so they are not gated.
+     * cancelling its own requests stay allowed, so they are not gated. A
+     * refusal that lands after a [reset] belongs to the previous profile and
+     * is not reported.
      */
     private suspend inline fun <T> gated(call: () -> ApiResult<T>): ApiResult<T> {
+        val session = generation
         val result = call()
-        if (result is ApiResult.Error && result.code == 403 && result.error == PermissionDenied) {
+        if (session == generation && result is ApiResult.Error && result.code == 403 && result.error == PermissionDenied) {
             onPermissionDenied?.invoke()
         }
         return result
@@ -218,11 +221,12 @@ class RequestsRepository(
     /**
      * The title's detail with the follows and unfollows that landed while the
      * read was out: one sent before a follow can answer after it, and must not
-     * bring back the state the follow replaced.
+     * bring back the state the follow replaced. Gated here so a prefetch
+     * refused for a blocked profile re-reads the capability too.
      */
     private suspend fun fetchDetail(mediaType: String, tmdbId: Int): ApiResult<RequestMediaDetail> {
         val since = eventSequence
-        return api.detail(mediaType, tmdbId).map { it.withFollowsAfter(since) }
+        return gated { api.detail(mediaType, tmdbId) }.map { it.withFollowsAfter(since) }
     }
 
     private fun RequestMediaDetail.withFollowsAfter(since: Long): RequestMediaDetail =

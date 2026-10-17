@@ -47,8 +47,13 @@ class RequestsFeatureStore(
     @kotlin.concurrent.Volatile
     private var generation: Int = 0
 
+    /** Bumped by each [refresh]: only the latest probe publishes, so an older one can't undo a newer answer. */
+    @kotlin.concurrent.Volatile
+    private var probe: Int = 0
+
     suspend fun refresh() {
         val refreshGeneration = generation
+        val refreshProbe = ++probe
         val status = repository.status()
         val enabled = when (status) {
             is ApiResult.Success -> status.data.isAvailable
@@ -59,7 +64,7 @@ class RequestsFeatureStore(
         }
         // Like [isEnabled], a failed probe keeps the previous answer.
         val follows = enabled && ((status as? ApiResult.Success)?.data?.followSupported ?: _followSupported.value)
-        if (refreshGeneration != generation) return
+        if (refreshGeneration != generation || refreshProbe != probe) return
         _followSupported.value = follows
         _isEnabled.value = enabled
         _isResolved.value = true
