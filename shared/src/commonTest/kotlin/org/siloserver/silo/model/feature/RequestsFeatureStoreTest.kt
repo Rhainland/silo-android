@@ -176,6 +176,77 @@ class RequestsFeatureStoreBlockedMidSessionTest {
     }
 
     @Test
+    fun capabilityOffFromARequestCallRefreshesTheCapability() = runTest {
+        for (problem in listOf("capability_disabled", "capability_not_configured", "capability_unsupported")) {
+            val api = FakeRequestsApi(
+                ApiResult.Success(available()),
+                ApiResult.Success(RequestsFeatureStatus(requestsEnabled = false, allowed = true, state = "disabled")),
+            )
+            api.discoverResult = ApiResult.Error(409, problem, "The requests capability is disabled by an administrator.")
+            val repository = RequestsRepository(api)
+            val store = RequestsFeatureStore(repository)
+            store.refresh()
+            assertTrue(store.isEnabled.value, problem)
+
+            repository.discover()
+
+            assertEquals(2, api.statusCalls, problem)
+            assertFalse(store.isEnabled.value, problem)
+        }
+    }
+
+    @Test
+    fun capabilityOffFromTheOwnRequestListRefreshesTheCapability() = runTest {
+        val api = FakeRequestsApi(
+            ApiResult.Success(available()),
+            ApiResult.Success(RequestsFeatureStatus(requestsEnabled = false, allowed = true, state = "disabled")),
+        )
+        api.mineResult = ApiResult.Error(409, "capability_disabled", "The requests capability is disabled by an administrator.")
+        val repository = RequestsRepository(api)
+        val store = RequestsFeatureStore(repository)
+        store.refresh()
+
+        repository.refreshMine()
+
+        assertFalse(store.isEnabled.value)
+    }
+
+    @Test
+    fun aRefusedCreateThatTheProbeStillAllowsKeepsRequests() = runTest {
+        // The server also answers permission_denied for a title above the
+        // profile's rating limit; the probe, not the refusal, decides.
+        val api = FakeRequestsApi(ApiResult.Success(available()), ApiResult.Success(available()))
+        api.createResult = ApiResult.Error(403, "permission_denied", "Request access denied.")
+        val repository = RequestsRepository(api)
+        val store = RequestsFeatureStore(repository)
+        store.refresh()
+
+        repository.create(CreateMediaRequest(mediaType = RequestMediaType.Movie, tmdbId = 7, title = "Movie 7"))
+
+        assertEquals(2, api.statusCalls)
+        assertTrue(store.isEnabled.value)
+    }
+
+    @Test
+    fun aPrefetchRefusedBecauseRequestsWentOffStopsAfterOneProbe() = runTest {
+        val api = FakeRequestsApi(
+            ApiResult.Success(available()),
+            ApiResult.Success(RequestsFeatureStatus(requestsEnabled = false, allowed = true, state = "disabled")),
+        )
+        api.detailResult = ApiResult.Error(409, "capability_disabled", "The requests capability is disabled by an administrator.")
+        val repository = RequestsRepository(api, RequestDetailCache(prefetchScope = backgroundScope))
+        val store = RequestsFeatureStore(repository)
+        store.refresh()
+
+        repository.prefetch((1..3).map { ownRequest(tmdbId = it) })
+        runCurrent()
+
+        assertEquals(1, api.detailCalls)
+        assertEquals(2, api.statusCalls)
+        assertFalse(store.isEnabled.value)
+    }
+
+    @Test
     fun otherRefusalsDoNotProbe() = runTest {
         val api = FakeRequestsApi(ApiResult.Success(available()))
         api.discoverResult = ApiResult.Error(403, "profile_verification_required", "")
@@ -249,15 +320,18 @@ private class FakeRequestsApi(
         return detailResult
     }
 
-    override suspend fun create(request: CreateMediaRequest): ApiResult<MediaRequest> =
-        ApiResult.NetworkError(IllegalStateException("not used"))
+    var createResult: ApiResult<MediaRequest> = ApiResult.NetworkError(IllegalStateException("not used"))
+
+    override suspend fun create(request: CreateMediaRequest): ApiResult<MediaRequest> = createResult
 
     override suspend fun mine(
         status: String?,
         outcome: String?,
         limit: Int?,
         offset: Int?,
-    ): ApiResult<RequestsListResponse> = ApiResult.NetworkError(IllegalStateException("not used"))
+    ): ApiResult<RequestsListResponse> = mineResult
+
+    var mineResult: ApiResult<RequestsListResponse> = ApiResult.NetworkError(IllegalStateException("not used"))
 
     override suspend fun get(id: String): ApiResult<MediaRequest> =
         ApiResult.NetworkError(IllegalStateException("not used"))

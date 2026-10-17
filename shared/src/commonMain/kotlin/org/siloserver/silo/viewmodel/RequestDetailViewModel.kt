@@ -450,12 +450,10 @@ class RequestDetailViewModel(
             _uiState.update {
                 it.copy(isFollowPending = false, actionErrorMessage = RequestActionCopy.failure(result, "Failed to update notification"))
             }
-            when {
-                // The feature went off: hide the action rather than let it fail again.
-                RequestActionCopy.isCapabilityOff(result) -> featureStore?.refresh()
-                // The request ended (or was never there): show what the title is now.
-                result is ApiResult.Error && result.error == "conflict" -> fetch(ownMaxAge = Duration.ZERO)
-            }
+            // A capability-off refusal already re-read the status in the
+            // repository, which hides the action. The request ended (or was
+            // never there): show what the title is now.
+            if (result is ApiResult.Error && result.error == "conflict") fetch(ownMaxAge = Duration.ZERO)
         }
     }
 

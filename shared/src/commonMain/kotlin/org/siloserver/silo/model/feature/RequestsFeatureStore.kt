@@ -17,9 +17,10 @@ import org.siloserver.silo.repository.RequestsRepository
  * server or profile switch. The feature counts only when the server
  * says this profile is `allowed` and the state is `available`.
  *
- * A request call refused with 403 `permission_denied` re-runs [refresh]: the
- * household manager blocked this profile mid-session, and the probe then
- * answers `allowed: false`.
+ * A request call refused with 403 `permission_denied` or a `capability_*`
+ * problem re-runs [refresh]: the account or profile was blocked mid-session,
+ * or an administrator turned requests off, and the probe then answers
+ * `allowed: false` or not `available`.
  *
  * Request administration (approve, decline, retry, limits) stays in web admin:
  * the native clients never probe or expose it.
@@ -28,7 +29,7 @@ class RequestsFeatureStore(
     private val repository: RequestsRepository,
 ) {
     init {
-        repository.onPermissionDenied = ::refresh
+        repository.onRequestsRefused = ::refresh
     }
 
     private val _isEnabled = MutableStateFlow(false)

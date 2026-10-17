@@ -2,6 +2,7 @@ package org.siloserver.silo.repository
 
 import org.siloserver.silo.model.request.CreateMediaRequest
 import org.siloserver.silo.model.request.MediaRequest
+import org.siloserver.silo.model.request.RequestActionCopy
 import org.siloserver.silo.model.request.RequestFollowEvent
 import org.siloserver.silo.model.request.RequestMediaDetail
 import org.siloserver.silo.model.request.RequestMediaPage
@@ -69,12 +70,15 @@ class RequestsRepository(
     private val follows = mutableMapOf<RequestDetailCache.Key, RequestFollowEvent>()
 
     /**
-     * Runs after a discovery, detail, create, or follow call is refused with 403
-     * `permission_denied`: a household manager blocked this profile from
-     * requests while it was in use. [org.siloserver.silo.model.feature.RequestsFeatureStore]
-     * re-reads the capability here, so the Requests entry points go away.
+     * Runs after a request call is refused in a way that may mean the cached
+     * capability is stale: 403 `permission_denied` (the account or profile was
+     * blocked from requests while in use) or a `capability_*` problem (an
+     * administrator turned requests off). [org.siloserver.silo.model.feature.RequestsFeatureStore]
+     * re-reads the capability here, so the Requests entry points go away and
+     * open Requests screens close. The probe decides: a refusal for another
+     * reason, such as a title above the profile's rating limit, changes nothing.
      */
-    internal var onPermissionDenied: (suspend () -> Unit)? = null
+    internal var onRequestsRefused: (suspend () -> Unit)? = null
 
     suspend fun status(): ApiResult<RequestsFeatureStatus> = api.status()
 
@@ -92,7 +96,7 @@ class RequestsRepository(
     suspend fun detail(mediaType: String, tmdbId: Int): ApiResult<RequestMediaDetail> =
         read({ fetchDetail(mediaType, tmdbId) }) { cache.store(it) }
 
-    suspend fun get(id: String): ApiResult<MediaRequest> = api.get(id)
+    suspend fun get(id: String): ApiResult<MediaRequest> = gated { api.get(id) }
 
     suspend fun refreshMine(
         status: String? = null,
@@ -101,7 +105,7 @@ class RequestsRepository(
         offset: Int? = null,
     ): ApiResult<Unit> {
         val mutationsBefore = ownMutations
-        val result = read({ api.mine(status, outcome, limit, offset) }) { response ->
+        val result = read({ gated { api.mine(status, outcome, limit, offset) } }) { response ->
             // A create or cancel that landed while this read was out isn't in
             // it: keep the patched list, and let the next caller read again.
             if (ownMutations != mutationsBefore) {
@@ -139,7 +143,7 @@ class RequestsRepository(
         gated { mutate({ api.create(request) }, ::publish) }
 
     suspend fun cancel(id: String): ApiResult<MediaRequest> =
-        mutate({ api.cancel(id) }, ::publish)
+        gated { mutate({ api.cancel(id) }, ::publish) }
 
     /** Get notified when a title someone else requested becomes available. */
     suspend fun follow(mediaType: String, tmdbId: Int): ApiResult<RequestState> =
@@ -164,16 +168,15 @@ class RequestsRepository(
     }
 
     /**
-     * A call that a profile blocked from requests is refused. Listing and
-     * cancelling its own requests stay allowed, so they are not gated. A
-     * refusal that lands after a [reset] belongs to the previous profile and
-     * is not reported.
+     * A request call whose refusal re-reads the capability ([onRequestsRefused]).
+     * A refusal that lands after a [reset] belongs to the previous profile or
+     * server and is not reported.
      */
     private suspend inline fun <T> gated(call: () -> ApiResult<T>): ApiResult<T> {
         val session = generation
         val result = call()
-        if (session == generation && result is ApiResult.Error && result.code == 403 && result.error == PermissionDenied) {
-            onPermissionDenied?.invoke()
+        if (session == generation && isRequestsRefusal(result)) {
+            onRequestsRefused?.invoke()
         }
         return result
     }
@@ -249,8 +252,14 @@ class RequestsRepository(
         /** How long a complete read of [mine] answers for a page that only needs one title's record. */
         val MineFreshness: Duration = 30.seconds
 
-        private const val PermissionDenied = "permission_denied"
-
         private val SessionChanged = ApiResult.Error(0, "identity_changed", "The acting account or profile changed.")
     }
 }
+
+/**
+ * A request call refused in a way that may mean the cached capability is
+ * stale: 403 `permission_denied`, or a `capability_*` problem.
+ */
+internal fun isRequestsRefusal(result: ApiResult<*>): Boolean =
+    (result is ApiResult.Error && result.code == 403 && result.error == "permission_denied") ||
+        RequestActionCopy.isCapabilityOff(result)
