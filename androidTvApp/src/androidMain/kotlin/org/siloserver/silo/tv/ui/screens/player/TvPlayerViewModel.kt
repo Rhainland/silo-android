@@ -5681,14 +5681,20 @@ class TvPlayerViewModel(
         }
     }
 
+    private var subtitleProviderStatusGeneration = 0L
+
     /**
      * Re-reads whether the server has a subtitle provider each time the
      * Subtitles pane shows, so a provider an administrator added or removed
      * shows or hides "Search online" without restarting playback.
      */
     private fun refreshSubtitleProviderStatus() {
+        // Reopening the panel can start a probe while an older one is still
+        // pending; only the newest answer is applied.
+        val generation = ++subtitleProviderStatusGeneration
         viewModelScope.launch {
             val result = subtitlesRepository.providerStatus()
+            if (generation != subtitleProviderStatusGeneration) return@launch
             _subtitleSearch.update {
                 it.copy(providerAvailable = subtitleSearchAvailabilityAfter(result, it.providerAvailable))
             }
