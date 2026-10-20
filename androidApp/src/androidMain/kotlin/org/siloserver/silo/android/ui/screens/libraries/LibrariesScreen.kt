@@ -120,6 +120,8 @@ import org.siloserver.silo.common.ui.components.DeferImagePresentationWhileScrol
 import org.siloserver.silo.common.diagnostics.DiagnosticsListLogger
 import org.siloserver.silo.common.diagnostics.DiagnosticsListSnapshot
 import org.siloserver.silo.common.diagnostics.DiagnosticsListSurface
+import org.siloserver.silo.model.catalog.BOX_SET_GROUP
+import org.siloserver.silo.model.catalog.CatalogBoxSet
 import org.siloserver.silo.model.catalog.CatalogFiltersResponse
 import org.siloserver.silo.model.catalog.isAudiobookItemType
 import org.siloserver.silo.android.ui.screens.home.HomeSectionRow
@@ -771,6 +773,11 @@ class LibrariesViewModel(
                     continuation = if (reset) null else catalogContinuation,
                     limit = pageSize,
                     namePrefix = requestState.selectedNamePrefix,
+                    // A library with box sets on browses them grouped; the
+                    // server groups before paging, so the grid never regroups.
+                    group = BOX_SET_GROUP.takeIf {
+                        requestState.libraries.firstOrNull { it.id == libraryId }?.boxSetsEnabled == true
+                    },
                     // Full facet filtering (genre/decade/rating/studio/language/...)
                     // via the shared query builder — replaces the single-genre param.
                     queryGroups = CatalogFilterQueryBuilder.buildGroups(requestState.filterState),
@@ -989,6 +996,7 @@ private const val ChromeFadeDistanceDp = 80f
 @Composable
 fun LibrariesScreen(
     onItemClick: (String, Int?) -> Unit,
+    onBoxSetClick: (CatalogBoxSet) -> Unit,
     onCollectionClick: (LibraryCollection, Int, String?) -> Unit,
     /** Opens a Recommended row's full page: the row, its library, and the Movies/Series scope. */
     onExploreSection: ((ResolvedSection, Int, String?) -> Unit)? = null,
@@ -1130,6 +1138,7 @@ fun LibrariesScreen(
                             state = state,
                             topInset = topInset,
                             onItemClick = { onItemClick(it, state.selectedLibraryId) },
+                            onBoxSetClick = onBoxSetClick,
                             onRetry = viewModel::retryCurrentTab,
                             onLoadMore = viewModel::loadMoreCatalog,
                             onSortChanged = viewModel::selectBrowseSort,
@@ -1282,6 +1291,7 @@ private fun BrowseTabContent(
     state: LibrariesUiState,
     topInset: Dp,
     onItemClick: (String) -> Unit,
+    onBoxSetClick: (CatalogBoxSet) -> Unit,
     onRetry: () -> Unit,
     onLoadMore: () -> Unit,
     onSortChanged: (LibraryBrowseSort) -> Unit,
@@ -1381,6 +1391,7 @@ private fun BrowseTabContent(
                     isLoadingMore = state.isLoadingMoreCatalog,
                     hasMore = state.catalogHasMore,
                     onItemClick = onItemClick,
+                    onBoxSetClick = onBoxSetClick,
                     onLoadMore = onLoadMore,
                     // Date sorts surface the sorted-by date under each card
                     // (mirrors the standalone BrowseScreen), Jim QA 2026-07-09.
