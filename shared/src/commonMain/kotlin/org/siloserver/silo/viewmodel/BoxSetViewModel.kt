@@ -10,7 +10,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import org.siloserver.silo.model.catalog.BrowseItem
 import org.siloserver.silo.model.catalog.CatalogBoxSetDetail
-import org.siloserver.silo.model.catalog.MediaItemUserState
+import org.siloserver.silo.model.catalog.withWatched
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.errorMessage
 import org.siloserver.silo.repository.CatalogRepository
@@ -49,6 +49,18 @@ class BoxSetViewModel(
      */
     private val beforeWatchedChange = mutableMapOf<String, BrowseItem>()
 
+    /**
+     * Each movie's latest watched change from a card, numbered in order. A
+     * read that started before a change answers with the state from before
+     * it, so the changes newer than the read are put back on its answer
+     * ([withChangesSince]). A change whose write failed is dropped here when
+     * the movie is put back.
+     */
+    private val watchedChanges = mutableMapOf<String, WatchedChange>()
+    private var lastWatchedChange = 0L
+
+    private data class WatchedChange(val number: Long, val watched: Boolean)
+
     init { load() }
 
     /** Loads the box set again, showing the loading state. */
@@ -63,9 +75,12 @@ class BoxSetViewModel(
         // A read in flight already answers with the latest state.
         if (loadJob?.isActive == true) return
         if (_uiState.value.detail == null) return load()
+        val readStart = lastWatchedChange
         loadJob = viewModelScope.launch {
             when (val result = catalogRepository.getBoxSet(boxSetId, libraryId)) {
-                is ApiResult.Success -> _uiState.update { it.copy(detail = result.data, unavailable = false, error = null) }
+                is ApiResult.Success -> _uiState.update {
+                    it.copy(detail = result.data.withChangesSince(readStart), unavailable = false, error = null)
+                }
                 // The box set went away (box sets turned off, access narrowed).
                 is ApiResult.Error -> if (result.code == 404) {
                     _uiState.update { BoxSetUiState(isLoading = false, unavailable = true) }
@@ -96,13 +111,8 @@ class BoxSetViewModel(
     fun onMovieWatchedChanged(contentId: String, watched: Boolean) {
         val before = _uiState.value.detail?.items?.firstOrNull { it.contentId == contentId } ?: return
         beforeWatchedChange[contentId] = before
-        replaceMovie(
-            before.copy(
-                userState = (before.userState ?: MediaItemUserState()).copy(played = watched),
-                // Played or reset, either way the movie no longer resumes.
-                positionSeconds = null,
-            ),
-        )
+        watchedChanges[contentId] = WatchedChange(++lastWatchedChange, watched)
+        replaceMovie(before.withWatched(watched))
     }
 
     /**
@@ -113,8 +123,17 @@ class BoxSetViewModel(
      * settles everything from the server.
      */
     fun onMovieWatchedWriteFailed(contentId: String) {
+        watchedChanges.remove(contentId)
         beforeWatchedChange.remove(contentId)?.let(::replaceMovie)
         refresh()
+    }
+
+    /** This answer with the watched changes made after its read started put back on it. */
+    private fun CatalogBoxSetDetail.withChangesSince(readStart: Long): CatalogBoxSetDetail {
+        val newer = watchedChanges.filterValues { it.number > readStart }
+        if (newer.isEmpty()) return this
+        val movies = items.map { movie -> newer[movie.contentId]?.let { movie.withWatched(it.watched) } ?: movie }
+        return copy(items = movies, boxSet = boxSet.copy(playedCount = movies.count { it.userState?.played == true }))
     }
 
     private fun replaceMovie(movie: BrowseItem) {

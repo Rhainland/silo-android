@@ -47,6 +47,8 @@ import org.siloserver.silo.tv.ui.components.rememberAmbientBackdropTintState
 import org.siloserver.silo.tv.ui.focus.TvContentInitialFocusMaxAttempts
 import org.siloserver.silo.tv.ui.focus.requestFocusUntilObserved
 import org.siloserver.silo.tv.ui.screens.detail.TvDetailHero
+import org.siloserver.silo.tv.ui.screens.watchparty.TvWatchPartyPlayGuardDialog
+import org.siloserver.silo.tv.ui.screens.watchparty.rememberTvWatchPartyPlayGuard
 import org.siloserver.silo.tv.ui.screens.detail.TvDetailHorizontalInset
 import org.siloserver.silo.tv.ui.screens.detail.TvDetailPageBottomPadding
 import org.siloserver.silo.tv.ui.screens.detail.TvDetailSectionHeader
@@ -72,10 +74,17 @@ fun TvBoxSetScreen(
     ),
 ) {
     BackHandler(enabled = true) { onBack() }
+    // D5: while this TV is in a Watch Party, Play first asks to leave the
+    // party; leaving is never hidden behind a solo start.
+    val watchPartyPlayGuard = rememberTvWatchPartyPlayGuard()
+    val guardedPlayMovie: (String, Double?) -> Unit = { contentId, resumePositionSeconds ->
+        watchPartyPlayGuard.requestPlay { onPlayMovie(contentId, resumePositionSeconds) }
+    }
+    TvWatchPartyPlayGuardDialog(watchPartyPlayGuard)
     val state by viewModel.uiState.collectAsState()
     val detail = state.detail
     when {
-        detail != null -> BoxSetContent(detail, viewModel, onPlayMovie, onOpenMovie)
+        detail != null -> BoxSetContent(detail, viewModel, guardedPlayMovie, onOpenMovie)
         state.unavailable -> TvCatalogEmptyState(
             message = "This box set isn't available. Box sets may be turned off for this library, " +
                 "or too few of its movies are here.",

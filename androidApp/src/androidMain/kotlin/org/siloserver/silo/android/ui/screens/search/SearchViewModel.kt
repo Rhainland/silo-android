@@ -356,88 +356,88 @@ class SearchViewModel(
             null
         }
 
-        while (true) {
-            val result = catalogRepository.browse(
-                source = "query",
-                query = query,
-                mediaType = requestedMediaType.wire,
-                continuation = cursor,
-                limit = pageSize,
-            )
-            val latest = _uiState.value
-            if (generation != searchGeneration || latest.query != query || latest.mediaType != requestedMediaType) {
-                boxSetsRequest?.cancel()
-                return
-            }
+        // The box set request ends with the search, whether a newer query or a
+        // cleared field replaces it, it fails, or it answers.
+        try {
+            while (true) {
+                val result = catalogRepository.browse(
+                    source = "query",
+                    query = query,
+                    mediaType = requestedMediaType.wire,
+                    continuation = cursor,
+                    limit = pageSize,
+                )
+                val latest = _uiState.value
+                if (generation != searchGeneration || latest.query != query || latest.mediaType != requestedMediaType) return
 
-            when (result) {
-                is ApiResult.Success -> {
-                    val response = result.data
-                    cursor = response.continuation
-                    val rawCount = response.items.size
-                    val pageVisibleItems = requestedMediaType.filterResults(response.items)
+                when (result) {
+                    is ApiResult.Success -> {
+                        val response = result.data
+                        cursor = response.continuation
+                        val rawCount = response.items.size
+                        val pageVisibleItems = requestedMediaType.filterResults(response.items)
 
-                    pagesFetched += 1
-                    visibleItems += pageVisibleItems
-                    offset += rawCount
-                    hasMore = response.hasMore && rawCount > 0
-                    total = response.total
+                        pagesFetched += 1
+                        visibleItems += pageVisibleItems
+                        offset += rawCount
+                        hasMore = response.hasMore && rawCount > 0
+                        total = response.total
 
-                    val shouldAdvanceFilteredPage = shouldAutoAdvanceFilteredSearchPage(
-                        isClientFiltered = requestedMediaType.isClientFiltered,
-                        visibleItemCount = visibleItems.size,
-                        hasMore = hasMore,
-                        pagesFetched = pagesFetched,
-                    )
-                    if (shouldAdvanceFilteredPage) continue
-
-                    // Box sets only add to the titles, so a slow answer never holds them
-                    // back for long: past the grace period this query shows none.
-                    val boxSets = withTimeoutOrNull(BOX_SET_SEARCH_GRACE_MILLIS) { boxSetsRequest?.await() }.orEmpty()
-                    boxSetsRequest?.cancel()
-                    val current = _uiState.value
-                    if (generation != searchGeneration || current.query != query || current.mediaType != requestedMediaType) return
-                    continuation = cursor
-                    _uiState.update {
-                        val nextResults = if (reset) visibleItems else it.results + visibleItems
-                        it.copy(
-                            isSearching = false,
-                            results = nextResults,
-                            boxSets = if (reset) boxSets else it.boxSets,
+                        val shouldAdvanceFilteredPage = shouldAutoAdvanceFilteredSearchPage(
+                            isClientFiltered = requestedMediaType.isClientFiltered,
+                            visibleItemCount = visibleItems.size,
                             hasMore = hasMore,
-                            total = if (requestedMediaType.isClientFiltered) nextResults.size else total,
-                            totalExact = if (requestedMediaType.isClientFiltered) !hasMore else response.totalExact == true,
-                            searchDiagnostics = response.searchDiagnostics,
-                            error = null,
-                            hasSearched = true,
-                            nextOffset = offset,
+                            pagesFetched = pagesFetched,
                         )
+                        if (shouldAdvanceFilteredPage) continue
+
+                        // Box sets only add to the titles, so a slow answer never holds them
+                        // back for long: past the grace period this query shows none.
+                        val boxSets = withTimeoutOrNull(BOX_SET_SEARCH_GRACE_MILLIS) { boxSetsRequest?.await() }.orEmpty()
+                        val current = _uiState.value
+                        if (generation != searchGeneration || current.query != query || current.mediaType != requestedMediaType) return
+                        continuation = cursor
+                        _uiState.update {
+                            val nextResults = if (reset) visibleItems else it.results + visibleItems
+                            it.copy(
+                                isSearching = false,
+                                results = nextResults,
+                                boxSets = if (reset) boxSets else it.boxSets,
+                                hasMore = hasMore,
+                                total = if (requestedMediaType.isClientFiltered) nextResults.size else total,
+                                totalExact = if (requestedMediaType.isClientFiltered) !hasMore else response.totalExact == true,
+                                searchDiagnostics = response.searchDiagnostics,
+                                error = null,
+                                hasSearched = true,
+                                nextOffset = offset,
+                            )
+                        }
+                        return
                     }
-                    return
-                }
-                is ApiResult.Error -> {
-                    boxSetsRequest?.cancel()
-                    _uiState.update {
-                        it.copy(
-                            isSearching = false,
-                            error = result.message.ifBlank { "Search failed" },
-                            hasSearched = true,
-                        )
+                    is ApiResult.Error -> {
+                        _uiState.update {
+                            it.copy(
+                                isSearching = false,
+                                error = result.message.ifBlank { "Search failed" },
+                                hasSearched = true,
+                            )
+                        }
+                        return
                     }
-                    return
-                }
-                is ApiResult.NetworkError -> {
-                    boxSetsRequest?.cancel()
-                    _uiState.update {
-                        it.copy(
-                            isSearching = false,
-                            error = result.errorMessage("Search failed"),
-                            hasSearched = true,
-                        )
+                    is ApiResult.NetworkError -> {
+                        _uiState.update {
+                            it.copy(
+                                isSearching = false,
+                                error = result.errorMessage("Search failed"),
+                                hasSearched = true,
+                            )
+                        }
+                        return
                     }
-                    return
                 }
             }
+        } finally {
+            boxSetsRequest?.cancel()
         }
     }
 }

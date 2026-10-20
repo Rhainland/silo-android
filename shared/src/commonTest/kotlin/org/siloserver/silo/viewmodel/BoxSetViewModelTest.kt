@@ -136,4 +136,36 @@ class BoxSetViewModelTest {
         vm.onMovieWatchedChanged("hp1", watched = false)
         assertEquals(0, vm.uiState.value.detail?.boxSet?.playedCount)
     }
+
+    @Test fun aReadInFlightKeepsAWatchedChangeMadeMeanwhile() = runWith(mutableListOf(
+        json(HttpStatusCode.OK, body),
+        // Started before the change, so it still says neither movie is played.
+        json(HttpStatusCode.OK, body),
+    )) { vm ->
+        advanceUntilIdle()
+        vm.refresh()
+        vm.onMovieWatchedChanged("hp2", watched = true)
+        advanceUntilIdle()
+        val detail = assertNotNull(vm.uiState.value.detail)
+        assertEquals(1, detail.boxSet.playedCount)
+        assertEquals(true, detail.items.single { it.contentId == "hp2" }.userState?.played)
+        assertEquals("hp1", org.siloserver.silo.model.catalog.boxSetNextMovie(detail.items)?.contentId)
+    }
+
+    @Test fun aReadInFlightDoesNotBringBackAChangeWhoseWriteFailed() = runWith(mutableListOf(
+        json(HttpStatusCode.OK, inProgressBody),
+        json(HttpStatusCode.OK, inProgressBody),
+    )) { vm ->
+        advanceUntilIdle()
+        vm.refresh()
+        vm.onMovieWatchedChanged("hp1", watched = true)
+        // The write fails while the read is still out; its own re-read joins that read.
+        vm.onMovieWatchedWriteFailed("hp1")
+        advanceUntilIdle()
+        val detail = assertNotNull(vm.uiState.value.detail)
+        assertEquals(0, detail.boxSet.playedCount)
+        val next = assertNotNull(org.siloserver.silo.model.catalog.boxSetNextMovie(detail.items))
+        assertEquals("hp1", next.contentId)
+        assertEquals(600.0, next.positionSeconds)
+    }
 }
