@@ -44,6 +44,8 @@ import org.siloserver.silo.android.ui.screens.detail.DetailTopChrome
 import org.siloserver.silo.android.ui.screens.detail.HeaderSettledDp
 import org.siloserver.silo.android.ui.screens.detail.PrimaryPillButton
 import org.siloserver.silo.android.ui.screens.detail.SectionHeader
+import org.siloserver.silo.android.ui.screens.watchparty.WatchPartySoloGuardDialog
+import org.siloserver.silo.android.ui.screens.watchparty.rememberWatchPartySoloGuard
 import org.siloserver.silo.android.ui.theme.SiloBackground
 import org.siloserver.silo.android.ui.util.rememberDominantColor
 import org.siloserver.silo.common.ui.components.DeferImagePresentationWhileScrolling
@@ -71,6 +73,12 @@ fun BoxSetScreen(
     onMovieClick: (contentId: String) -> Unit,
 ) {
     val state by viewModel.uiState.collectAsState()
+    // D5: while this device is in a Watch Party, Play asks to leave the party
+    // first (the player is shared), as on a movie's own page.
+    val soloGuard = rememberWatchPartySoloGuard()
+    val guardedPlayMovie: (String, Double?) -> Unit = { contentId, resumePositionSeconds ->
+        soloGuard.run { onPlayMovie(contentId, resumePositionSeconds) }
+    }
     // Coming back from a movie re-reads watched state and the play target.
     LifecycleResumeEffect(viewModel) {
         viewModel.onScreenResumed()
@@ -87,7 +95,7 @@ fun BoxSetScreen(
             detail != null -> BoxSetContent(
                 detail = detail,
                 detailScroll = detailScroll,
-                onPlayMovie = onPlayMovie,
+                onPlayMovie = guardedPlayMovie,
                 onMovieClick = onMovieClick,
                 onMovieWatchedChanged = viewModel::onMovieWatchedChanged,
                 onMovieWatchedWriteFailed = viewModel::onMovieWatchedWriteFailed,
@@ -114,6 +122,7 @@ fun BoxSetScreen(
             onBackClick = onBackClick,
         )
     }
+    WatchPartySoloGuardDialog(soloGuard)
 }
 
 @Composable
