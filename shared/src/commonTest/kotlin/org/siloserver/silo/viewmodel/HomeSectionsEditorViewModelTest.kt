@@ -31,6 +31,9 @@ class HomeSectionsEditorViewModelTest {
         {"id":"ov-gone","section_id":"gone","position":null,"hidden":false,"removed":true,"section_type":"","title":"","featured":null,"item_limit":null,"is_user_added":false,"user_section_type":"","user_title":"","created_at":null,"updated_at":null}
     ]}"""
     private var putStatus = HttpStatusCode.NoContent
+    private var putGate: CompletableDeferred<Unit>? = null
+    private var settingsReads = 0
+    private var settingsStatus = HttpStatusCode.OK
     private val puts = mutableListOf<JsonElement>()
     private val changes = HomeLayoutChanges()
 
@@ -43,9 +46,14 @@ class HomeSectionsEditorViewModelTest {
                 when {
                     request.method == HttpMethod.Put -> {
                         puts += Json.parseToJsonElement((request.body as TextContent).text)
+                        putGate?.await()
                         respond("", putStatus)
                     }
-                    request.url.encodedPath.endsWith("/settings") -> respond(settings, HttpStatusCode.OK, json)
+                    request.url.encodedPath.endsWith("/settings") -> {
+                        settingsReads++
+                        if (settingsStatus == HttpStatusCode.OK) respond(settings, HttpStatusCode.OK, json)
+                        else respond("", settingsStatus)
+                    }
                     else -> respond(overrides, HttpStatusCode.OK, json)
                 }
             }
@@ -113,5 +121,51 @@ class HomeSectionsEditorViewModelTest {
         assertEquals(listOf("recent", "continue"), vm.state.value.rows.map { it.id })
         assertNotNull(vm.state.value.saveError)
         assertEquals(0L, changes.revision.value)
+    }
+
+    @Test
+    fun aSecondFailedSaveRestoresTheLastSavedLayoutNotTheFirstUnsavedChange() = scenario { vm ->
+        runCurrent()
+        putStatus = HttpStatusCode.InternalServerError
+
+        vm.move("continue", -1)
+        vm.setHidden("recent", true)
+        runCurrent()
+
+        assertEquals(listOf("recent", "continue"), vm.state.value.rows.map { it.id })
+        assertFalse(vm.state.value.rows.single { it.id == "recent" }.hidden)
+        assertNotNull(vm.state.value.saveError)
+    }
+
+    @Test
+    fun reopeningTheEditorWaitsForAPendingSaveBeforeReadingTheLayout() = scenario { vm ->
+        runCurrent()
+        val readsAfterOpen = settingsReads
+        putGate = CompletableDeferred()
+
+        vm.move("continue", -1)
+        runCurrent()
+        vm.load()
+        runCurrent()
+        assertEquals(readsAfterOpen, settingsReads, "the layout was read while the save was still running")
+
+        putGate!!.complete(Unit)
+        runCurrent()
+        assertEquals(readsAfterOpen + 1, settingsReads)
+    }
+
+    @Test
+    fun aFailedReloadShowsTheErrorInsteadOfTheOldRowsAndCannotSave() = scenario { vm ->
+        runCurrent()
+        settingsStatus = HttpStatusCode.InternalServerError
+
+        vm.load()
+        runCurrent()
+
+        assertTrue(vm.state.value.rows.isEmpty())
+        assertNotNull(vm.state.value.loadError)
+        vm.setHidden("recent", true)
+        runCurrent()
+        assertTrue(puts.isEmpty())
     }
 }

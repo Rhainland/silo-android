@@ -38,21 +38,39 @@ class HomeSectionsEditorViewModel(private val repository: ProfileHomeLayoutRepos
 
     /** The profile the rows were read for; every save is pinned to it. */
     private var owner: AuthScopeSnapshot? = null
+
+    /** The rows as the server last confirmed them: read, or saved. A failed save goes back to these. */
+    private var confirmed: List<ProfileSectionSetting> = emptyList()
+
+    /** Held by each save, and by each read so it never runs beside a save and shows the layout before it. */
     private val saves = Mutex()
     private var loadJob: Job? = null
 
-    /** (Re)reads the profile's rows; the editors call it each time they open. */
+    /**
+     * (Re)reads the profile's rows; the editors call it each time they open.
+     * Until the read lands the editor shows its loading state and takes no
+     * edits, so neither another profile's old rows nor an edit made before
+     * the read can be saved over the layout it returns.
+     */
     fun load() {
         loadJob?.cancel()
+        owner = null
+        _state.update { it.copy(isLoading = true, rows = emptyList(), loadError = null, saveError = null) }
         loadJob = viewModelScope.launch {
-            _state.update { it.copy(isLoading = true, loadError = null, saveError = null) }
-            when (val result = repository.load()) {
-                is ApiResult.Success -> {
-                    owner = result.data.owner
-                    _state.update { it.copy(isLoading = false, rows = result.data.rows, loadError = null) }
-                }
-                else -> _state.update {
-                    it.copy(isLoading = false, loadError = result.errorMessage("Could not load Home sections."))
+            saves.withLock {
+                when (val result = repository.load()) {
+                    is ApiResult.Success -> {
+                        owner = result.data.owner
+                        confirmed = result.data.rows
+                        _state.update { it.copy(isLoading = false, rows = result.data.rows, loadError = null) }
+                    }
+                    else -> _state.update {
+                        it.copy(
+                            isLoading = false,
+                            rows = emptyList(),
+                            loadError = result.errorMessage("Could not load Home sections."),
+                        )
+                    }
                 }
             }
         }
@@ -85,20 +103,21 @@ class HomeSectionsEditorViewModel(private val repository: ProfileHomeLayoutRepos
     }
 
     private fun commit(next: List<ProfileSectionSetting>) {
-        val previous = _state.value.rows
         val owner = owner
-        if (next == previous || owner == null) return
+        if (next == _state.value.rows || owner == null) return
         _state.update { it.copy(rows = next, saveError = null) }
         viewModelScope.launch {
             saves.withLock {
-                val result = repository.save(owner, next)
-                if (result !is ApiResult.Success) {
+                val result = repository.save(owner, next, baseline = confirmed)
+                if (result is ApiResult.Success) {
+                    confirmed = next
+                } else {
                     _state.update { state ->
                         state.copy(
-                            // A later change already carries this one and
-                            // saves the whole list itself, so only an
-                            // untouched list goes back.
-                            rows = if (state.rows == next) previous else state.rows,
+                            // A later change carries this one and saves the
+                            // whole list itself; only the list this save
+                            // failed to store goes back, to what the server has.
+                            rows = if (state.rows == next) confirmed else state.rows,
                             saveError = result.errorMessage("Could not save Home sections."),
                         )
                     }

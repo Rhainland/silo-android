@@ -315,8 +315,8 @@ val androidTvModule = module {
         org.siloserver.silo.common.settings.BrowsePrefsStore(androidContext(), get(), keyPrefix = "androidtv")
     }
 
-    // tvOS-parity Home row visibility/order, local to this TV and partitioned
-    // by active server + profile.
+    // Home Sections editor: the active profile's Home row order and
+    // visibility, read from and saved to the server.
     viewModel { org.siloserver.silo.viewmodel.HomeSectionsEditorViewModel(get()) }
 
     // One-shot legacy `tv_prefs` import (playback settings → server device

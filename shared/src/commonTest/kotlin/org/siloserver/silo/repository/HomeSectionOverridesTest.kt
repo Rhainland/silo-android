@@ -28,6 +28,7 @@ class HomeSectionOverridesTest {
         val built = buildHomeSectionOverrides(
             rows = listOf(row("continue", hidden = true), row("ov-custom", isCustom = true), row("recent")),
             saved = listOf(renamed, custom, removed),
+            baseline = listOf(row("recent"), row("ov-custom", isCustom = true), row("continue")),
             newId = { ids.removeFirst() },
         )
 
@@ -47,6 +48,7 @@ class HomeSectionOverridesTest {
         val built = buildHomeSectionOverrides(
             rows = listOf(row("recent", hidden = true)),
             saved = listOf(renamed),
+            baseline = listOf(row("recent")),
             newId = { error("no new id expected") },
         )
 
@@ -58,9 +60,77 @@ class HomeSectionOverridesTest {
         val built = buildHomeSectionOverrides(
             rows = listOf(row("recent")),
             saved = listOf(renamed.copy(id = "")),
+            baseline = listOf(row("recent")),
             newId = { "fresh" },
         )
 
         assertEquals(listOf(renamed.copy(id = "fresh", position = 0)), built)
+    }
+
+    // Until the profile orders its Home itself, rows keep following the
+    // admin's order, so a visibility change must not pin any position.
+    @Test
+    fun hidingARowOnAFreshProfileWritesNoPositionsAndOnlyThatRow() {
+        val built = buildHomeSectionOverrides(
+            rows = listOf(row("recent"), row("continue", hidden = true), row("trending")),
+            saved = emptyList(),
+            baseline = listOf(row("recent"), row("continue"), row("trending")),
+            newId = { "new" },
+        )
+
+        assertEquals(listOf(SectionOverride(id = "new", sectionId = "continue", hidden = true)), built)
+    }
+
+    @Test
+    fun showingARowAgainKeepsItsUnpositionedOverride() {
+        val hiddenOnly = SectionOverride(id = "ov-continue", sectionId = "continue", hidden = true)
+        val built = buildHomeSectionOverrides(
+            rows = listOf(row("recent"), row("continue")),
+            saved = listOf(hiddenOnly),
+            baseline = listOf(row("recent"), row("continue", hidden = true)),
+            newId = { error("no new id expected") },
+        )
+
+        assertEquals(listOf(hiddenOnly.copy(hidden = false)), built)
+    }
+
+    @Test
+    fun reorderingAFreshProfileWritesAPositionForEveryRow() {
+        val ids = ArrayDeque(listOf("n1", "n2"))
+        val built = buildHomeSectionOverrides(
+            rows = listOf(row("continue"), row("recent")),
+            saved = emptyList(),
+            baseline = listOf(row("recent"), row("continue")),
+            newId = { ids.removeFirst() },
+        )
+
+        assertEquals(
+            listOf(
+                SectionOverride(id = "n1", sectionId = "continue", position = 0),
+                SectionOverride(id = "n2", sectionId = "recent", position = 1),
+            ),
+            built,
+        )
+    }
+
+    @Test
+    fun hidingARowAfterAnEarlierReorderKeepsWritingPositions() {
+        val built = buildHomeSectionOverrides(
+            rows = listOf(row("continue"), row("recent", hidden = true)),
+            saved = listOf(
+                SectionOverride(id = "ov-continue", sectionId = "continue", position = 0),
+                SectionOverride(id = "ov-recent", sectionId = "recent", position = 1),
+            ),
+            baseline = listOf(row("continue"), row("recent")),
+            newId = { error("no new id expected") },
+        )
+
+        assertEquals(
+            listOf(
+                SectionOverride(id = "ov-continue", sectionId = "continue", position = 0),
+                SectionOverride(id = "ov-recent", sectionId = "recent", position = 1, hidden = true),
+            ),
+            built,
+        )
     }
 }

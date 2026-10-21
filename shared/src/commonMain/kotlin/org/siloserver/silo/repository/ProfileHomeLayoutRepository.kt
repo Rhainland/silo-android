@@ -51,15 +51,20 @@ class ProfileHomeLayoutRepository(
     /**
      * Saves [rows] (the whole Home list in its new order, with each row's
      * visibility) as the profile's layout, keeping every other saved
-     * customization; see [buildHomeSectionOverrides].
+     * customization. [baseline] is the list as the server last confirmed it;
+     * see [buildHomeSectionOverrides].
      */
-    suspend fun save(owner: AuthScopeSnapshot, rows: List<ProfileSectionSetting>): ApiResult<Unit> {
+    suspend fun save(
+        owner: AuthScopeSnapshot,
+        rows: List<ProfileSectionSetting>,
+        baseline: List<ProfileSectionSetting>,
+    ): ApiResult<Unit> {
         val saved = when (val read = api.homeOverrides(owner)) {
             is ApiResult.Success -> read.data
             is ApiResult.Error -> return read
             is ApiResult.NetworkError -> return read
         }
-        val result = api.replaceHome(owner, buildHomeSectionOverrides(rows, saved, newId))
+        val result = api.replaceHome(owner, buildHomeSectionOverrides(rows, saved, baseline, newId))
         if (result is ApiResult.Success) changes.changed()
         return result
     }
