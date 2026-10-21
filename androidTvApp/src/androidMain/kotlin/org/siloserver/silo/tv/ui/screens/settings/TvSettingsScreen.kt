@@ -139,7 +139,6 @@ import org.siloserver.silo.tv.ui.theme.Spacing
 import org.koin.compose.koinInject
 import org.koin.compose.viewmodel.koinViewModel
 import org.siloserver.silo.common.watchparty.WatchPartyExperiment
-import org.siloserver.silo.viewmodel.HomeViewModel
 import kotlinx.coroutines.delay
 
 /**
@@ -162,7 +161,6 @@ fun TvSettingsScreen(
     onManageServersReturnFocusConsumed: () -> Unit = {},
     viewModel: TvSettingsViewModel = koinViewModel(),
     diagnosticsViewModel: TvDiagnosticsViewModel = koinViewModel(),
-    homeSectionsViewModel: HomeViewModel = koinViewModel(key = "settings-home-sections"),
 ) {
     val state by viewModel.uiState.collectAsState()
     val diagnosticsState by diagnosticsViewModel.state.collectAsState()
@@ -275,7 +273,6 @@ fun TvSettingsScreen(
         state = state,
         diagnosticsState = diagnosticsState,
         diagnosticsViewModel = diagnosticsViewModel,
-        homeSectionsViewModel = homeSectionsViewModel,
         selectedCategory = selectedCategory,
         categoryFocusRequesters = categoryFocusRequesters,
         detailFocusRequester = detailFocusRequester,
@@ -427,7 +424,6 @@ private fun SettingsSplitLayout(
     state: TvSettingsViewModel.UiState,
     diagnosticsState: org.siloserver.silo.common.diagnostics.DiagnosticsUiState,
     diagnosticsViewModel: TvDiagnosticsViewModel,
-    homeSectionsViewModel: HomeViewModel,
     selectedCategory: TvSettingsCategory,
     categoryFocusRequesters: Map<TvSettingsCategory, FocusRequester>,
     detailFocusRequester: FocusRequester,
@@ -522,7 +518,6 @@ private fun SettingsSplitLayout(
             state = state,
             diagnosticsState = diagnosticsState,
             diagnosticsViewModel = diagnosticsViewModel,
-            homeSectionsViewModel = homeSectionsViewModel,
             selectedCategory = selectedCategory,
             detailFocusRequester = detailFocusRequester,
             onDetailFocusChanged = onDetailFocusChanged,
@@ -808,7 +803,6 @@ private fun SettingsDetailPane(
     state: TvSettingsViewModel.UiState,
     diagnosticsState: org.siloserver.silo.common.diagnostics.DiagnosticsUiState,
     diagnosticsViewModel: TvDiagnosticsViewModel,
-    homeSectionsViewModel: HomeViewModel,
     selectedCategory: TvSettingsCategory,
     detailFocusRequester: FocusRequester,
     onDetailFocusChanged: (Boolean) -> Unit,
@@ -867,7 +861,6 @@ private fun SettingsDetailPane(
         when (selectedCategory) {
             TvSettingsCategory.General -> TvGeneralSettingsPane(
                 state = state,
-                homeSectionsViewModel = homeSectionsViewModel,
                 firstFocusRequester = detailFocusRequester,
                 onShowAudiobooksTabChanged = onShowAudiobooksTabChanged,
                 onProfileLaunchBehaviorChanged = onProfileLaunchBehaviorChanged,
@@ -989,7 +982,6 @@ private fun SettingsPaneHeader(category: TvSettingsCategory) {
 @Composable
 private fun TvGeneralSettingsPane(
     state: TvSettingsViewModel.UiState,
-    homeSectionsViewModel: HomeViewModel,
     firstFocusRequester: FocusRequester,
     onShowAudiobooksTabChanged: (Boolean) -> Unit,
     onProfileLaunchBehaviorChanged: (ProfileLaunchBehavior) -> Unit,
@@ -1025,8 +1017,8 @@ private fun TvGeneralSettingsPane(
             }
         }
         item {
-            // Device-local, server/profile-specific visibility and order for
-            // the populated rows returned by Home, matching tvOS General.
+            // The active profile's Home row order and visibility, saved on the
+            // server so they follow the profile to every device.
             SettingsGroup(title = "Home Sections") {
                 SettingsValueRow(
                     label = "Home Sections",
@@ -1034,7 +1026,7 @@ private fun TvGeneralSettingsPane(
                     onClick = { showHomeSectionsEditor = true },
                 )
                 SettingsFooterText(
-                    text = "Choose which Home rows are visible and edit the order in which they appear on this Android TV.",
+                    text = "Choose which Home rows are visible and the order they appear in. This applies to this profile on every device.",
                 )
             }
         }
@@ -1178,10 +1170,7 @@ private fun TvGeneralSettingsPane(
     }
 
     if (showHomeSectionsEditor) {
-        TvHomeSectionsEditor(
-            onDismiss = { showHomeSectionsEditor = false },
-            viewModel = homeSectionsViewModel,
-        )
+        TvHomeSectionsEditor(onDismiss = { showHomeSectionsEditor = false })
     }
 }
 

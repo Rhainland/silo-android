@@ -507,7 +507,7 @@ val androidModule = module {
             networkEvidenceProvider = get(),
         )
     }
-    viewModel { HomeViewModel(get(), get(), get(), get(), getOrNull(), get(), get(), catalogLanguage = get()) }
+    viewModel { HomeViewModel(get(), get(), get(), get(), getOrNull(), get(), get(), catalogLanguage = get(), homeLayoutChanges = get()) }
     viewModel { MainHeaderViewModel(get()) }
     viewModel {
         LibrariesViewModel(
@@ -526,12 +526,7 @@ val androidModule = module {
             serverRegistry = get(),
         )
     }
-    single {
-        org.siloserver.silo.android.ui.screens.home.HomeSectionPreferencesStore(
-            context = get(),
-            serverRegistry = get(),
-        )
-    }
+    viewModel { org.siloserver.silo.viewmodel.HomeSectionsEditorViewModel(get()) }
     viewModel { params ->
         BrowseViewModel(
             get(),
