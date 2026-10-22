@@ -148,6 +148,17 @@ private class FakeDeviceLogin : DeviceLoginPort {
     }
 }
 
+/** In-memory cleartext approvals, keyed by the exact origin. */
+private class FakeCleartextConsent : org.siloserver.silo.common.network.CleartextConsentStore {
+    val approved = mutableSetOf<String>()
+
+    override suspend fun isApproved(origin: String) = origin in approved
+
+    override suspend fun approve(origin: String) {
+        approved += origin
+    }
+}
+
 class PairingReceiverTest {
 
     private fun receiver(
@@ -155,11 +166,13 @@ class PairingReceiverTest {
         login: FakeDeviceLogin,
         state: PairingReceiverState = PairingReceiverState.Setup,
         identities: Map<String, ServerIdentityProbe> = emptyMap(),
+        cleartext: FakeCleartextConsent = FakeCleartextConsent(),
     ) = PairingReceiver(
         authPort = auth,
         deviceLogin = login,
         identityProvider = { PairingDeviceIdentity(name = "Test TV", deviceId = "device-1") },
         identityProbe = { url -> identities[url] ?: ServerIdentityProbe.Unreachable },
+        cleartextConsent = cleartext,
     ).also { it.advertisement = PairingAdvertisement(state) }
 
     @Test
@@ -352,6 +365,64 @@ class PairingReceiverTest {
         repeat(10) { yield() }
         assertEquals(listOf("https://one.test"), auth.committedSessions.map { it.serverUrl })
         assertEquals("https://two.test", login.beganWith?.serverUrl)
+
+        transport.deliver(PairingMessage.Done)
+        job.join()
+    }
+
+    /**
+     * A plain-HTTP server needs the TV's own cleartext approval before any
+     * credential-bearing request; the setup consent is where the TV user
+     * gives it, warned that the connection is unencrypted.
+     */
+    @Test
+    fun allowingAPlainHttpServerApprovesItsOriginBeforeSigningIn() = runTest {
+        val transport = FakeTransport()
+        val login = FakeDeviceLogin()
+        val cleartext = FakeCleartextConsent()
+        val recv = receiver(FakeAuthPort(), login, cleartext = cleartext)
+
+        val job = launch { recv.run(transport) }
+        yield()
+        transport.deliver(PairingMessage.PushServer(serverURL = "http://192.168.1.20:8096", serverName = "Home"))
+        repeat(5) { yield() }
+        assertEquals(
+            PairingReceiverStatus.ConsentRequested("http://192.168.1.20:8096", "Home", unencrypted = true),
+            recv.status.value,
+        )
+        assertEquals(emptySet(), cleartext.approved)
+
+        recv.allowPendingServer()
+        repeat(10) { yield() }
+        assertEquals(setOf("http://192.168.1.20:8096"), cleartext.approved)
+        assertEquals("http://192.168.1.20:8096", login.beganWith?.serverUrl)
+
+        transport.deliver(PairingMessage.Done)
+        job.join()
+    }
+
+    @Test
+    fun aLaterPlainHttpServerAsksAgainInAConsentedSession() = runTest {
+        val transport = FakeTransport()
+        val login = FakeDeviceLogin()
+        val recv = receiver(FakeAuthPort(), login)
+
+        val job = launch { recv.run(transport) }
+        yield()
+        transport.deliver(PairingMessage.PushServer(serverURL = "https://one.test", serverName = "One"))
+        repeat(5) { yield() }
+        recv.allowPendingServer()
+        repeat(10) { yield() }
+        login.approve()
+        repeat(10) { yield() }
+
+        transport.deliver(PairingMessage.PushServer(serverURL = "http://192.168.1.20:8096", serverName = "Home"))
+        repeat(10) { yield() }
+        assertEquals(
+            PairingReceiverStatus.ConsentRequested("http://192.168.1.20:8096", "Home", unencrypted = true),
+            recv.status.value,
+        )
+        assertEquals("https://one.test", login.beganWith?.serverUrl)
 
         transport.deliver(PairingMessage.Done)
         job.join()

@@ -131,6 +131,9 @@ internal fun ActivePairingPanel(
                         stringResource(if (signIn) R.string.tv_pairing_consent_title_signin else R.string.tv_pairing_consent_title),
                     )
                     PanelDetail(stringResource(R.string.tv_pairing_consent_detail, status.serverName))
+                    if (status.unencrypted) {
+                        PanelDetail(stringResource(R.string.tv_pairing_consent_unencrypted, DeviceCodeFormat.host(status.serverURL)))
+                    }
                     PanelActions {
                         TvMarqueeButton(text = stringResource(R.string.tv_pairing_allow), onClick = onAllow, focusRequester = primaryFocus)
                         TvMarqueeButton(text = stringResource(R.string.tv_pairing_dont_allow), onClick = onDeny, kind = TvMarqueeButtonKind.Plain)

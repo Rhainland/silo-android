@@ -130,6 +130,7 @@
     <string name="tv_pairing_consent_title">Allow this setup?</string>
     <string name="tv_pairing_consent_title_signin">Allow this sign-in?</string>
     <string name="tv_pairing_consent_detail">A nearby phone or tablet wants to sign this TV in to %1$s.</string>
+    <string name="tv_pairing_consent_unencrypted">Your password and what you watch will be sent unencrypted to %1$s. Only do this on a network you trust.</string>
     <string name="tv_pairing_allow">Allow</string>
     <string name="tv_pairing_dont_allow">Don\'t allow</string>
     <string name="tv_pairing_cancel">Cancel</string>

@@ -398,6 +398,7 @@ val androidTvModule = module {
                 )
             },
             identityProbe = { url -> identityApi.probeIdentity(url) },
+            cleartextConsent = get<CleartextConsentStore>(),
         )
     }
     // Silo servers on the local network, for server setup. One per screen visit.

@@ -1,9 +1,12 @@
 package org.siloserver.silo.common.pairing
 
 import android.util.Log
+import org.siloserver.silo.common.network.CleartextConsentStore
 import org.siloserver.silo.model.auth.DeviceLoginPollResponse
 import org.siloserver.silo.model.auth.DeviceLoginStartResponse
 import org.siloserver.silo.network.api.ServerIdentityProbe
+import org.siloserver.silo.network.canonicalHttpOrigin
+import org.siloserver.silo.network.requiresApproval
 import org.siloserver.silo.pairing.PairingEndpoint
 import org.siloserver.silo.pairing.PairingFailureCode
 import org.siloserver.silo.pairing.PairingMessage
@@ -101,10 +104,13 @@ sealed class PairingReceiverStatus {
     /**
      * A phone pushed a server and the TV user must allow it before the
      * device-login (and its sign-in code) starts — tvOS-parity consent step.
+     * [unencrypted] = the address is plain HTTP this TV hasn't approved yet:
+     * the TV user is warned, and allowing approves that exact origin.
      */
     data class ConsentRequested(
         val serverURL: String,
         val serverName: String,
+        val unencrypted: Boolean = false,
     ) : PairingReceiverStatus()
 
     /** Checking the server's address and starting device sign-in there (interim). */
@@ -178,6 +184,12 @@ class PairingReceiver(
     private val identityProvider: () -> PairingDeviceIdentity,
     /** Classifies one address; production probes `GET /api/v2/system/identity`. */
     private val identityProbe: suspend (serverUrl: String) -> ServerIdentityProbe = { ServerIdentityProbe.Unreachable },
+    /**
+     * This TV's cleartext approvals. Every credential-bearing request to a
+     * plain-HTTP origin needs one, so a pushed HTTP server is approved only
+     * through the consent step, with the TV user warned.
+     */
+    private val cleartextConsent: CleartextConsentStore,
 ) {
     private companion object {
         private const val TAG = "PairingReceiver"
@@ -251,10 +263,10 @@ class PairingReceiver(
         val push = pendingPush ?: return
         val transport = activeTransport ?: return
         val scope = sessionScope ?: return
-        if (_status.value !is PairingReceiverStatus.ConsentRequested) return
+        val consent = _status.value as? PairingReceiverStatus.ConsentRequested ?: return
         consented = true
         pendingPush = null
-        beginAttempt(push, transport, scope)
+        beginAttempt(push, transport, scope, approveCleartext = consent.unencrypted)
     }
 
     /**
@@ -414,10 +426,17 @@ class PairingReceiver(
         pushJob = null
         // tvOS parity: the first push of a session needs the TV user's consent
         // before device-login starts (and before any sign-in code shows). A
-        // newer push while consent is pending supersedes the earlier one.
-        if (!consented) {
+        // newer push while consent is pending supersedes the earlier one. A
+        // plain-HTTP server this TV hasn't approved asks again even in a
+        // consented session: the approval covers that one origin.
+        val unencrypted = cleartextConsent.requiresApproval(message.serverURL)
+        if (!consented || unencrypted) {
             pendingPush = message
-            _status.value = PairingReceiverStatus.ConsentRequested(message.serverURL, message.displayName())
+            _status.value = PairingReceiverStatus.ConsentRequested(
+                message.serverURL,
+                message.displayName(),
+                unencrypted = unencrypted,
+            )
             return
         }
         beginAttempt(message, transport, sessionScope)
@@ -427,12 +446,16 @@ class PairingReceiver(
         push: PairingMessage.PushServer,
         transport: PairingTransport,
         sessionScope: CoroutineScope,
+        approveCleartext: Boolean = false,
     ) {
         // "Automatic" only once a sign-in has been COMMITTED: the phone
         // auto-approves only after its user confirmed the first code.
         val automatic = signedInNames.isNotEmpty()
         val ad = advertisement
         pushJob = sessionScope.launch {
+            if (approveCleartext) {
+                canonicalHttpOrigin(push.serverURL)?.let { cleartextConsent.approve(it) }
+            }
             if (ad.state == PairingReceiverState.Login) {
                 runLoginAttempt(push, transport, ad)
             } else {
