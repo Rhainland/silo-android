@@ -21,7 +21,7 @@ data class HomeSectionsEditorState(
     /** The profile's Home rows in display order, hidden rows included. */
     val rows: List<ProfileSectionSetting> = emptyList(),
     val loadError: String? = null,
-    /** The last change that could not be saved; the rows are back as they were before it. */
+    /** The last change that could not be saved; unless a later change carries it, the rows are back as the server has them. */
     val saveError: String? = null,
 )
 
@@ -39,12 +39,15 @@ class HomeSectionsEditorViewModel(private val repository: ProfileHomeLayoutRepos
     /** The profile the rows were read for; every save is pinned to it. */
     private var owner: AuthScopeSnapshot? = null
 
-    /** The rows as the server last confirmed them: read, or saved. A failed save goes back to these. */
+    /** The rows as the server last confirmed them: read, or saved. A failed save goes back to these unless a later change carries it. */
     private var confirmed: List<ProfileSectionSetting> = emptyList()
 
     /** Held by each save, and by each read so it never runs beside a save and shows the layout before it. */
     private val saves = Mutex()
     private var loadJob: Job? = null
+
+    /** Counts edits and reloads, so a failed save can tell whether something later owns the rows on screen. */
+    private var rowsGeneration = 0L
 
     /**
      * (Re)reads the profile's rows; the editors call it each time they open.
@@ -55,6 +58,7 @@ class HomeSectionsEditorViewModel(private val repository: ProfileHomeLayoutRepos
     fun load() {
         loadJob?.cancel()
         owner = null
+        rowsGeneration++
         _state.update { it.copy(isLoading = true, rows = emptyList(), loadError = null, saveError = null) }
         loadJob = viewModelScope.launch {
             saves.withLock {
@@ -62,7 +66,7 @@ class HomeSectionsEditorViewModel(private val repository: ProfileHomeLayoutRepos
                     is ApiResult.Success -> {
                         owner = result.data.owner
                         confirmed = result.data.rows
-                        _state.update { it.copy(isLoading = false, rows = result.data.rows, loadError = null) }
+                        _state.update { it.copy(isLoading = false, rows = result.data.rows, loadError = null, saveError = null) }
                     }
                     else -> _state.update {
                         it.copy(
@@ -106,18 +110,20 @@ class HomeSectionsEditorViewModel(private val repository: ProfileHomeLayoutRepos
         val owner = owner
         if (next == _state.value.rows || owner == null) return
         _state.update { it.copy(rows = next, saveError = null) }
+        val edit = ++rowsGeneration
         viewModelScope.launch {
             saves.withLock {
                 val result = repository.save(owner, next, baseline = confirmed)
                 if (result is ApiResult.Success) {
                     confirmed = next
+                    _state.update { it.copy(saveError = null) }
                 } else {
                     _state.update { state ->
                         state.copy(
                             // A later change carries this one and saves the
-                            // whole list itself; only the list this save
-                            // failed to store goes back, to what the server has.
-                            rows = if (state.rows == next) confirmed else state.rows,
+                            // whole list itself; only the last change's list
+                            // goes back, to what the server has.
+                            rows = if (edit == rowsGeneration) confirmed else state.rows,
                             saveError = result.errorMessage("Could not save Home sections."),
                         )
                     }

@@ -31,6 +31,8 @@ class HomeSectionsEditorViewModelTest {
         {"id":"ov-gone","section_id":"gone","position":null,"hidden":false,"removed":true,"section_type":"","title":"","featured":null,"item_limit":null,"is_user_added":false,"user_section_type":"","user_title":"","created_at":null,"updated_at":null}
     ]}"""
     private var putStatus = HttpStatusCode.NoContent
+    /** Statuses for the next PUTs in turn; [putStatus] once they run out. */
+    private val putStatuses = ArrayDeque<HttpStatusCode>()
     private var putGate: CompletableDeferred<Unit>? = null
     private var settingsReads = 0
     private var settingsStatus = HttpStatusCode.OK
@@ -47,7 +49,7 @@ class HomeSectionsEditorViewModelTest {
                     request.method == HttpMethod.Put -> {
                         puts += Json.parseToJsonElement((request.body as TextContent).text)
                         putGate?.await()
-                        respond("", putStatus)
+                        respond("", putStatuses.removeFirstOrNull() ?: putStatus)
                     }
                     request.url.encodedPath.endsWith("/settings") -> {
                         settingsReads++
@@ -135,6 +137,37 @@ class HomeSectionsEditorViewModelTest {
         assertEquals(listOf("recent", "continue"), vm.state.value.rows.map { it.id })
         assertFalse(vm.state.value.rows.single { it.id == "recent" }.hidden)
         assertNotNull(vm.state.value.saveError)
+    }
+
+    @Test
+    fun aFailedSaveKeepsALaterEditThatReturnsToTheSameRows() = scenario { vm ->
+        runCurrent()
+        putStatuses += HttpStatusCode.InternalServerError
+
+        vm.move("continue", -1)
+        vm.setHidden("recent", true)
+        vm.setHidden("recent", false)
+        runCurrent()
+
+        assertEquals(3, puts.size)
+        assertEquals(listOf("continue", "recent"), vm.state.value.rows.map { it.id })
+        assertNull(vm.state.value.saveError, "a later save stored the change the failed one carried")
+    }
+
+    @Test
+    fun aReloadDropsTheErrorOfASaveThatFailedBeforeIt() = scenario { vm ->
+        runCurrent()
+        putStatus = HttpStatusCode.InternalServerError
+        putGate = CompletableDeferred()
+
+        vm.move("continue", -1)
+        runCurrent()
+        vm.load()
+        putGate!!.complete(Unit)
+        runCurrent()
+
+        assertEquals(listOf("recent", "continue"), vm.state.value.rows.map { it.id })
+        assertNull(vm.state.value.saveError)
     }
 
     @Test
