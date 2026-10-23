@@ -190,6 +190,29 @@ internal fun ItemDetail?.isMatchingSeriesDetail(expectedContentId: String): Bool
         type.equals("series", ignoreCase = true) &&
         contentId == expectedContentId
 
+/**
+ * The theme set this page plays. A series or season page plays the set its
+ * hero episode resolves to (its season's, else its series'), so a season or
+ * episode opened on its series page plays what its own page would. While the
+ * hero episode's detail loads, the set already playing stands, so switching
+ * seasons never fades the theme out and back in; if it cannot load, the
+ * page's own set plays.
+ */
+@Composable
+private fun rememberTvDetailThemes(state: TvItemDetailUiState): org.siloserver.silo.model.catalog.ThemeSelection? {
+    val last = remember { arrayOfNulls<org.siloserver.silo.model.catalog.ThemeSelection>(1) }
+    val type = state.detail?.type?.lowercase()
+    val episode = state.nextUpPlaybackDetail
+    val themes = when {
+        type != "series" && type != "season" -> state.detail?.themes
+        episode != null -> episode.themes ?: state.detail?.themes
+        state.nextUpEpisode != null && !state.didLoadNextUpPlaybackDetail -> last[0] ?: state.detail?.themes
+        else -> state.detail?.themes
+    }
+    SideEffect { last[0] = themes }
+    return themes
+}
+
 @Composable
 fun TvItemDetailScreen(
     contentId: String,
@@ -220,7 +243,7 @@ fun TvItemDetailScreen(
     val state by viewModel.uiState.collectAsState()
     org.siloserver.silo.common.thememusic.DetailThemeMusic(
         org.koin.compose.koinInject(),
-        state.detail?.themes,
+        rememberTvDetailThemes(state),
     )
     val shuffleLauncher = org.siloserver.silo.common.ui.rememberShuffleLauncher(
         org.koin.compose.koinInject(),

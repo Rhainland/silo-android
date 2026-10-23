@@ -128,7 +128,7 @@ private fun rememberDetailThemes(state: ItemDetailUiState): ThemeSelection? {
     val episode = state.selectedEpisodeDetail
     val loading = if (state.selectedEpisodeContentId == null) state.isLoadingEpisodes else episode == null
     val themes = when {
-        episode != null -> episode.themes
+        episode != null -> episode.themes ?: state.detail?.themes
         loading -> last[0] ?: state.detail?.themes
         else -> state.detail?.themes
     }
