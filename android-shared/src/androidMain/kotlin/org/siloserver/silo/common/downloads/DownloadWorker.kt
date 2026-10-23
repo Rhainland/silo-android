@@ -1,6 +1,7 @@
 package org.siloserver.silo.common.downloads
 
 import org.siloserver.silo.network.localroute.stayOnSavedAddress
+import android.annotation.SuppressLint
 import android.app.Notification
 import android.app.PendingIntent
 import android.content.Context
@@ -405,9 +406,10 @@ class DownloadWorker(
             // bytes and is finalized by the record-delete path. Writing
             // Failed here is what used to paint cancelled / paused
             // downloads with a red badge and delete-then-fail them.
-            // Before Android 12 there is no stop reason, and no background
-            // foreground-start refusal that would leave the transfer time-limited.
-            val reason = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) stopReason else WorkInfo.STOP_REASON_UNKNOWN
+            // WorkManager records the stop reason itself on every API level;
+            // @RequiresApi(31) only covers the JobScheduler values it relays.
+            @SuppressLint("NewApi")
+            val reason = stopReason
             val keepPartial = downloadStopKeepsPartial(reason)
             Log.i(TAG, "doWork cancelled id=$downloadId stopReason=$reason keepPartial=$keepPartial")
             DiagnosticsDownloadLogger.event("download cancelled")
@@ -827,13 +829,15 @@ internal suspend fun promoteToForeground(promote: suspend () -> Unit) {
 
 /**
  * True when WorkManager stopped the transfer for a reason it retries (time
- * limit, lost constraint, quota), so the partial and its validator stay for a
- * Range resume. A cancel by the app (the notification action, removal, an
- * identity purge) and a stop without a reason drop it.
+ * limit, lost constraint, quota, or a JobScheduler stop that carries no reason
+ * before Android 12), so the partial and its validator stay for a Range resume.
+ * A cancel by the app (the notification action, removal, an identity purge),
+ * reported as [WorkInfo.STOP_REASON_CANCELLED_BY_APP] on every API level, drops
+ * it, as does a cancellation that was not a WorkManager stop. A kept partial
+ * that is never resumed is removed with its slot when the download is removed.
  */
 internal fun downloadStopKeepsPartial(stopReason: Int): Boolean =
     stopReason != WorkInfo.STOP_REASON_CANCELLED_BY_APP &&
-        stopReason != WorkInfo.STOP_REASON_UNKNOWN &&
         stopReason != WorkInfo.STOP_REASON_NOT_STOPPED
 
 /**
