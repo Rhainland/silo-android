@@ -3,8 +3,11 @@ package org.siloserver.silo.common.downloads
 import org.siloserver.silo.model.download.DownloadRecord
 import org.siloserver.silo.model.download.DownloadStatus
 import androidx.work.WorkInfo
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 
 class DownloadWorkerProgressTest {
     private val record = DownloadRecord(
@@ -39,6 +42,23 @@ class DownloadWorkerProgressTest {
 
         assertEquals(4_000, downloading.bytesSent)
         assertEquals(10_000, downloading.fileSize)
+    }
+
+    @Test
+    fun `a refused foreground promotion does not end the transfer`() = runTest {
+        // Android 12+ refuses the foreground service start for a worker that
+        // WorkManager restarts while the app is still in the background.
+        // Returning (instead of throwing into doWork's failure branch) is the contract.
+        promoteToForeground {
+            throw IllegalStateException("Not allowed to start service Intent { act=ACTION_NOTIFY }")
+        }
+    }
+
+    @Test
+    fun `a stop during foreground promotion still stops the worker`() = runTest {
+        assertFailsWith<CancellationException> {
+            promoteToForeground { throw CancellationException("worker stopped") }
+        }
     }
 
     @Test

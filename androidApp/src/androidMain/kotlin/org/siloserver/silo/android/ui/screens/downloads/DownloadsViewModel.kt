@@ -42,6 +42,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.dropWhile
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.launchIn
@@ -102,9 +103,14 @@ internal data class DownloadItemFileState(
     val isFailed: Boolean,
 )
 
-/** Server readiness describes transfer admission; retained local completion describes the saved file. */
+/**
+ * Server readiness describes transfer admission; this device's terminal outcome
+ * describes the saved file. The server only learns `downloading`/`completed`, so
+ * a worker that failed for good leaves it at `downloading` and only the local
+ * row knows nothing is running.
+ */
 internal fun downloadItemDisplayStatus(local: DownloadStatus, server: DownloadStatus?): DownloadStatus =
-    if (local == DownloadStatus.Completed) local else server ?: local
+    if (local == DownloadStatus.Completed || local == DownloadStatus.Failed) local else server ?: local
 
 internal fun downloadItemFileState(
     status: DownloadStatus,
@@ -376,6 +382,15 @@ class DownloadsViewModel(
             // first emission describes the state that read also sees.
             launch {
                 metadataStore.savedArtworkChanges().drop(1).collect {
+                    publishSections(repository.records.value, forceReload = true)
+                }
+            }
+            // A permanent worker failure is written only to Room: the server
+            // row stays `downloading` and a refresh overwrites the in-memory push.
+            // A non-empty first emission is kept: a worker restarted with the
+            // process can fail between it and the initial read below.
+            launch {
+                metadataStore.failedRecordIdChanges().dropWhile { it.isEmpty() }.collect {
                     publishSections(repository.records.value, forceReload = true)
                 }
             }

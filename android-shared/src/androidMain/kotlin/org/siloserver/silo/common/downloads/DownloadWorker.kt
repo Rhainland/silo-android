@@ -144,9 +144,9 @@ class DownloadWorker(
         try {
         Log.i(TAG, "doWork start id=$downloadId fileId=$fileId title=$displayTitle")
         DiagnosticsDownloadLogger.event("download started")
-        runCatching {
+        promoteToForeground {
             setForeground(buildForegroundInfo(downloadId, displayTitle, progress = 0, indeterminate = true))
-        }.onFailure { Log.w(TAG, "setForeground initial failed", it) }
+        }
 
         var activeUri: String? = null
         // Capture can outlive media publication. A stop then preserves the
@@ -316,7 +316,9 @@ class DownloadWorker(
                                 // Rebuilding the notification (and its cancel
                                 // PendingIntent) is the expensive part — only
                                 // do it when the visible percent changed.
-                                if (decision.updateForeground) {
+                                // A refusal only means no notification yet; the
+                                // next percent change asks again.
+                                if (decision.updateForeground) promoteToForeground {
                                     setForeground(buildForegroundInfo(downloadId, displayTitle, progress = decision.percent, indeterminate = total <= 0))
                                 }
                                 // Push progress into the shared repo so any
@@ -805,6 +807,23 @@ class DownloadWorker(
         }
 
         private const val CANCEL_ACK_TIMEOUT_SECONDS = 30L
+    }
+}
+
+/**
+ * Runs one foreground promotion. Android 12+
+ * refuses the foreground service start for a worker that WorkManager restarts
+ * while the app is in the background (`BackgroundServiceStartNotAllowedException`);
+ * the transfer keeps running as ordinary work, so a refusal must not reach
+ * doWork's permanent-failure branch. A stop still propagates.
+ */
+internal suspend fun promoteToForeground(promote: suspend () -> Unit) {
+    try {
+        promote()
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        Log.w("DownloadWorker", "setForeground refused; continuing in the background", e)
     }
 }
 
