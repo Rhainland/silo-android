@@ -226,6 +226,25 @@ class DownloadsRepositoryOfflineDeleteTest {
     }
 
     @Test
+    fun `a revoked entry is not deleted on the server while the capability is unknown`() = runTest {
+        val log = mutableListOf<String>()
+        val port = FakeDeletionPort()
+        val api = FakeApi(serverList = listOf(rec("gone", 2).copy(status = "revoked")), capability = revokeAware, log = log)
+        DownloadsRepository(api, port, revokedCleanup = FakeCleanup(log, succeeds = false)).refresh(serverId = "s", profileId = "p")
+        assertEquals(setOf("gone"), port.allPendingRecordIds())
+
+        // After a restart the capability cannot be read; the tombstone must not replay.
+        api.capability = null
+        log.clear()
+        val restarted = DownloadsRepository(api, port, revokedCleanup = FakeCleanup(log))
+        restarted.refresh(serverId = "s", profileId = "p")
+
+        assertTrue(api.deleteCalls.isEmpty())
+        assertTrue(restarted.records.first().isEmpty())
+        assertEquals(setOf("gone"), port.allPendingRecordIds())
+    }
+
+    @Test
     fun `without revoked_removes_local a revoked entry keeps its local copy`() = runTest {
         val log = mutableListOf<String>()
         val api = FakeApi(serverList = listOf(rec("gone", 2).copy(status = "revoked")),

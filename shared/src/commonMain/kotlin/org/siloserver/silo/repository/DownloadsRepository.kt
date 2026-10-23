@@ -193,7 +193,10 @@ class DownloadsRepository(
         val revoked = rows.filter { it.status.equals(REVOKED_STATUS, ignoreCase = true) }
         if (revoked.isEmpty() || scope == null) return emptySet()
         val capability = _capability.value ?: (refreshCapability() as? ApiResult.Success)?.data
-        if (capability?.revokedRemovesLocal != true) return emptySet()
+        // Unknown capability: keep revoked rows hidden and their tombstones
+        // unreplayed, so a copy whose cleanup failed never loses its entry.
+        ?: return revoked.mapTo(mutableSetOf()) { it.id }
+        if (capability.revokedRemovesLocal != true) return emptySet()
         val (serverId, profileId) = scope
         for (row in revoked) {
             if (!current(authority)) return null
