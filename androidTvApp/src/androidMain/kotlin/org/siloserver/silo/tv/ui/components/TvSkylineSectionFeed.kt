@@ -774,7 +774,7 @@ fun TvSkylineSectionFeed(
     LaunchedEffect(firstRowId, detailReturnFocusRequest) {
         if (detailReturnFocusRequest > 0) {
             // The shell's content focusRestorer owns detail-return focus. Any
-            // feed recreated by Home's ON_RESUME refresh must not run its
+            // feed recreated by an ON_RESUME refresh must not run its
             // first-entry fallback over the restored card.
             initialFocusRequested = true
             // Re-target the remembered launch card explicitly (the restorer's

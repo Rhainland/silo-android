@@ -415,7 +415,7 @@ fun TvMainShell(
     var detailReturnRoot by rememberSaveable { mutableStateOf<String?>(null) }
     val restoreHomeContentAfterDetail = detailReturnRoot == TvMainRoute.Home.route
     val restoreForYouContentAfterDetail = detailReturnRoot == TvMainRoute.ForYou.route
-    var suppressHomeRefreshAfterDetail by rememberSaveable { mutableStateOf(false) }
+    var suppressFeedRefreshAfterDetail by rememberSaveable { mutableStateOf(false) }
     var homeDetailReturnFocusState by remember { mutableStateOf(TvDetailReturnFocusState()) }
     var forYouDetailReturnFocusState by remember { mutableStateOf(TvDetailReturnFocusState()) }
     var detailReturnFocusRequest by remember { mutableIntStateOf(0) }
@@ -484,25 +484,26 @@ fun TvMainShell(
         }
         homeDetailReturnFocusState = completeTvDetailReturnRetry(homeDetailReturnFocusState)
         forYouDetailReturnFocusState = completeTvDetailReturnRetry(forYouDetailReturnFocusState)
-        // The detail-return ON_RESUME event has now passed and Home is stable;
+        // The detail-return ON_RESUME event has now passed and the feed is stable;
         // future real resumes (playback/background) should refresh normally.
-        suppressHomeRefreshAfterDetail = false
+        suppressFeedRefreshAfterDetail = false
     }
     val openHomeItemDetail: (String) -> Unit = { contentId ->
         restoreContentAfterDetail = true
         detailReturnRoot = TvMainRoute.Home.route
-        suppressHomeRefreshAfterDetail = true
+        suppressFeedRefreshAfterDetail = true
         onOpenItemDetail(contentId)
     }
     val openHomeItemDetailSelection: (String, Int?, String?) -> Unit = { contentId, seasonNumber, episodeContentId ->
         restoreContentAfterDetail = true
         detailReturnRoot = TvMainRoute.Home.route
-        suppressHomeRefreshAfterDetail = true
+        suppressFeedRefreshAfterDetail = true
         onOpenItemDetailSelection(contentId, seasonNumber, episodeContentId)
     }
     val openForYouItemDetail: (String) -> Unit = { contentId ->
         restoreContentAfterDetail = true
         detailReturnRoot = TvMainRoute.ForYou.route
+        suppressFeedRefreshAfterDetail = true
         onOpenItemDetail(contentId)
     }
     // Same generic hand-back for roots that render inside the shell but do not
@@ -1236,7 +1237,7 @@ fun TvMainShell(
                         detailReturnCardFocusRequester = homeDetailReturnCardFocusRequester,
                         firstRowFocusRequester = homeFirstItemFocusRequester,
                         firstRowContainerFocusRequester = homeFirstRowContainerFocusRequester,
-                        shouldRefreshOnResume = { !suppressHomeRefreshAfterDetail },
+                        shouldRefreshOnResume = { !suppressFeedRefreshAfterDetail },
                         onContentUpFallbackChanged = onContentUpFallback,
                     )
                 }
@@ -1263,7 +1264,7 @@ fun TvMainShell(
                         detailReturnCardFocusRequester = homeDetailReturnCardFocusRequester,
                         firstRowFocusRequester = homeFirstItemFocusRequester,
                         firstRowContainerFocusRequester = homeFirstRowContainerFocusRequester,
-                        shouldRefreshOnResume = { !suppressHomeRefreshAfterDetail },
+                        shouldRefreshOnResume = { !suppressFeedRefreshAfterDetail },
                         onContentUpFallbackChanged = onContentUpFallback,
                     )
                 }
@@ -1393,6 +1394,7 @@ fun TvMainShell(
                         detailReturnCardFocusRequester = forYouDetailReturnCardFocusRequester,
                         firstRowFocusRequester = forYouFirstItemFocusRequester,
                         firstRowContainerFocusRequester = forYouFirstRowContainerFocusRequester,
+                        shouldRefreshOnResume = { !suppressFeedRefreshAfterDetail },
                         onContentUpFallbackChanged = onContentUpFallback,
                         entryRequest = forYouEntryRequest,
                     )
