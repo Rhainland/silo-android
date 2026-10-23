@@ -1100,6 +1100,60 @@ class AndroidPlayerSettingsStoreTest {
     }
 
     @Test
+    fun `theme music is off by default and the switches write this device's values`() = runTest {
+        val store = newStore()
+        assertEquals(false, store.themeMusicEnabledFlow.first())
+        assertEquals(false, store.themeMusicLoopFlow.first())
+
+        store.setThemeMusicEnabled(true)
+        store.setThemeMusicLoop(true)
+
+        assertEquals(true, store.themeMusicEnabledFlow.first())
+        assertEquals(true, store.themeMusicLoopFlow.first())
+        val flushed = fakeFlusher.calls.filterNot { it.isDelete }.associate { it.key to it.value }
+        assertEquals("true", flushed[SettingKeys.UI_THEME_MUSIC_ENABLED])
+        assertEquals("true", flushed[SettingKeys.UI_THEME_MUSIC_LOOP])
+    }
+
+    @Test
+    fun `theme music is read from a revision 11 server and left out for an older one`() = runTest {
+        var revision = capabilitiesAt(10)
+        val contractRevision = SettingsContractRevision({ revision }, { serverUrl })
+        val api = FakeSettingsApi(
+            effective = mapOf(
+                stored(SettingKeys.UI_THEME_MUSIC_ENABLED, JsonPrimitive(true)),
+                stored(SettingKeys.UI_THEME_MUSIC_LOOP, JsonPrimitive(true)),
+            ),
+        )
+        val store = AndroidPlayerSettingsStore(
+            context = mockContextStub(),
+            legacyCache = fakeLegacyCache,
+            getActiveProfileId = { activeProfileId },
+            getServerUrl = { serverUrl },
+            serverSettingsFlusher = fakeFlusher,
+            settingsRepository = SettingsRepository(api),
+            getDeviceId = { null },
+            contractRevision = contractRevision,
+            dataStoreFactory = { id ->
+                PreferenceDataStoreFactory.create(produceFile = { File(tempFolder.root, "ds_theme_$id.preferences_pb") })
+            },
+        )
+
+        // An older server would refuse the whole batch over keys it lacks.
+        store.refreshFromServer()
+        assertTrue(api.requestedKeys.isNotEmpty())
+        assertTrue(SettingKeys.UI_THEME_MUSIC_ENABLED !in api.requestedKeys)
+        assertTrue(SettingKeys.UI_THEME_MUSIC_LOOP !in api.requestedKeys)
+        assertEquals(false, store.themeMusicEnabledFlow.first())
+
+        revision = capabilitiesAt(11)
+        store.refreshFromServer()
+        assertTrue(SettingKeys.UI_THEME_MUSIC_ENABLED in api.requestedKeys)
+        assertEquals(true, store.themeMusicEnabledFlow.first())
+        assertEquals(true, store.themeMusicLoopFlow.first())
+    }
+
+    @Test
     fun `cellular quality defaults to the 720p preset`() = runTest {
         val store = newStore()
 

@@ -218,6 +218,10 @@ fun TvItemDetailScreen(
     ),
 ) {
     val state by viewModel.uiState.collectAsState()
+    org.siloserver.silo.common.thememusic.DetailThemeMusic(
+        org.koin.compose.koinInject(),
+        state.detail?.themes,
+    )
     val shuffleLauncher = org.siloserver.silo.common.ui.rememberShuffleLauncher(
         org.koin.compose.koinInject(),
         onShuffleStarted,

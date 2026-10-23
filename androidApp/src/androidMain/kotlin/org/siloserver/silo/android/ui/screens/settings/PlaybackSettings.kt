@@ -82,7 +82,7 @@ private fun ProfileLayeredDropdownRow(
  * "Use Profile Default" does.
  */
 @Composable
-private fun ProfileLayeredSwitchRow(
+internal fun ProfileLayeredSwitchRow(
     label: String,
     checked: Boolean,
     overridden: Boolean,

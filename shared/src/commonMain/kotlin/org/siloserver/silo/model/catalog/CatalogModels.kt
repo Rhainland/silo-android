@@ -248,6 +248,28 @@ data class ItemDetail(
     val videos: List<ItemVideo>? = null,
     /** Scanner-discovered local trailers and featurettes. */
     val extras: List<ItemExtra>? = null,
+    /**
+     * The local theme audio this page may play. A season without its own set
+     * carries its series' set, an episode its season's then its series', so
+     * [ThemeSelection.ownerId] can name a different item. Null when the server
+     * predates themes or its theme lookup failed.
+     */
+    val themes: ThemeSelection? = null,
+)
+
+/** One owner's ordered theme audio; [items] is empty when it has none. */
+@Serializable
+data class ThemeSelection(
+    @SerialName("owner_id") val ownerId: String,
+    val items: List<ThemeTrack> = emptyList(),
+)
+
+@Serializable
+data class ThemeTrack(
+    val id: String,
+    val title: String? = null,
+    @SerialName("duration_seconds") val durationSeconds: Int? = null,
+    val container: String? = null,
 )
 
 @Serializable

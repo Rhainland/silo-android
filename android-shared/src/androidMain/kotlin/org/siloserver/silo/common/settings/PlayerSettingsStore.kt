@@ -73,6 +73,12 @@ interface PlayerSettingsStore {
         get() = introSkipModeFlow.map { it == IntroSkipMode.ALWAYS }
     val autoSkipCreditsFlow: Flow<Boolean>
     val autoPlayNextFlow: Flow<Boolean>
+
+    /** `ui.theme_music_enabled` as this device resolves it; off by default. */
+    val themeMusicEnabledFlow: Flow<Boolean>
+
+    /** `ui.theme_music_loop` as this device resolves it; off by default. */
+    val themeMusicLoopFlow: Flow<Boolean>
     val hdrEnabledFlow: Flow<Boolean>
     val dvProfile7HDR10FallbackFlow: Flow<Boolean>
     val dolbyVisionEnabledFlow: Flow<Boolean>
@@ -195,6 +201,8 @@ interface PlayerSettingsStore {
         setIntroSkipMode(IntroSkipMode.fromLegacyBoolean(value))
     suspend fun setAutoSkipCredits(value: Boolean)
     suspend fun setAutoPlayNext(value: Boolean)
+    suspend fun setThemeMusicEnabled(value: Boolean)
+    suspend fun setThemeMusicLoop(value: Boolean)
     suspend fun setHdrEnabled(value: Boolean)
     suspend fun setDvProfile7HDR10Fallback(value: Boolean)
     suspend fun setDolbyVisionEnabled(value: Boolean)

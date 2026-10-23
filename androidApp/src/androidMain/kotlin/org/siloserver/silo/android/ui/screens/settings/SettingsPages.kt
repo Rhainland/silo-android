@@ -27,6 +27,7 @@ import org.siloserver.silo.android.ui.theme.SiloSettingsBackground
 import org.siloserver.silo.android.ui.util.formatBytes
 import org.siloserver.silo.common.profiles.ProfileLaunchBehavior
 import org.siloserver.silo.common.profiles.ProfileLaunchPreferences
+import org.siloserver.silo.common.settings.PlayerSettingsStore
 import org.siloserver.silo.common.settings.TitleArtStore
 import org.siloserver.silo.common.settings.UseProfileSettingsCopy
 import org.siloserver.silo.common.settings.shownIn
@@ -74,14 +75,15 @@ internal fun SettingsPageScaffold(
 }
 
 /**
- * Interface (Apple `InterfaceCustomizationView`): Cards & Posters, Home, then
- * Title Pages.
+ * Interface (Apple `InterfaceCustomizationView`): Cards & Posters, Home,
+ * Title Pages, then Theme Music.
  */
 @Composable
 fun SettingsInterfaceScreen(viewModel: SettingsViewModel, onBackClick: () -> Unit) {
     val state by viewModel.uiState.collectAsState()
     var showHomeSectionsEditor by rememberSaveable { mutableStateOf(false) }
     val titleArtStore: TitleArtStore = koinInject()
+    val playerSettingsStore: PlayerSettingsStore = koinInject()
     // Opening Interface is a refresh edge, so a title art choice made on
     // another device shows here without waiting for the next foreground. Kept
     // out of the LazyColumn item, which re-enters composition on scroll.
@@ -111,6 +113,9 @@ fun SettingsInterfaceScreen(viewModel: SettingsViewModel, onBackClick: () -> Uni
         }
         item(key = "title-art") {
             TitleArtSettingsSection(store = titleArtStore)
+        }
+        item(key = "theme-music") {
+            ThemeMusicSettingsSection(store = playerSettingsStore)
         }
     }
 

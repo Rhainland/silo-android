@@ -56,6 +56,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.runtime.staticCompositionLocalOf
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import org.siloserver.silo.common.settings.SeekIntervalSettingsModel
@@ -103,6 +104,7 @@ import org.siloserver.silo.common.network.clientVersionLabel
 import org.siloserver.silo.common.settings.CardPresentationSource
 import org.siloserver.silo.common.settings.CardPresentationSupport
 import org.siloserver.silo.common.settings.ConnectionSpeedSettingsModel
+import org.siloserver.silo.common.settings.PlayerSettingsStore
 import org.siloserver.silo.common.settings.TitleArtStore
 import org.siloserver.silo.common.settings.UseProfileSettingsCopy
 import org.siloserver.silo.common.settings.bufferingQualityModeLabel
@@ -147,6 +149,7 @@ import org.koin.compose.viewmodel.koinViewModel
 import org.siloserver.silo.common.watchparty.WatchPartyExperiment
 import org.siloserver.silo.viewmodel.HomeViewModel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 /**
  * TV Settings — a tvOS-style split rail/detail surface modeled on
@@ -1111,6 +1114,9 @@ private fun TvGeneralSettingsPane(
         }
         item {
             TvTitleArtSettingsGroup(store = titleArtStore)
+        }
+        item {
+            TvThemeMusicSettingsGroup(store = koinInject())
         }
         item {
             // tvOS TVGeneralSettingsPane TOP MENU parity: the Audiobooks tab
@@ -3110,6 +3116,58 @@ private fun nextUpPromptLabel(seconds: Int): String = when {
     seconds < 60 -> "$seconds seconds before end"
     seconds == 60 -> "1 minute before end"
     else -> "${seconds / 60} minutes before end"
+}
+
+/**
+ * "Theme Music" and "Loop Theme Music", as the web app's device settings offer
+ * them. Each switch writes this TV's value; one set for the profile elsewhere
+ * applies until then.
+ */
+@Composable
+private fun TvThemeMusicSettingsGroup(store: PlayerSettingsStore) {
+    val enabled by store.themeMusicEnabledFlow.collectAsState(initial = false)
+    val loop by store.themeMusicLoopFlow.collectAsState(initial = false)
+    val overrides by store.deviceOverrideKeysFlow.collectAsState(initial = emptySet())
+    val scope = rememberCoroutineScope()
+    val enabledFocus = remember { FocusRequester() }
+    val loopFocus = remember { FocusRequester() }
+    fun overridden(key: String) = PlaybackSettingsKeys.hasDeviceOverride(overrides, key)
+    SettingsGroup(title = "Theme Music") {
+        SettingsToggleRow(
+            label = "Theme Music",
+            checked = enabled,
+            onCheckedChange = { scope.launch { store.setThemeMusicEnabled(it) } },
+            focusRequester = enabledFocus,
+        )
+        if (overridden(PlaybackSettingsKeys.ThemeMusicEnabled)) {
+            UseProfileSettingRow(
+                setting = "Theme Music",
+                onClick = {
+                    enabledFocus.requestFocus()
+                    scope.launch { store.resetDeviceSetting(PlaybackSettingsKeys.ThemeMusicEnabled) }
+                },
+            )
+        }
+        SettingsToggleRow(
+            label = "Loop Theme Music",
+            checked = loop,
+            onCheckedChange = { scope.launch { store.setThemeMusicLoop(it) } },
+            focusRequester = loopFocus,
+        )
+        if (overridden(PlaybackSettingsKeys.ThemeMusicLoop)) {
+            UseProfileSettingRow(
+                setting = "Loop Theme Music",
+                onClick = {
+                    loopFocus.requestFocus()
+                    scope.launch { store.resetDeviceSetting(PlaybackSettingsKeys.ThemeMusicLoop) }
+                },
+            )
+        }
+        SettingsFooterText(
+            text = "Play a title's theme music while its page is open, when the server has one. " +
+                "Loop repeats it until you leave the page.",
+        )
+    }
 }
 
 /**

@@ -22,6 +22,8 @@ internal class FakePlayerSettingsStore : PlayerSettingsStore {
     override val bufferingQualityModeFlow = MutableStateFlow(BufferingQualityMode.Default)
     override val autoSkipCreditsFlow = MutableStateFlow(false)
     override val autoPlayNextFlow = MutableStateFlow(true)
+    override val themeMusicEnabledFlow = MutableStateFlow(false)
+    override val themeMusicLoopFlow = MutableStateFlow(false)
     override val hdrEnabledFlow = MutableStateFlow(true)
     override val dvProfile7HDR10FallbackFlow = MutableStateFlow(false)
     override val dolbyVisionEnabledFlow = MutableStateFlow(true)
@@ -61,6 +63,12 @@ internal class FakePlayerSettingsStore : PlayerSettingsStore {
     }
     override suspend fun setAutoPlayNext(value: Boolean) {
         setterCalls += "setAutoPlayNext"; autoPlayNextFlow.value = value
+    }
+    override suspend fun setThemeMusicEnabled(value: Boolean) {
+        setterCalls += "setThemeMusicEnabled"; themeMusicEnabledFlow.value = value
+    }
+    override suspend fun setThemeMusicLoop(value: Boolean) {
+        setterCalls += "setThemeMusicLoop"; themeMusicLoopFlow.value = value
     }
     override suspend fun setHdrEnabled(value: Boolean) {
         setterCalls += "setHdrEnabled"; hdrEnabledFlow.value = value

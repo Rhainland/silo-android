@@ -81,6 +81,7 @@ internal data class ItemDetailReadV2(
     val ebook: org.siloserver.silo.model.ebook.EbookMetadata? = null,
     val videos: List<ItemVideo>? = null,
     val extras: List<ItemExtra>? = null,
+    val themes: ThemeSelection? = null,
 ) {
     fun toDomain() = ItemDetail(
         contentId = contentId,
@@ -146,6 +147,7 @@ internal data class ItemDetailReadV2(
         ebook = ebook,
         videos = videos,
         extras = extras,
+        themes = themes,
     )
 }
 

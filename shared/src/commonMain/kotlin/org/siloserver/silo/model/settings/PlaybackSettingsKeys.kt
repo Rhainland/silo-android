@@ -88,6 +88,14 @@ object PlaybackSettingsKeys {
     const val SubtitlePosition = "subtitle.position"
 
     /**
+     * Play local theme music on movie and show detail pages, and repeat it
+     * while the page stays open. Both default off and need contract revision
+     * 11 ([DeviceSettingRevisions]).
+     */
+    const val ThemeMusicEnabled = SettingKeys.UI_THEME_MUSIC_ENABLED
+    const val ThemeMusicLoop = SettingKeys.UI_THEME_MUSIC_LOOP
+
+    /**
      * Local-only flag tracking whether the user has enabled a per-device
      * subtitle appearance override. Mirrors iOS
      * `Keys.subtitleUsesDeviceAppearanceOverride` — never written to the
@@ -224,6 +232,8 @@ object PlaybackSettingsKeys {
         SubtitleTextOutline,
         SubtitleTextOutlineColor,
         SubtitlePosition,
+        ThemeMusicEnabled,
+        ThemeMusicLoop,
     )
 
     /**
@@ -246,6 +256,8 @@ object PlaybackSettingsKeys {
         AutoPlayNext,
         NextUpPromptSeconds,
         SubtitleAppearance,
+        ThemeMusicEnabled,
+        ThemeMusicLoop,
     )
 
     /**

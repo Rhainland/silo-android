@@ -44,6 +44,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -93,6 +94,9 @@ import org.siloserver.silo.network.AccessChangeSignals
 import org.siloserver.silo.metadata.DescriptionTranslationPhase
 import org.siloserver.silo.model.feature.MetadataAiFeatureStore
 import org.siloserver.silo.model.metadata.MetadataAiOnView
+import org.siloserver.silo.common.thememusic.DetailThemeMusic
+import org.siloserver.silo.common.thememusic.ThemeMusicService
+import org.siloserver.silo.model.catalog.ThemeSelection
 import org.siloserver.silo.model.catalog.hasMachineTranslatedOverview
 import org.siloserver.silo.model.catalog.pendingEpisodeTranslationLanguage
 
@@ -109,6 +113,27 @@ internal fun seriesDetailRedirect(detail: ItemDetail): SeriesDetailRedirect? {
         ?.takeIf { it.isNotEmpty() && it != detail.contentId } ?: return null
     val seasonNumber = detail.seasonNumber ?: return null
     return SeriesDetailRedirect(seriesId, seasonNumber, detail.contentId.takeIf { type == "episode" })
+}
+
+/**
+ * The theme set this page plays. An episode open on its series page plays the
+ * set it resolves to (its season's, else its series'), as the episode's own
+ * page would. While another season's episodes or a newly selected episode
+ * load, the set already playing stands, so switching seasons or episodes
+ * never plays the series' set in between or fades the theme out and back in.
+ */
+@Composable
+private fun rememberDetailThemes(state: ItemDetailUiState): ThemeSelection? {
+    val last = remember { arrayOfNulls<ThemeSelection>(1) }
+    val episode = state.selectedEpisodeDetail
+    val loading = if (state.selectedEpisodeContentId == null) state.isLoadingEpisodes else episode == null
+    val themes = when {
+        episode != null -> episode.themes
+        loading -> last[0] ?: state.detail?.themes
+        else -> state.detail?.themes
+    }
+    SideEffect { last[0] = themes }
+    return themes
 }
 
 /**
@@ -154,6 +179,7 @@ fun ItemDetailScreen(
     modifier: Modifier = Modifier,
 ) {
     val state by viewModel.uiState.collectAsState()
+    DetailThemeMusic(koinInject<ThemeMusicService>(), rememberDetailThemes(state))
     val shuffleLauncher = org.siloserver.silo.android.ui.screens.shuffle.rememberShuffleLauncher(onShuffleStarted)
     val seriesRedirect = remember(state.detail, allowSeriesRedirect) {
         state.detail?.takeIf { allowSeriesRedirect }?.let(::seriesDetailRedirect)

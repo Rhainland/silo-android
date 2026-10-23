@@ -294,6 +294,12 @@ class AndroidPlayerSettingsStore(
     override val autoPlayNextFlow: Flow<Boolean> =
         profileScopedFlow(true) { p, s -> p.boolFor(s, PlaybackSettingsKeys.AutoPlayNext, true) }
 
+    override val themeMusicEnabledFlow: Flow<Boolean> =
+        profileScopedFlow(false) { p, s -> p.boolFor(s, PlaybackSettingsKeys.ThemeMusicEnabled, false) }
+
+    override val themeMusicLoopFlow: Flow<Boolean> =
+        profileScopedFlow(false) { p, s -> p.boolFor(s, PlaybackSettingsKeys.ThemeMusicLoop, false) }
+
     override val hdrEnabledFlow: Flow<Boolean> =
         profileScopedFlow(true) { p, s -> p.boolFor(s, PlaybackSettingsKeys.HdrEnabled, true) }
 
@@ -519,6 +525,12 @@ class AndroidPlayerSettingsStore(
 
     override suspend fun setAutoPlayNext(value: Boolean) =
         writeBool(PlaybackSettingsKeys.AutoPlayNext, value)
+
+    override suspend fun setThemeMusicEnabled(value: Boolean) =
+        writeBool(PlaybackSettingsKeys.ThemeMusicEnabled, value)
+
+    override suspend fun setThemeMusicLoop(value: Boolean) =
+        writeBool(PlaybackSettingsKeys.ThemeMusicLoop, value)
 
     override suspend fun setHdrEnabled(value: Boolean) =
         writeBool(PlaybackSettingsKeys.HdrEnabled, value)

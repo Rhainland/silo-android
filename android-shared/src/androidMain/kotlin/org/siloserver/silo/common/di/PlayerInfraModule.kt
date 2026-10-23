@@ -52,6 +52,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import org.koin.android.ext.koin.androidContext
@@ -323,6 +324,29 @@ val playerInfraModule = module {
             scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate),
             getAuthScope = { get<TokenManager>().snapshotCurrentScope() },
             identityChanges = identityChanges,
+        )
+    }
+
+    // Theme music on the phone and TV detail pages. One instance, so a theme
+    // continues from one detail page to the next one with the same theme.
+    single {
+        val identityChanges = get<ServerRegistry>().activeEntry
+            .map { it?.url to it?.profileId }
+            .distinctUntilChanged()
+            .drop(1)
+            .map { Unit }
+        org.siloserver.silo.common.thememusic.ThemeMusicService(
+            context = androidContext(),
+            api = get(),
+            tokens = get(),
+            settings = get(),
+            identityChanges = identityChanges,
+            playbackStarts = org.siloserver.silo.common.thememusic.playbackStarts(get<ActivePlayerHolder>().player),
+            // The grant URL carries its own token and may be on a proxy's
+            // origin, so it goes out on the raw transport without account auth.
+            dataSourceFactory = androidx.media3.datasource.okhttp.OkHttpDataSource.Factory(
+                get<okhttp3.OkHttpClient>(PLAYER_TRANSPORT_OKHTTP_QUALIFIER),
+            ),
         )
     }
 
