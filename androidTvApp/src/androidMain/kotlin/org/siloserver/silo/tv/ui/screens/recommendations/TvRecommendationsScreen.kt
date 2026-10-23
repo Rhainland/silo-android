@@ -178,13 +178,25 @@ fun TvRecommendationsScreen(
     // profile switch or restart. Refresh quietly whenever the tab is shown
     // again, as Home does; refresh() keeps the current rows on screen. The
     // effect also runs when first added, while the VM's own first load is
-    // still running, so skip it then. A detail return skips it too: the shell
-    // is restoring focus to the launch card, which new rows would move.
+    // still running, so skip it then.
+    //
+    // A detail return defers the refresh instead: the shell is restoring focus
+    // to the launch card, which new rows would move. Once the shell allows
+    // refreshes again the pending one runs, so a title watched from that
+    // detail page leaves the feed without another tab visit.
+    var refreshPending by remember { mutableStateOf(false) }
     androidx.lifecycle.compose.LifecycleResumeEffect(viewModel) {
-        if (shouldRefreshOnResume() && !viewModel.uiState.value.isLoading) {
-            viewModel.refresh()
+        if (!viewModel.uiState.value.isLoading) {
+            if (shouldRefreshOnResume()) viewModel.refresh() else refreshPending = true
         }
         onPauseOrDispose { }
+    }
+    val refreshAllowed = shouldRefreshOnResume()
+    LaunchedEffect(refreshAllowed, refreshPending) {
+        if (refreshAllowed && refreshPending) {
+            refreshPending = false
+            viewModel.refresh()
+        }
     }
 
     val showFallbackCaption = savedListSelection != null && savedListIsFallback
