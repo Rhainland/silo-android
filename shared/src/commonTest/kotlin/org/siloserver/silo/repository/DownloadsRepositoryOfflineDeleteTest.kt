@@ -46,6 +46,8 @@ private object OfflineDeleteNoDevices : org.siloserver.silo.network.DeviceMetada
 private class FakeApi(
     var serverList: List<DownloadRecord> = emptyList(),
     var deleteResult: (String) -> ApiResult<Unit> = { ApiResult.Success(Unit) },
+    var capability: org.siloserver.silo.model.download.DownloadCapability? = null,
+    private val log: MutableList<String> = mutableListOf(),
 ) : org.siloserver.silo.network.api.DownloadsApi(
     registry = org.siloserver.silo.network.apiv2.DownloadRegistryV2Api(HttpClient(), org.siloserver.silo.network.TokenManagerImpl(), OfflineDeleteNoDevices, org.siloserver.silo.network.apiv2.ApiV2Gate.Unrestricted),
     tokens = org.siloserver.silo.network.TokenManagerImpl(),
@@ -54,8 +56,11 @@ private class FakeApi(
 ) {
     val deleteCalls = mutableListOf<String>()
     override suspend fun list(scope: org.siloserver.silo.network.AuthScopeSnapshot?): ApiResult<DownloadsListResponse> = ApiResult.Success(DownloadsListResponse(serverList))
+    override suspend fun capability(): ApiResult<org.siloserver.silo.model.download.DownloadCapability> =
+        capability?.let { ApiResult.Success(it) } ?: ApiResult.Error(404, "not_found", "no capability")
     override suspend fun delete(id: String, scope: org.siloserver.silo.network.AuthScopeSnapshot?): ApiResult<Unit> {
         deleteCalls += id
+        log += "delete:$id"
         return deleteResult(id)
     }
 }
@@ -167,5 +172,69 @@ class DownloadsRepositoryOfflineDeleteTest {
         // even though it's absent from scope B's list.
         assertFalse(port.allPendingRecordIds().contains("b"))
         assertTrue(port.allPendingRecordIds().contains("a"))
+    }
+
+    private val revokeAware = org.siloserver.silo.model.download.DownloadCapability(enabled = true, downloadAllowed = true, revokedRemovesLocal = true)
+
+    private class FakeCleanup(private val log: MutableList<String>, var succeeds: Boolean = true) :
+        org.siloserver.silo.repository.port.RevokedDownloadCleanupPort {
+        override suspend fun removeLocalCopy(serverId: String, profileId: String, recordId: String, mediaFileId: Int): Boolean {
+            log += "local:$serverId/$profileId/$recordId/$mediaFileId"
+            return succeeds
+        }
+    }
+
+    @Test
+    fun `background refresh removes a revoked download locally before deleting its entry`() = runTest {
+        val scope = org.siloserver.silo.network.AuthScopeSnapshot("s", "p", "https://example.invalid", null, identityGeneration = 0)
+        val owners = object : org.siloserver.silo.network.DurableLoginAuthorityProvider {
+            override suspend fun snapshotDurableLoginAuthority() = org.siloserver.silo.network.DurableLoginAuthority("login", scope)
+        }
+        val log = mutableListOf<String>()
+        val port = FakeDeletionPort()
+        val api = FakeApi(serverList = listOf(rec("kept", 1), rec("gone", 2).copy(status = "revoked")), capability = revokeAware, log = log)
+        val repo = DownloadsRepository(api, port, owners, identityTransitions = org.siloserver.silo.network.DefaultIdentityTransitionBarrier(),
+            revokedCleanup = FakeCleanup(log))
+
+        repo.refresh() // unscoped, as the status worker reads the registry
+
+        assertEquals(listOf("local:s/p/gone/2", "delete:gone", "delete:gone"), log)
+        assertEquals(listOf("kept"), repo.records.first().map { it.id })
+        assertEquals(setOf("gone"), port.allPendingRecordIds())
+    }
+
+    @Test
+    fun `a revoked entry keeps its server entry until the local copy is gone`() = runTest {
+        val log = mutableListOf<String>()
+        val port = FakeDeletionPort()
+        val cleanup = FakeCleanup(log, succeeds = false)
+        val api = FakeApi(serverList = listOf(rec("gone", 2).copy(status = "revoked")), capability = revokeAware, log = log)
+        val repo = DownloadsRepository(api, port, revokedCleanup = cleanup)
+
+        repo.refresh(serverId = "s", profileId = "p")
+        assertEquals(listOf("local:s/p/gone/2"), log)
+        assertTrue(repo.records.first().isEmpty())
+
+        cleanup.succeeds = true
+        log.clear()
+        repo.refresh(serverId = "s", profileId = "p")
+        assertEquals(listOf("local:s/p/gone/2", "delete:gone", "delete:gone"), log)
+
+        api.serverList = emptyList()
+        repo.refresh(serverId = "s", profileId = "p")
+        assertTrue(port.allPendingRecordIds().isEmpty())
+    }
+
+    @Test
+    fun `without revoked_removes_local a revoked entry keeps its local copy`() = runTest {
+        val log = mutableListOf<String>()
+        val api = FakeApi(serverList = listOf(rec("gone", 2).copy(status = "revoked")),
+            capability = revokeAware.copy(revokedRemovesLocal = false), log = log)
+        val repo = DownloadsRepository(api, FakeDeletionPort(), revokedCleanup = FakeCleanup(log))
+
+        repo.refresh(serverId = "s", profileId = "p")
+
+        assertTrue(log.isEmpty())
+        assertEquals(listOf("gone"), repo.records.first().map { it.id })
     }
 }

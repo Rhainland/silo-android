@@ -389,11 +389,12 @@ class DownloadsViewModel(
             val keep = seeded.map { it.record.id }.toSet()
             val (refreshServerId, refreshProfileId) = activeDownloadScope()
             launch {
-                repository.refresh(
+                val result = repository.refresh(
                     keepIdsAbsentFromServer = keep,
                     serverId = refreshServerId,
                     profileId = refreshProfileId,
                 )
+                if (result is ApiResult.Success) publishSections(repository.records.value, forceReload = true)
             }
 
             repository.records.collect { records -> publishSections(records) }
@@ -420,7 +421,12 @@ class DownloadsViewModel(
         // the local completion is what the row's Ready/Play state reads.
         val (sections, bytesUsed) = withContext(Dispatchers.IO) {
             val unseenCompletions = records.filter { sidecarMissesCompletion(it) }.map { it.id }
-            if (forceReload || unseenCompletions.isNotEmpty() || records.any { it.id !in metadataByRecordId }) {
+            // A registry read elsewhere (item detail, a background worker) can
+            // remove a revoked download's saved copy; its row leaves [records].
+            val recordIds = records.mapTo(mutableSetOf()) { it.id }
+            val droppedSaved = (publishedRecordIds - recordIds).any { it in metadataByRecordId }
+            publishedRecordIds = recordIds
+            if (forceReload || droppedSaved || unseenCompletions.isNotEmpty() || records.any { it.id !in metadataByRecordId }) {
                 reloadSidecarMetadata()
                 // Reload once per disagreement: a row the server holds as
                 // completed while it downloads again locally must not
@@ -515,7 +521,12 @@ class DownloadsViewModel(
             val keep = metadataByRecordId.keys
             val (serverId, profileId) = activeDownloadScope()
             when (val r = repository.refresh(keepIdsAbsentFromServer = keep, serverId = serverId, profileId = profileId)) {
-                is ApiResult.Success -> _uiState.update { it.copy(error = null) }
+                is ApiResult.Success -> {
+                    _uiState.update { it.copy(error = null) }
+                    // A refresh can remove revoked downloads' local copies, which
+                    // only the Room sidecars show; re-read them.
+                    publishSections(repository.records.value, forceReload = true)
+                }
                 is ApiResult.Error, is ApiResult.NetworkError ->
                     _uiState.update { it.copy(error = r.errorMessage("Failed to refresh downloads")) }
             }
@@ -794,13 +805,20 @@ class DownloadsViewModel(
                     serverId == activeServerId && profileId == activeProfileId
                 }
         }
+        // A queued delete (the user's, or a revoked download whose local copy
+        // could not be removed yet) must not show its saved file as playable.
+        val pendingDeletes = runCatching { repository.pendingDeletionsForScope(activeServerId, activeProfileId) }
+            .getOrElse { emptyList() }.mapTo(mutableSetOf()) { it.recordId }
         metadataByRecordId = scoped
             .associate { (_, _, sidecar) -> sidecar.record.id to sidecar }
-            .filterKeys { it !in removingRecordIds }
+            .filterKeys { it !in removingRecordIds && it !in pendingDeletes }
         scopeByFileId = scoped.associate { (serverId, profileId, sidecar) ->
             sidecar.record.mediaFileId to (serverId to profileId)
         }
     }
+
+    /** Record ids of the last [publishSections] call, guarded by its lock. */
+    private var publishedRecordIds: Set<String> = emptySet()
 
     /** Completed records whose sidecar still disagreed after a reload. */
     private var completionReloadIds: Set<String> = emptySet()

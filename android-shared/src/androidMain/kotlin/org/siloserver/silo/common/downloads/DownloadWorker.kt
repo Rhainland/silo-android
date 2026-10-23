@@ -785,8 +785,17 @@ class DownloadWorker(
          * has stopped before deleting the Room rows it can otherwise recreate.
          */
         suspend fun cancelAndAwait(context: Context, downloadId: String) {
-            DownloadWorkerLifetime.beginCancellation(downloadId)
             DownloadStatusWorker.cancel(context, downloadId)
+            cancelTransferAndAwait(context, downloadId)
+        }
+
+        /**
+         * [cancelAndAwait] without dropping a queued status report. A registry
+         * read made by that report's own worker can reach a revoked-download
+         * cleanup, which must not cancel the worker running it.
+         */
+        suspend fun cancelTransferAndAwait(context: Context, downloadId: String) {
+            DownloadWorkerLifetime.beginCancellation(downloadId)
             withContext(Dispatchers.IO) {
                 WorkManager.getInstance(context)
                     .cancelUniqueWork(tagFor(downloadId))

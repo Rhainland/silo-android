@@ -214,6 +214,9 @@ val androidModule = module {
     single<org.siloserver.silo.repository.port.DownloadDeletionPort> {
         org.siloserver.silo.common.data.repository.RoomDownloadDeletionStore(db = get(), authorities = get(), devices = get(), identityTransitions = get())
     }
+    single<org.siloserver.silo.repository.port.RevokedDownloadCleanupPort> {
+        org.siloserver.silo.common.downloads.RevokedDownloadCleanup(androidContext(), get(), get())
+    }
     single<org.siloserver.silo.repository.DownloadSubscriptionRepository> {
         org.siloserver.silo.common.data.repository.RoomDownloadSubscriptionRepository(db = get())
     }

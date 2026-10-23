@@ -144,7 +144,8 @@ val repositoryModule = module {
         )
     }
     single { LibraryPlaybackPrefsRepository(get()) }
-    single { DownloadsRepository(get(), getOrNull<org.siloserver.silo.repository.port.DownloadDeletionPort>() ?: org.siloserver.silo.repository.port.NoOpDownloadDeletionPort, get(), get(), get()) }
+    single { DownloadsRepository(get(), getOrNull<org.siloserver.silo.repository.port.DownloadDeletionPort>() ?: org.siloserver.silo.repository.port.NoOpDownloadDeletionPort, get(), get(), get(),
+        getOrNull<org.siloserver.silo.repository.port.RevokedDownloadCleanupPort>() ?: org.siloserver.silo.repository.port.NoLocalDownloadCopies) }
     single { EbookReaderRepository(get(), get()) }
     single { SubtitlesRepository(get(), get(), get()) }
     single { PushRegistrationRepository(get()) }
