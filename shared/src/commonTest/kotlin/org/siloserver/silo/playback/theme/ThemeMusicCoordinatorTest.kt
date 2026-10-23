@@ -31,6 +31,7 @@ class ThemeMusicCoordinatorTest {
         var available: Boolean? = true
         var capabilityReads = 0
         var otherAudio = false
+        var capabilityGate: kotlinx.coroutines.CompletableDeferred<Unit>? = null
         val coordinator = ThemeMusicCoordinator(
             scope = scope.backgroundScope,
             player = ThemeMusicPlayer(
@@ -38,7 +39,12 @@ class ThemeMusicCoordinatorTest {
                 grant = { owner, theme -> grants += "$owner/$theme"; ThemeGrant("https://server/$theme", converted = false) },
                 createAudio = { _, loop, _ -> Audio(loop).also { audios += it } },
             ),
-            capability = { capabilityReads += 1; available },
+            capability = {
+                capabilityReads += 1
+                // A read that does not observe cancellation, as a blocking client might.
+                capabilityGate?.let { gate -> kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) { gate.await() } }
+                available
+            },
             otherAudioActive = { otherAudio },
             timeSource = scope.testScheduler.timeSource,
         )
@@ -238,6 +244,23 @@ class ThemeMusicCoordinatorTest {
         settle()
         assertEquals(2, h.capabilityReads)
         assertEquals(listOf("movie:heat/7"), h.grants)
+    }
+
+    @Test
+    fun aCapabilityAnswerForThePreviousIdentityIsDiscarded() = runTest {
+        val h = Harness(this)
+        h.capabilityGate = kotlinx.coroutines.CompletableDeferred()
+        h.coordinator.setPreferences(enabled = true, loop = false)
+        h.coordinator.show(Any(), heat)
+        runCurrent()
+        h.coordinator.reset() // the profile changed while the read was in flight
+        h.capabilityGate!!.complete(Unit)
+        h.capabilityGate = null
+        runCurrent()
+        assertTrue(h.grants.isEmpty(), "the previous identity's answer must not start a theme")
+        h.coordinator.show(Any(), heat)
+        runCurrent()
+        assertEquals(2, h.capabilityReads, "the new identity asks again")
     }
 
     @Test

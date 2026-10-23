@@ -184,6 +184,22 @@ class ThemeMusicPlayerTest {
     }
 
     @Test
+    fun anImmediateStopAlsoReleasesAThemeStillFadingOut() = runTest {
+        val h = Harness(this)
+        h.player.select(selection("movie:1", "7"), loop = false)
+        runCurrent()
+        h.audio.started()
+        settle()
+        h.player.stop() // fading out
+        runCurrent()
+        assertFalse(h.audio.released)
+        h.player.stop(immediate = true) // playback starts during the fade
+        runCurrent()
+        assertTrue(h.audio.released)
+        assertFalse(h.player.isAudible)
+    }
+
+    @Test
     fun anImmediateStopReleasesAtOnce() = runTest {
         val h = Harness(this)
         h.player.select(selection("movie:1", "7"), loop = false)

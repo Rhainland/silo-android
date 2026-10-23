@@ -61,10 +61,11 @@ class ThemeMusicPlayer(
     private var converted = false
     private var retry = 0
     private var suspended = false
-    private var retiring = 0
+    /** Themes still fading out after a stop; an immediate stop ends them too. */
+    private val retiring = mutableListOf<Job>()
 
     /** Whether theme audio may be coming out of the device now, a fade-out included. */
-    val isAudible: Boolean get() = audioPlaying || retiring > 0
+    val isAudible: Boolean get() = audioPlaying || retiring.isNotEmpty()
 
     fun select(selection: ThemeSelection?, loop: Boolean) {
         this.loop = loop
@@ -108,6 +109,7 @@ class ThemeMusicPlayer(
         request = null
         owner = ""
         theme = ""
+        if (immediate) retiring.toList().forEach { it.cancel() }
         val current = audio
         if (!immediate && current != null && audioPlaying) {
             // Detach it and fade it out on its own job, so the next theme's
@@ -116,15 +118,16 @@ class ThemeMusicPlayer(
             audioPlaying = false
             fade?.cancel()
             fade = null
-            retiring += 1
-            scope.launch {
+            lateinit var job: Job
+            job = scope.launch {
                 try {
                     rampVolume(current, 0f)
                 } finally {
                     current.release()
-                    retiring -= 1
+                    retiring.remove(job)
                 }
             }
+            retiring += job
         } else {
             clearAudio()
         }

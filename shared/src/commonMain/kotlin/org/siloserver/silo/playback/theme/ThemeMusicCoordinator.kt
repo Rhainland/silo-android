@@ -41,6 +41,9 @@ class ThemeMusicCoordinator(
     private var available: Boolean? = null
     private var availableAt: TimeMark? = null
     private var capabilityRead: Job? = null
+
+    /** Bumped by [reset]; a capability answer for an earlier identity is dropped. */
+    private var identity = 0
     private var page: Any? = null
     private var selection: ThemeSelection? = null
     private var release: Job? = null
@@ -82,6 +85,7 @@ class ThemeMusicCoordinator(
 
     /** The account, profile or server changed: stop, and ask the next identity again. */
     fun reset() {
+        identity += 1
         capabilityRead?.cancel()
         capabilityRead = null
         available = null
@@ -103,8 +107,10 @@ class ThemeMusicCoordinator(
 
     private fun readCapability() {
         if (capabilityRead?.isActive == true) return
+        val asked = identity
         capabilityRead = scope.launch {
             val answer = capability() ?: return@launch
+            if (asked != identity) return@launch
             available = answer
             availableAt = timeSource.markNow()
             apply()
