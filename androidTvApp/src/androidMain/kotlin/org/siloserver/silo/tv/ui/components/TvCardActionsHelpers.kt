@@ -45,28 +45,18 @@ fun rememberTvBrowseItemCardActions(
         mutableStateOf(item)
     }
 
-    val actions = remember(item.contentId, item.userState, item.positionSeconds, coordinator, scope) {
-        TvMediaCardActions(
-            onSetWatched = { watched ->
-                val writeIntent = coordinator.beginWatched(item.contentId, watched)
-                val previous = state
+    val actions = remember(item.contentId, item.userState, item.positionSeconds, coordinator, context, scope) {
+        // The state before the latest watched change, put back if its write fails.
+        var previous = state
+        coordinator.tvCardActions(
+            contentId = item.contentId,
+            context = context,
+            scope = scope,
+            onWatchedChanged = { watched ->
+                previous = state
                 state = state.withWatched(watched)
-                scope.launch {
-                    val result = coordinator.performPersonalWrite(writeIntent)
-                    if (result !is ApiResult.Success && coordinator.isCurrent(writeIntent)) {
-                        state = previous
-                        showWatchedWriteFailed(context, watched, result)
-                    }
-                }
             },
-            onToggleFavorite = { favorite ->
-                val intent = coordinator.memberships.begin(item.contentId, org.siloserver.silo.repository.port.MembershipPort.Kind.FAVORITE, favorite)
-                scope.launch { coordinator.memberships.perform(intent) }
-            },
-            onToggleWatchlist = { inWatchlist ->
-                val intent = coordinator.memberships.begin(item.contentId, org.siloserver.silo.repository.port.MembershipPort.Kind.WATCHLIST, inWatchlist)
-                scope.launch { coordinator.memberships.perform(intent) }
-            },
+            onWatchedWriteFailed = { state = previous },
         )
     }
 
