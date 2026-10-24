@@ -19,6 +19,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
@@ -26,10 +27,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.LifecycleResumeEffect
+import org.koin.compose.koinInject
 import org.koin.compose.viewmodel.koinViewModel
 import org.koin.core.parameter.parametersOf
+import org.siloserver.silo.domain.MediaActionsCoordinator
 import org.siloserver.silo.model.catalog.BrowseItem
 import org.siloserver.silo.model.catalog.CatalogBoxSetDetail
 import org.siloserver.silo.model.catalog.boxSetNextMovie
@@ -44,6 +48,8 @@ import org.siloserver.silo.tv.ui.components.TvLoadingScreen
 import org.siloserver.silo.tv.ui.components.TvMediaRow
 import org.siloserver.silo.tv.ui.components.TvPrimaryPillButton
 import org.siloserver.silo.tv.ui.components.rememberAmbientBackdropTintState
+import org.siloserver.silo.tv.ui.components.tvCardActions
+import org.siloserver.silo.tv.ui.components.withMembershipChanges
 import org.siloserver.silo.tv.ui.focus.TvContentInitialFocusMaxAttempts
 import org.siloserver.silo.tv.ui.focus.requestFocusUntilObserved
 import org.siloserver.silo.tv.ui.screens.detail.TvDetailHero
@@ -104,7 +110,30 @@ private fun BoxSetContent(
 ) {
     val boxSet = detail.boxSet
     val next = boxSetNextMovie(detail.items)
-    val movies = remember(detail.items) { detail.items.map(BrowseItem::toSectionItem) }
+    // Each movie's card menu marks it watched or adds it to a list, as on the
+    // library grid; the view model moves the hero's count and play target.
+    val coordinator: MediaActionsCoordinator = koinInject()
+    val scope = rememberCoroutineScope()
+    val context = LocalContext.current.applicationContext
+    val membershipActions by coordinator.memberships.actions.collectAsState()
+    val movies = remember(detail.items, membershipActions) {
+        detail.items.map { movie ->
+            movie.toSectionItem().copy(
+                userState = coordinator.withMembershipChanges(movie.contentId, movie.userState, membershipActions),
+            )
+        }
+    }
+    val cardActions = remember(coordinator, context, scope, viewModel) {
+        { movie: SectionItem ->
+            coordinator.tvCardActions(
+                contentId = movie.contentId,
+                context = context,
+                scope = scope,
+                onWatchedChanged = { watched -> viewModel.onMovieWatchedChanged(movie.contentId, watched) },
+                onWatchedWriteFailed = { viewModel.onMovieWatchedWriteFailed(movie.contentId) },
+            )
+        }
+    }
     val playFocus = remember { FocusRequester() }
     val movieReturnFocus = remember { FocusRequester() }
     val firstMovieFocus = remember { FocusRequester() }
@@ -215,6 +244,7 @@ private fun BoxSetContent(
                         showHeader = false,
                         items = movies,
                         showProgress = true,
+                        cardActions = cardActions,
                         onItemClick = { contentId ->
                             returnIndex = movies.indexOfFirst { it.contentId == contentId }
                             onOpenMovie(contentId)
