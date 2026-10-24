@@ -135,8 +135,9 @@ class CatalogRepository(
 
         // Only the unfiltered, first-page default browse of a single library is
         // cached for offline (every request-shaping param must be at its default).
-        // A box set library's default browse is grouped, so its grouped page is
-        // the one kept.
+        // A box set library's default browse is grouped; its grouped page is
+        // kept apart from the plain one, so a library whose box sets turn off
+        // never serves box set cards offline.
         val cacheableLibraryId = libraryId?.takeIf {
             continuation == null &&
                 query == null && genre == null && contentRating == null &&
@@ -149,13 +150,13 @@ class CatalogRepository(
         if (result is ApiResult.Success) {
             if (sized?.cacheable == true) {
                 writeIfIdentityUnchanged(requestIdentityGeneration, artworkFingerprint) { cacheWriteLease ->
-                    catalogCache.cacheDefaultLibraryPage(cacheableLibraryId, result.data, cacheWriteLease)
+                    catalogCache.cacheDefaultLibraryPage(cacheableLibraryId, result.data, cacheWriteLease, group)
                 }
             }
             return result
         }
         if (result.canServeCache()) {
-            catalogCache.getCachedDefaultLibraryPage(cacheableLibraryId)?.let { return ApiResult.Success(it.copy(hasMore = false, continuation = null)) }
+            catalogCache.getCachedDefaultLibraryPage(cacheableLibraryId, group)?.let { return ApiResult.Success(it.copy(hasMore = false, continuation = null)) }
         }
         return result
     }
