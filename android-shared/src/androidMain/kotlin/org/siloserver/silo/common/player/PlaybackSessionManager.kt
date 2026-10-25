@@ -1282,6 +1282,7 @@ open class PlaybackSessionManager(
                         requested = request.selectedTracks.subtitle,
                         candidate = validated.plan,
                         currentEffectiveFileId = active.plan.effectiveMediaFileId ?: active.fileId,
+                        subtitlePicked = classification == "subtitle_track_changed",
                     )
                     if (subtitleMismatch != null) {
                         stopCandidateSessionIfUnowned(active.sessionId, validated.sessionId)
@@ -2032,24 +2033,29 @@ open class PlaybackSessionManager(
         requested: PlaybackTrackIdentityV3?,
         candidate: PlaybackPlanV3,
         currentEffectiveFileId: Int,
+        /** The request is the viewer's subtitle pick, which an Off candidate would ignore. */
+        subtitlePicked: Boolean,
     ): String? {
         val selected = candidate.selectedTracks.subtitle
         val subtitle = candidate.subtitle
+        val subtitlesOff = selected == null &&
+            subtitle.mode == PlaybackSubtitleModeV3.OFF &&
+            subtitle.trackId == null &&
+            subtitle.artifact == null &&
+            subtitle.hlsRendition == null
         if (requested == null) {
-            return if (selected == null &&
-                subtitle.mode == PlaybackSubtitleModeV3.OFF &&
-                subtitle.trackId == null &&
-                subtitle.artifact == null &&
-                subtitle.hlsRendition == null
-            ) {
-                null
-            } else {
-                "The candidate did not keep subtitles off."
-            }
+            return if (subtitlesOff) null else "The candidate did not keep subtitles off."
         }
         val candidateEffectiveFileId = candidate.effectiveMediaFileId
             ?: candidate.requestedMediaFileId
             ?: currentEffectiveFileId
+        if (candidateEffectiveFileId != currentEffectiveFileId && subtitlesOff && !subtitlePicked) {
+            // The other edition may not carry the requested track, so the server
+            // can turn subtitles off there, as when a quality change moves to it.
+            // It has already committed this plan; refusing it would leave the
+            // player on the old file. A subtitle pick it turned off is refused.
+            return null
+        }
         if (candidateEffectiveFileId == currentEffectiveFileId) {
             if (selected?.id != requested.id ||
                 (selected.index != null && selected.index != requested.index) ||

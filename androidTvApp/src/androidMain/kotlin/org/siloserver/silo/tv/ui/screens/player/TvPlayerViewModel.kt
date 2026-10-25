@@ -91,6 +91,7 @@ import org.siloserver.silo.domain.player.BufferingQualityNoticeSlot
 import org.siloserver.silo.domain.player.BufferingQualityPill
 import org.siloserver.silo.domain.player.BufferingQualityReplan
 import org.siloserver.silo.domain.player.toBufferingQualityPlan
+import org.siloserver.silo.model.playback.isCommittedAt
 import org.siloserver.silo.model.playback.LEARNED_LIMIT_CLEAR
 import org.siloserver.silo.model.playback.PLAYBACK_QUALITY_AUTO
 import org.siloserver.silo.domain.player.IntroAutoSkipController
@@ -1411,6 +1412,18 @@ class TvPlayerViewModel(
 
     /** The mount nonce of each subtitle publication not yet confirmed, by session. */
     private val unpublishedSubtitleMounts = mutableMapOf<String, Long>()
+
+    /**
+     * Unconfirmed publications that moved to another version, which turned the
+     * requested subtitle Off because that file lacks it, by session, with the
+     * [subtitleChoiceGeneration] they were adopted under. Once confirmed, the Off
+     * is not the viewer's choice: it isn't carried to the next episode or saved
+     * as their preference, unless they picked a subtitle in the meantime.
+     */
+    private val unpublishedForcedSubtitleOff = mutableMapOf<String, Long>()
+
+    /** Counts the viewer's subtitle picks; see [unpublishedForcedSubtitleOff]. */
+    private var subtitleChoiceGeneration = 0L
     private val unpublishedTvLoadUi =
         TvUnpublishedLoadUiOwnership<UiState, TvSubtitlePlaybackContext>()
 
@@ -2164,6 +2177,12 @@ class TvPlayerViewModel(
         lastAdoptedSessionId = ready.session.sessionId
         if (!adoption.isCurrent()) return TvSubtitleAdoptionResult.Superseded
         unpublishedSubtitleUi[ready.session.sessionId] = before
+        if (fileId != before.mediaFileId &&
+            adoption.committed.identity == SubtitleIdentity.Off &&
+            adoption.requestedIdentity != SubtitleIdentity.Off
+        ) {
+            unpublishedForcedSubtitleOff[ready.session.sessionId] = subtitleChoiceGeneration
+        }
 
         val subtitleUrls = enrichAuthoritativePlaybackSubtitleChoices(
             catalogTracks = version?.subtitleTracks.orEmpty(),
@@ -2221,6 +2240,10 @@ class TvPlayerViewModel(
     ): Boolean {
         unpublishedSubtitleUi.remove(playback.sessionId)
         unpublishedSubtitleMounts.remove(playback.sessionId)
+        if (unpublishedForcedSubtitleOff.remove(playback.sessionId) == subtitleChoiceGeneration) {
+            manualSubtitleSelectionApplied = false
+            autoSelectedSubtitleIdentity = SubtitleIdentity.Off
+        }
         return true
     }
 
@@ -2229,6 +2252,7 @@ class TvPlayerViewModel(
         restoreUi: Boolean,
     ): Boolean {
         val predecessor = unpublishedSubtitleUi.remove(playback.sessionId)
+        unpublishedForcedSubtitleOff.remove(playback.sessionId)
         // A replacement the controller adopted sends its summary when the
         // predecessor's remount ends it. One it never adopted sends none, and
         // its identity would go to a later adoption that repeats its plan id.
@@ -4822,6 +4846,7 @@ class TvPlayerViewModel(
         )
         if (identity != null) {
             _pendingRemoteSubtitleIndex.compareAndSet(index, null)
+            subtitleChoiceGeneration += 1
             rememberSeriesSubtitleChoice(identity)
             playbackMutationFence.beginReplan()
             launchSubtitleTransaction(_uiState.value) {
@@ -5874,6 +5899,7 @@ class TvPlayerViewModel(
 
     fun selectSubtitleOption(identity: SubtitleIdentity) {
         manualSubtitleSelectionApplied = true
+        subtitleChoiceGeneration += 1
         // The viewer is choosing: drop the automatic marker so this commit
         // writes the durable per-item preference.
         autoSelectedSubtitleIdentity = null
@@ -5929,6 +5955,7 @@ class TvPlayerViewModel(
             choice = org.siloserver.silo.model.playback.SeriesAudioChoice.of(catalogAudioTracks(state), catalogOrdinal),
             owner = trackChoiceOwner,
             catalogOrdinal = catalogOrdinal,
+            fileId = state.selectedFileId ?: state.mediaFileId,
         )
         stagedAudioWrite.set(write)
     }
@@ -5962,6 +5989,8 @@ class TvPlayerViewModel(
         val choice: org.siloserver.silo.model.playback.SeriesAudioChoice?,
         val owner: org.siloserver.silo.network.AuthScopeSnapshot?,
         val catalogOrdinal: Int,
+        /** The file it was picked on; a replan can commit it on another. */
+        val fileId: Int?,
     )
 
     /**
@@ -5999,8 +6028,16 @@ class TvPlayerViewModel(
             ?.takeIf { it.identity == committed.identity && stagedSubtitleWrite.compareAndSet(it, null) }
             ?.let(::saveSeriesSubtitle)
         if (committed.audioPreferenceSpecified) {
+            val state = _uiState.value
             stagedAudioWrite.get()
-                ?.takeIf { it.catalogOrdinal == committed.audioTrackIndex && stagedAudioWrite.compareAndSet(it, null) }
+                ?.takeIf {
+                    it.choice.isCommittedAt(
+                        committedOrdinal = committed.audioTrackIndex,
+                        committedTracks = catalogAudioTracks(state),
+                        pickedOrdinal = it.catalogOrdinal,
+                        sameFile = it.fileId == (state.selectedFileId ?: state.mediaFileId),
+                    ) && stagedAudioWrite.compareAndSet(it, null)
+                }
                 ?.let(::saveSeriesAudio)
         }
     }
