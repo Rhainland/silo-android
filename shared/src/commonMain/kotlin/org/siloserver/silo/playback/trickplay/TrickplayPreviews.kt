@@ -6,6 +6,7 @@ import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -238,7 +239,8 @@ class TrickplayPreviews<T : Any>(
         renewedAt = now()
         scope.async(start = CoroutineStart.LAZY) {
             val result = manifests.manifest(target)
-            renewal = null
+            // A rebind may have replaced this renewal meanwhile; leave the new one alone.
+            if (renewal === currentCoroutineContext()[Job]) renewal = null
             if (target != this@TrickplayPreviews.target) return@async
             when {
                 result is ApiResult.Success -> install(result.data)
@@ -279,7 +281,13 @@ class TrickplayPreviews<T : Any>(
     private fun install(renewed: TrickplayManifest) {
         val current = manifest
         manifest = renewed
-        if (current == null || !renewed.hasSameLayout(current)) dropSheets()
+        if (current == null || !renewed.hasSameLayout(current)) {
+            dropSheets()
+            // The work for the time being scrubbed to was cut for the old
+            // layout and is gone; ask for it again under the new one.
+            wanted = null
+            shownSeconds?.let(::show)
+        }
     }
 
     private fun dropSheets() {

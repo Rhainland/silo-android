@@ -60,9 +60,11 @@ internal class OkHttpTrickplaySheets(private val client: OkHttpClient) : Trickpl
             client.newCall(Request.Builder().url(url).build()).execute().use { response ->
                 when {
                     response.isSuccessful -> {
-                        val body = response.body
-                        if (body == null || body.contentLength() > MAX_SHEET_BYTES) TrickplaySheet.Failed
-                        else TrickplaySheet.Loaded(body.bytes())
+                        // Bounded by what arrives, not only by Content-Length,
+                        // which a chunked response does not send.
+                        val source = response.body?.takeIf { it.contentLength() <= MAX_SHEET_BYTES }?.source()
+                        if (source == null || source.request(MAX_SHEET_BYTES + 1)) TrickplaySheet.Failed
+                        else TrickplaySheet.Loaded(source.readByteArray())
                     }
                     // A signature that expired or no longer names a published
                     // revision; the server answers 404 for a changed one.

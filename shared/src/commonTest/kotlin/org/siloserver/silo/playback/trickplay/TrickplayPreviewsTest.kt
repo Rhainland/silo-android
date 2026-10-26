@@ -354,4 +354,23 @@ class TrickplayPreviewsTest {
 
         assertNull(previews.thumbnail.value, "sheet 2's thumbnail does not stand for 65s")
     }
+
+    @Test
+    fun aRefusedSheetWhosePreviewsWereRemadeShowsTheNewLayoutWithoutAnotherScrub() = runTest {
+        val manifests = FakeManifests(ApiResult.Success(manifest(signature = "old")))
+        val sheets = FakeSheets().apply {
+            answer = { url -> if ("sig=old" in url) TrickplaySheet.Refused else TrickplaySheet.Loaded(url.encodeToByteArray()) }
+        }
+        val previews = previews(manifests, sheets)
+        previews.bind(target)
+        runCurrent()
+        // The previews were made again with four thumbnails across.
+        manifests.answer = ApiResult.Success(manifest(signature = "new", columns = 4))
+
+        previews.show(25.0)
+        runCurrent()
+
+        // Thumbnail 2 is now on sheet 0, third column.
+        assertEquals("https://silo.example/s/0.jpg?sig=new#40,0", previews.thumbnail.value)
+    }
 }
