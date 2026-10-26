@@ -7,6 +7,7 @@ import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -153,15 +154,17 @@ class TrickplayPreviews<T : Any>(
         val fetch = sheet(tile.sheet)
         // Load the sheet after it too, so a forward scrub rarely waits.
         if (tile.sheet + 1 < manifest.sheetUrls.size) sheet(tile.sheet + 1)
-        // Until it arrives the previous thumbnail stays, so the picture does
+        // Until it is cut the previous thumbnail stays, so the picture does
         // not flash; [STALE_PREVIEW_MS] after it stopped matching the target
-        // (however many targets came since) it no longer stands for the time.
+        // (however many targets came since) it no longer stands for the time,
+        // whether the sheet or the cut is the slow part.
         wantedJob = scope.launch {
-            val bytes = withTimeoutOrNull(stalePatience()) { fetch.await() } ?: run {
-                if (!fetch.isCompleted && key == wanted) setThumbnail(null)
-                fetch.await()
+            val dropStale = launch {
+                delay(stalePatience())
+                if (key == wanted) setThumbnail(null)
             }
-            val image = bytes?.takeIf { key == wanted }?.let { decoder.decode(it, tile, manifest) }
+            val image = fetch.await()?.takeIf { key == wanted }?.let { decoder.decode(it, tile, manifest) }
+            dropStale.cancel()
             // A sheet that failed shows no picture rather than the last one.
             if (key == wanted) setThumbnail(image)
         }

@@ -48,10 +48,13 @@ class TrickplayPreviewsTest {
     }
 
     private var decodes = 0
+    /** When set, cutting a thumbnail waits for it. */
+    private var decodeGate: CompletableDeferred<Unit>? = null
 
     /** "sheet URL#x,y": which sheet a thumbnail was cut from, and where. */
     private val decoder = TrickplayTileDecoder { bytes, tile, _ ->
         decodes++
+        decodeGate?.await()
         "${bytes.decodeToString()}#${tile.x},${tile.y}"
     }
 
@@ -287,6 +290,27 @@ class TrickplayPreviewsTest {
         sheets.gate!!.complete(Unit)
         runCurrent()
         assertEquals("https://silo.example/s/3.jpg?sig=a#0,0", previews.thumbnail.value)
+    }
+
+    @Test
+    fun aSlowCutKeepsThePreviousThumbnailOnlyBriefly() = runTest {
+        val previews = previews(FakeManifests(ApiResult.Success(manifest())), FakeSheets())
+        previews.bind(target)
+        runCurrent()
+        previews.show(5.0)
+        runCurrent()
+
+        // Sheet 1 is held (fetched ahead of a forward scrub); only cutting 25s is slow.
+        decodeGate = CompletableDeferred()
+        previews.show(25.0)
+        advanceTimeBy(500)
+        assertEquals("https://silo.example/s/0.jpg?sig=a#0,0", previews.thumbnail.value, "no flash while the next one is cut")
+        advanceTimeBy(600)
+        assertNull(previews.thumbnail.value, "after a second the old picture no longer stands for the new time")
+
+        decodeGate!!.complete(Unit)
+        runCurrent()
+        assertEquals("https://silo.example/s/1.jpg?sig=a#0,0", previews.thumbnail.value)
     }
 
     @Test
