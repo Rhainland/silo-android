@@ -314,6 +314,34 @@ class TrickplayPreviewsTest {
     }
 
     @Test
+    fun anEarlierScrubToTheSameThumbnailDoesNotCutAPictureShort() = runTest {
+        val sheets = FakeSheets()
+        val previews = previews(FakeManifests(ApiResult.Success(manifest())), sheets)
+        previews.bind(target)
+        runCurrent()
+        previews.show(5.0)
+        runCurrent()
+
+        // Out to 65s on a slow sheet, over to 25s (held) at 100ms, back to 65s at 900ms.
+        sheets.gate = CompletableDeferred()
+        previews.show(65.0)
+        advanceTimeBy(100)
+        previews.show(25.0)
+        runCurrent()
+        assertEquals("https://silo.example/s/1.jpg?sig=a#0,0", previews.thumbnail.value)
+        advanceTimeBy(800)
+        previews.show(65.0)
+        advanceTimeBy(150)
+        assertEquals("https://silo.example/s/1.jpg?sig=a#0,0", previews.thumbnail.value, "25s has stood in for 65s only 150ms")
+        advanceTimeBy(900)
+        assertNull(previews.thumbnail.value)
+
+        sheets.gate!!.complete(Unit)
+        runCurrent()
+        assertEquals("https://silo.example/s/3.jpg?sig=a#0,0", previews.thumbnail.value)
+    }
+
+    @Test
     fun aContinuousScrubOverASlowSheetStillDropsTheOldThumbnailAfterASecond() = runTest {
         val sheets = FakeSheets()
         val previews = previews(FakeManifests(ApiResult.Success(manifest())), sheets)

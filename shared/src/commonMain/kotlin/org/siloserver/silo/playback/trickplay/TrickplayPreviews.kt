@@ -90,6 +90,8 @@ class TrickplayPreviews<T : Any>(
     /** The thumbnail the latest [show] asked for, under the [layout] it was cut for. */
     private var wanted: Pair<Long, TrickplayTile>? = null
     private var wantedJob: Job? = null
+    /** Numbers each [wantedJob], so an earlier one's stale timer cannot clear a later answer for the same thumbnail. */
+    private var wantedGeneration = 0L
     /** Since when the thumbnail shown has stood in for a later target; null while it matches one. */
     private var staleSince: Long? = null
 
@@ -158,10 +160,11 @@ class TrickplayPreviews<T : Any>(
         // not flash; [STALE_PREVIEW_MS] after it stopped matching the target
         // (however many targets came since) it no longer stands for the time,
         // whether the sheet or the cut is the slow part.
+        val generation = ++wantedGeneration
         wantedJob = scope.launch {
             val dropStale = launch {
                 delay(stalePatience())
-                if (key == wanted) setThumbnail(null)
+                if (generation == wantedGeneration && key == wanted) setThumbnail(null)
             }
             val image = fetch.await()?.takeIf { key == wanted }?.let { decoder.decode(it, tile, manifest) }
             dropStale.cancel()
