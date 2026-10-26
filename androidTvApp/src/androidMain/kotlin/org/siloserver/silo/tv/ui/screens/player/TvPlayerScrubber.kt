@@ -1,5 +1,10 @@
 package org.siloserver.silo.tv.ui.screens.player
 
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.foundation.layout.wrapContentSize
+import androidx.compose.foundation.border
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.Canvas
 import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.platform.LocalContext
@@ -109,6 +114,8 @@ fun TvPlayerScrubber(
     scrubPreviewSec: Double,
     chapters: List<ChapterInfo>,
     cancelOnBlur: Boolean,
+    /** The server's preview of [scrubPreviewSec], shown above the puck while scrubbing; null keeps the bar alone. */
+    previewThumbnail: ImageBitmap? = null,
     // Detected marker bands [startSec, endSec] drawn on the track when known.
     // Null = no band. Mirrors tvOS TVPlayerScrubber.introRegion.
     introRangeSec: ClosedRange<Double>? = null,
@@ -444,6 +451,34 @@ fun TvPlayerScrubber(
             // show where the preview is, so the full [TvHoldSeekIndicator]
             // overlay stays reserved for the hidden-controls session where
             // nothing else is on screen.
+            // The server's preview of the target, above the puck (and the
+            // auto-seek chip). It overlays the overlay's text rather than
+            // taking layout space, so it comes and goes without moving it.
+            if (isScrubbing && previewThumbnail != null) {
+                val thumbWidthPx = with(density) { TvScrubThumbnailWidth.toPx() }
+                val thumbHeightPx = thumbWidthPx * previewThumbnail.height / previewThumbnail.width.coerceAtLeast(1)
+                val liftPx = with(density) { (if (autoSeekRate != 0) 52.dp else 22.dp).toPx() }
+                Image(
+                    bitmap = previewThumbnail,
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier
+                        .align(Alignment.CenterStart)
+                        .wrapContentSize(unbounded = true)
+                        .offset {
+                            val maxX = (barWidthPx - thumbWidthPx).roundToInt().coerceAtLeast(0)
+                            val x = (barWidthPx * totalProgress - thumbWidthPx / 2f).roundToInt().coerceIn(0, maxX)
+                            // Centred on the bar before the offset: lift the
+                            // bottom edge [liftPx] above the bar's middle.
+                            IntOffset(x, -(liftPx + thumbHeightPx / 2f).roundToInt())
+                        }
+                        .size(TvScrubThumbnailWidth, with(density) { thumbHeightPx.toDp() })
+                        .shadow(12.dp, RoundedCornerShape(10.dp), clip = false)
+                        .clip(RoundedCornerShape(10.dp))
+                        .border(1.dp, Color.White.copy(alpha = 0.22f), RoundedCornerShape(10.dp)),
+                )
+            }
+
             if (autoSeekRate != 0) {
                 var chipWidthPx by remember { mutableStateOf(0) }
                 val chipLiftPx = with(density) { 40.dp.roundToPx() }
@@ -560,6 +595,9 @@ private fun TvScrubberAutoSeekChip(rate: Int, modifier: Modifier = Modifier) {
         )
     }
 }
+
+/** The scrubber's preview width; its height follows the server's thumbnails. */
+private val TvScrubThumbnailWidth = 256.dp
 
 private fun formatScrubberTime(seconds: Double): String = formatTimelineClock(seconds)
 

@@ -66,6 +66,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -153,6 +154,10 @@ fun PlayerControls(
     onSetBrightness: (Float) -> Unit = {},
     // True while the seek bar is being dragged, so the auto-hide can hold off.
     onScrubbingChange: (Boolean) -> Unit = {},
+    // The server's seek-bar preview for the drag target, and where the drag
+    // is (null when it ends). See PlayerProgressBar.
+    scrubThumbnail: ImageBitmap? = null,
+    onScrubTarget: (Double?) -> Unit = {},
     // Google Cast (Chromecast) button — sits in the top bar alongside the other
     // controls. Provided by PlayerScreen; empty by default so this stateless
     // composable stays test-friendly and decoupled from the Cast SDK. The
@@ -260,6 +265,8 @@ fun PlayerControls(
                         isScrubbing = it
                         onScrubbingChange(it)
                     },
+                    thumbnail = scrubThumbnail,
+                    onScrubTarget = onScrubTarget,
                 )
                 PlayerActionPillRow(
                     hasTracks = hasTracks,

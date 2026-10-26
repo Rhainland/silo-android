@@ -51,6 +51,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
@@ -105,6 +106,8 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.drop
 import org.koin.compose.koinInject
 import org.siloserver.silo.common.settings.SeekIntervalStore
 import org.siloserver.silo.model.settings.SeekIntervalPair
@@ -363,6 +366,7 @@ fun TvPlayerScreen(
     val keyboardController = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
     LaunchedEffect(Unit) { runCatching { keyboardController?.hide() } }
     val state by viewModel.presentationState.collectAsState()
+    val trickplayThumbnail by viewModel.trickplayThumbnail.collectAsState()
     val isInPictureInPictureMode by pictureInPictureCoordinator.isInPictureInPictureMode.collectAsState()
     // PlayerView surface must bind to THIS, not the MediaController, so the
     // swap. Mirrors phone PlayerScreen. The MediaController is kept for transport.
@@ -455,6 +459,14 @@ fun TvPlayerScreen(
     var cleanSeekRampJob by remember { mutableStateOf<Job?>(null) }
     var cleanSeekRate by remember { mutableStateOf(0) }
     var cleanSeekPreviewSec by remember { mutableStateOf(0.0) }
+    // The hidden-controls hold seek asks for the server's preview of where
+    // it is landing; the focused scrubber's comes from the view model.
+    LaunchedEffect(viewModel) {
+        snapshotFlow { cleanSeekPreviewSec.takeIf { cleanSeekRate != 0 } }
+            .distinctUntilChanged()
+            .drop(1)
+            .collect(viewModel::showTrickplay)
+    }
     var cleanSeekAdjustmentDirection by remember { mutableStateOf(0) }
     var cleanSeekAdjustmentRepeated by remember { mutableStateOf(false) }
     var quickSkipCaptureGeneration by remember { mutableStateOf(0L) }
@@ -2345,6 +2357,7 @@ fun TvPlayerScreen(
                         isPaused = state.isPaused,
                         isScrubbing = state.isScrubbing,
                         scrubPreviewSec = state.scrubPreviewSec,
+                        scrubThumbnail = trickplayThumbnail,
                         bufferedAheadSec = bufferedAheadSec,
                         chapters = state.chapters,
                         introRange = state.intro,
@@ -2559,6 +2572,7 @@ fun TvPlayerScreen(
                                 rate = cleanSeekRate,
                                 previewTimeSec = cleanSeekPreviewSec,
                                 durationSec = clock.duration,
+                                thumbnail = trickplayThumbnail,
                             )
                         }
                     }
@@ -3007,6 +3021,7 @@ private fun TvPlayerIdleOverlay(
     isPaused: Boolean,
     isScrubbing: Boolean,
     scrubPreviewSec: Double,
+    scrubThumbnail: androidx.compose.ui.graphics.ImageBitmap?,
     bufferedAheadSec: Double,
     chapters: List<org.siloserver.silo.model.catalog.VersionChapter>,
     introRange: org.siloserver.silo.model.catalog.TimeRange?,
@@ -3177,6 +3192,7 @@ private fun TvPlayerIdleOverlay(
                 bufferedAheadSec = bufferedAheadSec,
                 isScrubbing = isScrubbing,
                 scrubPreviewSec = scrubPreviewSec,
+                previewThumbnail = scrubThumbnail,
                 chapters = chapters.map {
                     ChapterInfo(
                         timeSec = it.startSeconds,

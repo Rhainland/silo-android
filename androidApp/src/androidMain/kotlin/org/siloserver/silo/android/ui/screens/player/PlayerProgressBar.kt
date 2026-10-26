@@ -5,6 +5,7 @@ import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -17,6 +18,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.wrapContentSize
@@ -39,11 +41,13 @@ import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChange
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -66,7 +70,9 @@ import org.siloserver.silo.model.catalog.VersionChapter
  * 11dp under the finger, a bubble above shows the target time, the chapter,
  * and how far the scrub has moved, and a tick marks where it started. Chapters
  * show as gaps in the bar rather than tick marks, and a light haptic fires as
- * the scrub crosses into a new chapter.
+ * the scrub crosses into a new chapter. When the server publishes seek-bar
+ * previews, [thumbnail] (the picture at [onScrubTarget]'s time) rides above
+ * the bubble; without one the bubble stands alone, in the same place.
  *
  * Track regions: played (Paper), buffered (safe to seek into), base. Detected
  * markers are tinted bands under the played fill (intro cyan, recap green,
@@ -87,18 +93,22 @@ fun PlayerProgressBar(
     preview: TimeRange? = null,
     showTimes: Boolean = true,
     onScrubbingChange: (Boolean) -> Unit = {},
+    thumbnail: ImageBitmap? = null,
+    onScrubTarget: (Double?) -> Unit = {},
 ) {
     var isSeeking by remember { mutableStateOf(false) }
     var seekPosition by remember { mutableDoubleStateOf(0.0) }
     var scrubStart by remember { mutableDoubleStateOf(0.0) }
     var barWidthPx by remember { mutableFloatStateOf(0f) }
     var bubbleWidthPx by remember { mutableIntStateOf(0) }
+    var bubbleHeightPx by remember { mutableIntStateOf(0) }
     var lastChapter by remember { mutableIntStateOf(-1) }
     var showTotal by remember { mutableStateOf(false) }
     val haptics = LocalHapticFeedback.current
     val density = LocalDensity.current
     val latestOnSeek by rememberUpdatedState(onSeek)
     val latestOnScrubbing by rememberUpdatedState(onScrubbingChange)
+    val latestOnScrubTarget by rememberUpdatedState(onScrubTarget)
     // The gesture coroutine outlives recompositions, so it reads these
     // through state rather than the values it started with.
     val latestPosition by rememberUpdatedState(position)
@@ -188,6 +198,7 @@ fun PlayerProgressBar(
                         lastChapter = chapterIndexAt(seekPosition)
                         isSeeking = true
                         latestOnScrubbing(true)
+                        latestOnScrubTarget(seekPosition)
                         var pointerId = down.id
                         // A restart of this block (seekability or duration
                         // changed mid-scrub) cancels the gesture: end the
@@ -205,6 +216,7 @@ fun PlayerProgressBar(
                                 if (change.positionChange() != Offset.Zero) {
                                     change.consume()
                                     seekPosition = positionAt(change.position.x)
+                                    latestOnScrubTarget(seekPosition)
                                     val chapter = chapterIndexAt(seekPosition)
                                     if (chapter != lastChapter) {
                                         lastChapter = chapter
@@ -215,6 +227,7 @@ fun PlayerProgressBar(
                         } finally {
                             isSeeking = false
                             latestOnScrubbing(false)
+                            latestOnScrubTarget(null)
                         }
                         latestOnSeek(seekPosition)
                     }
@@ -264,7 +277,10 @@ fun PlayerProgressBar(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     modifier = Modifier
                         .wrapContentSize(unbounded = true)
-                        .onSizeChanged { bubbleWidthPx = it.width }
+                        .onSizeChanged {
+                            bubbleWidthPx = it.width
+                            bubbleHeightPx = it.height
+                        }
                         .offset {
                             IntOffset(
                                 x = (clampedX - half).roundToInt(),
@@ -287,10 +303,40 @@ fun PlayerProgressBar(
                             .widthIn(max = 220.dp),
                     )
                 }
+                // The server's preview of the target, above the bubble. It
+                // overlays the picture rather than taking layout space, so it
+                // comes and goes without moving anything.
+                thumbnail?.let { image ->
+                    val thumbWidthPx = with(density) { ScrubThumbnailWidth.toPx() }
+                    val thumbHeightPx = thumbWidthPx * image.height / image.width.coerceAtLeast(1)
+                    val thumbHalf = thumbWidthPx / 2f
+                    val thumbX = if (barWidthPx > thumbWidthPx) x.coerceIn(thumbHalf, barWidthPx - thumbHalf) else barWidthPx / 2f
+                    Image(
+                        bitmap = image,
+                        contentDescription = null,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier
+                            .wrapContentSize(unbounded = true)
+                            .offset {
+                                IntOffset(
+                                    x = (thumbX - thumbHalf).roundToInt(),
+                                    // Both sit centred on the bar before their
+                                    // offsets: clear the bubble's top by 6dp.
+                                    y = -(with(density) { 58.dp.toPx() } + (bubbleHeightPx + thumbHeightPx) / 2f).roundToInt(),
+                                )
+                            }
+                            .size(ScrubThumbnailWidth, with(density) { thumbHeightPx.toDp() })
+                            .clip(RoundedCornerShape(10.dp))
+                            .border(1.dp, Color.White.copy(alpha = 0.18f), RoundedCornerShape(10.dp)),
+                    )
+                }
             }
         }
     }
 }
+
+/** The seek-bar preview's width; its height follows the server's thumbnails. */
+private val ScrubThumbnailWidth = 168.dp
 
 private fun DrawScope.drawSeekBar(
     barHeightPx: Float,
