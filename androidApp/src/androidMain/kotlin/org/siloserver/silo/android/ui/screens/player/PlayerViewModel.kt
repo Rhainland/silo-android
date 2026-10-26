@@ -592,7 +592,16 @@ class PlayerViewModel(
         // as PlaybackAnalyticsListener emits decoder, format, bandwidth, and
         // dropped-frame events.
         val stats: PlayerStatsSnapshot = PlayerStatsSnapshot(),
+        // The item whose first frame (or, for audio, first play) has shown.
+        // Until it matches [contentId] the item is on its first load: no
+        // controls, only the spinner. A retry, renewal, reconnect or replan
+        // keeps the content id, so only a new item brings that state back.
+        val startedContentId: String? = null,
     ) {
+        /** The current item has not shown its first frame yet; see [startedContentId]. */
+        val awaitingFirstFrame: Boolean
+            get() = startedContentId != contentId
+
         /**
          * Media file id of the active version — the id the subtitle
          * search/download/AI endpoints key on. Flows from
@@ -3213,9 +3222,20 @@ class PlayerViewModel(
         }
     }
 
+    /**
+     * A mount with audio and no video started playing. It renders no frame, so
+     * playing ends its first load instead; a callback from an earlier mount is
+     * ignored, as for [onFirstVideoFrameRendered].
+     */
+    fun onAudioOnlyPlaybackStarted(mediaMountGeneration: Long) {
+        if (mediaMountGeneration != _uiState.value.mediaMountGeneration) return
+        _uiState.update { it.copy(startedContentId = it.contentId) }
+    }
+
     fun onFirstVideoFrameRendered(mediaMountGeneration: Long?) {
         if (mediaMountGeneration != _uiState.value.mediaMountGeneration) return
         hasRenderedFirstFrame = true
+        _uiState.update { it.copy(startedContentId = it.contentId) }
         playbackSessionManager.reportFirstVideoFrame(_uiState.value.stats)
         if (nextUpTransitionGate.completeOnFirstFrame(mediaMountGeneration)) {
             _uiState.update {

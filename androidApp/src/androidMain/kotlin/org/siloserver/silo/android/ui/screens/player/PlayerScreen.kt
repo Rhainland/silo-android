@@ -23,9 +23,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.material3.Button
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
@@ -60,6 +58,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.repeatOnLifecycle
+import androidx.media3.common.C
 import androidx.media3.common.Player
 import org.siloserver.silo.common.player.PlayWhenReadyReconciliationGate
 import org.siloserver.silo.android.ui.components.rememberVideoSeekIntervals
@@ -82,6 +81,7 @@ import org.siloserver.silo.common.player.plannedVideoRouteFor
 import org.siloserver.silo.common.player.PlaybackCapabilityDetector
 import org.siloserver.silo.common.player.PlaybackPreflightListener
 import org.siloserver.silo.common.player.RefreshRateMatcher
+import org.siloserver.silo.common.player.rememberPlayerSpinnerVisible
 import org.siloserver.silo.common.player.SessionState
 import org.siloserver.silo.common.player.SubtitleManager
 import org.siloserver.silo.common.player.videoPlayerViewport
@@ -1225,6 +1225,17 @@ fun PlayerScreen(
                     postResumeStallDetector.onFirstFrameRendered()
                     viewModel.onFirstVideoFrameRendered(mountToken)
                 }
+
+                // Audio renders no frame, so a mount with audio and no video
+                // ends its first load when it plays. A video mount waits for
+                // its frame: audio can start ahead of a wedged video decoder.
+                override fun onIsPlayingChanged(eventTime: AnalyticsListener.EventTime, isPlaying: Boolean) {
+                    if (!isPlaying) return
+                    val mountToken = eventTime.videoMountToken() ?: return
+                    val tracks = player.currentTracks
+                    if (tracks.containsType(C.TRACK_TYPE_VIDEO) || !tracks.containsType(C.TRACK_TYPE_AUDIO)) return
+                    viewModel.onAudioOnlyPlaybackStarted(mountToken)
+                }
             }
             player.addAnalyticsListener(listener)
             onDispose { player.removeAnalyticsListener(listener) }
@@ -1726,6 +1737,17 @@ fun PlayerScreen(
         }
     }
 
+    // One spinner for the whole load: the session request (also one that keeps
+    // the old picture up, such as a version switch or Next Up), the player's
+    // first buffer, a rebuffer, and an outage the player itself can't see.
+    // Hoisted here so it carries across the loading branch giving way to the
+    // video.
+    val spinnerVisible = rememberPlayerSpinnerVisible(
+        uiState.isLoading ||
+            uiState.isBuffering ||
+            sessionState is SessionState.Reconnecting,
+    )
+
     // UI
     Box(
         modifier = Modifier
@@ -1743,13 +1765,8 @@ fun PlayerScreen(
             },
     ) {
         if (uiState.isLoading && uiState.streamUrl == null) {
-            Box(
-                modifier = Modifier.fillMaxSize(),
-                contentAlignment = Alignment.Center,
-            ) {
-                androidx.compose.material3.CircularProgressIndicator(
-                    color = MaterialTheme.colorScheme.primary,
-                )
+            if (spinnerVisible) {
+                PlayerLoadingSpinner(modifier = Modifier.align(Alignment.Center))
             }
         } else if (uiState.error != null) {
             Box(
@@ -1954,18 +1971,12 @@ fun PlayerScreen(
             // constrained to the controls pane. Keep playback/reconnection
             // feedback on the video itself instead of showing a spinner below
             // the hinge among the transport controls.
-            if (activeTabletopPaneLayout != null &&
-                (uiState.isBuffering || sessionState is SessionState.Reconnecting)
-            ) {
+            if (activeTabletopPaneLayout != null && spinnerVisible) {
                 Box(
                     modifier = videoSurfaceModifier,
                     contentAlignment = Alignment.Center,
                 ) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(56.dp),
-                        color = Color.White,
-                        strokeWidth = 3.dp,
-                    )
+                    PlayerLoadingSpinner()
                 }
             }
 
@@ -2031,7 +2042,7 @@ fun PlayerScreen(
                                 window.attributes = attributes
                             }
                         },
-                        showBufferingIndicator = activeTabletopPaneLayout == null,
+                        spinnerVisible = spinnerVisible && activeTabletopPaneLayout == null,
                         castSlot = { discModifier ->
                             // No Cast in a party (D7).
                             if (!inRoom) {
