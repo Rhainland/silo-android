@@ -475,8 +475,8 @@ fun TvPlayerScrubber(
                         }
                         .shadow(9.dp, cardShape, clip = false)
                         .clip(cardShape)
-                        .background(Color.Black.copy(alpha = 0.55f))
-                        .border(1.dp, Color.White.copy(alpha = 0.18f), cardShape)
+                        .background(TvPlayerChrome.Smoke)
+                        .border(1.dp, TvPlayerChrome.PanelStroke, cardShape)
                         .padding(5.dp),
                 ) {
                     Image(
