@@ -371,6 +371,8 @@ data class FileVersion(
     val credits: TimeRange? = null,
     val recap: TimeRange? = null,
     val preview: TimeRange? = null,
+    /** The server publishes seek-bar previews for this file (`TrickplayV2Api`). */
+    @SerialName("trickplay_available") val trickplayAvailable: Boolean = false,
 )
 
 @Serializable

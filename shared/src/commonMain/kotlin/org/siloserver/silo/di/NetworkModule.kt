@@ -42,6 +42,9 @@ val networkModule = module {
     single { org.siloserver.silo.network.apiv2.ThemeMusicV2Api(get(), get(), get()) }
     single { PersonRefreshV2Api(get(), get(), get()) }
     single { WatchDetailV2Api(get(), get(), get()) }
+    single<org.siloserver.silo.playback.trickplay.TrickplayManifestSource> {
+        org.siloserver.silo.network.apiv2.TrickplayV2Api(get(), get(), get())
+    }
     single { CatalogApi(get(), get(), get(), get()) }
     single { PersonalDataApi(get(), get(), get()) }
     single { CollectionApi(get(), get(), get()) }

@@ -210,6 +210,7 @@ fun PlayerOverlay(
     val context = LocalContext.current
 
     val introSkipState by viewModel.introSkipState.collectAsState()
+    val trickplayThumbnail by viewModel.trickplayThumbnail.collectAsState()
     val introSkipCountdownRun by viewModel.introSkipCountdownRun.collectAsState()
     val introSkipTimerRunning by viewModel.introSkipTimerRunning.collectAsState()
     // Back while the pill is up dismisses it and is consumed; a second Back
@@ -545,6 +546,8 @@ fun PlayerOverlay(
                 onPlayNextEpisode = viewModel::playUpNextNow,
                 onSetBrightness = onSetBrightness,
                 onScrubbingChange = viewModel::onScrubbingChanged,
+                scrubThumbnail = trickplayThumbnail,
+                onScrubTarget = viewModel::showTrickplay,
                 castSlot = castSlot,
             )
         }

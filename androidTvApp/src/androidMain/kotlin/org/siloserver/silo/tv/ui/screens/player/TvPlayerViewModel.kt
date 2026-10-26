@@ -845,6 +845,8 @@ class TvPlayerViewModel(
     private val throughputMeter: org.siloserver.silo.common.player.PlaybackThroughputMeter? = null,
     /** Remembers a manual subtitle choice for the whole series on the server. */
     private val seriesTrackChoiceWriter: org.siloserver.silo.common.settings.SeriesTrackChoiceWriter? = null,
+    /** The server's seek-bar previews. Optional for the same reason. */
+    trickplayManifests: org.siloserver.silo.playback.trickplay.TrickplayManifestSource? = null,
 ) : ViewModel() {
 
     companion object {
@@ -1769,6 +1771,19 @@ class TvPlayerViewModel(
 
     fun requestSubtitleSync(key: String) = subtitleSync.requestSync(key)
 
+    // Seek-bar thumbnails for the streamed file; the scrubber and the
+    // hold-seek chip stay text-only while this is null.
+    private val trickplay = trickplayManifests?.let {
+        org.siloserver.silo.common.player.trickplay.trickplayPreviews(it, viewModelScope)
+    }
+    val trickplayThumbnail: StateFlow<androidx.compose.ui.graphics.ImageBitmap?> =
+        trickplay?.thumbnail ?: MutableStateFlow(null)
+
+    /** The time a D-pad seek is previewing, or null when it ends. */
+    fun showTrickplay(seconds: Double?) {
+        trickplay?.show(seconds)
+    }
+
     fun resetSubtitleTiming(key: String) = subtitleSync.resetTiming(key)
 
     /**
@@ -1899,6 +1914,30 @@ class TvPlayerViewModel(
                 }
                 .distinctUntilChanged()
                 .collect { (mediaFileId, syncKeys) -> subtitleSync.bind(mediaFileId, syncKeys) }
+        }
+        // Seek previews follow the streamed file.
+        trickplay?.let { previews ->
+            viewModelScope.launch {
+                _uiState
+                    .map { state ->
+                        org.siloserver.silo.common.player.trickplay.trickplayTarget(
+                            contentId = state.contentId,
+                            fileId = state.mediaFileId,
+                            versions = state.fileVersions,
+                            streaming = !state.sessionId.isNullOrEmpty(),
+                        )
+                    }
+                    .distinctUntilChanged()
+                    .collect(previews::bind)
+            }
+            // The focused scrubber's preview; the hidden-controls hold seek
+            // reports its own through showTrickplay.
+            viewModelScope.launch {
+                _uiState
+                    .map { state -> state.scrubPreviewSec.takeIf { state.isScrubbing } }
+                    .distinctUntilChanged()
+                    .collect(previews::show)
+            }
         }
         viewModelScope.launch {
             val screen = _uiState

@@ -495,6 +495,7 @@ val androidModule = module {
             networkEvidenceProvider = get(),
             throughputMeter = get(),
             seriesTrackChoiceWriter = get(),
+            trickplayManifests = get(),
         )
     }
     viewModel { HomeViewModel(get(), get(), get(), get(), getOrNull(), get(), get(), catalogLanguage = get()) }
