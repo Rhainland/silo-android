@@ -14,6 +14,7 @@ import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -71,8 +72,9 @@ import org.siloserver.silo.model.catalog.VersionChapter
  * and how far the scrub has moved, and a tick marks where it started. Chapters
  * show as gaps in the bar rather than tick marks, and a light haptic fires as
  * the scrub crosses into a new chapter. When the server publishes seek-bar
- * previews, [thumbnail] (the picture at [onScrubTarget]'s time) rides above
- * the bubble; without one the bubble stands alone, in the same place.
+ * previews, [thumbnail] (the picture at [onScrubTarget]'s time) tops the
+ * bubble, as on iOS, and the bubble grows upward from where the text-only
+ * one sits.
  *
  * Track regions: played (Paper), buffered (safe to seek into), base. Detected
  * markers are tinted bands under the played fill (intro cyan, recap green,
@@ -101,7 +103,6 @@ fun PlayerProgressBar(
     var scrubStart by remember { mutableDoubleStateOf(0.0) }
     var barWidthPx by remember { mutableFloatStateOf(0f) }
     var bubbleWidthPx by remember { mutableIntStateOf(0) }
-    var bubbleHeightPx by remember { mutableIntStateOf(0) }
     var lastChapter by remember { mutableIntStateOf(-1) }
     var showTotal by remember { mutableStateOf(false) }
     val haptics = LocalHapticFeedback.current
@@ -273,25 +274,43 @@ fun PlayerProgressBar(
                 val clampedX = if (barWidthPx > bubbleWidthPx) x.coerceIn(half, barWidthPx - half) else barWidthPx / 2f
                 val delta = seekPosition - scrubStart
                 val chapterTitle = chapterTitleAt(chapters, seekPosition)
+                // A preview grows the bubble upward: its bottom edge stays put.
+                val lift = if (thumbnail != null) 52.dp + ScrubThumbnailBlockHeight / 2 else 52.dp
                 Column(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     modifier = Modifier
                         .wrapContentSize(unbounded = true)
-                        .onSizeChanged {
-                            bubbleWidthPx = it.width
-                            bubbleHeightPx = it.height
-                        }
+                        .onSizeChanged { bubbleWidthPx = it.width }
                         .offset {
                             IntOffset(
                                 x = (clampedX - half).roundToInt(),
-                                y = -with(density) { 52.dp.toPx() }.roundToInt(),
+                                y = -lift.roundToPx(),
                             )
                         }
                         .clip(RoundedCornerShape(14.dp))
                         .background(PlayerChrome.Smoke)
                         .border(1.dp, Color.White.copy(alpha = 0.10f), RoundedCornerShape(14.dp))
-                        .padding(horizontal = 14.dp, vertical = 9.dp),
+                        .padding(
+                            if (thumbnail != null) {
+                                PaddingValues(ScrubThumbnailInset)
+                            } else {
+                                PaddingValues(horizontal = 14.dp, vertical = 9.dp)
+                            },
+                        ),
                 ) {
+                    // The server's preview of the target, sized and cropped
+                    // like the iOS scrub bubble's.
+                    thumbnail?.let { image ->
+                        Image(
+                            bitmap = image,
+                            contentDescription = null,
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier
+                                .padding(bottom = ScrubThumbnailGap)
+                                .size(ScrubThumbnailWidth, ScrubThumbnailHeight)
+                                .clip(RoundedCornerShape(9.dp)),
+                        )
+                    }
                     Text(text = formatClockTime(seekPosition), style = PlayerType.BubbleTime)
                     Text(
                         text = listOfNotNull(chapterTitle, formatSeekDelta(delta)).joinToString(" · "),
@@ -303,40 +322,19 @@ fun PlayerProgressBar(
                             .widthIn(max = 220.dp),
                     )
                 }
-                // The server's preview of the target, above the bubble. It
-                // overlays the picture rather than taking layout space, so it
-                // comes and goes without moving anything.
-                thumbnail?.let { image ->
-                    val thumbWidthPx = with(density) { ScrubThumbnailWidth.toPx() }
-                    val thumbHeightPx = thumbWidthPx * image.height / image.width.coerceAtLeast(1)
-                    val thumbHalf = thumbWidthPx / 2f
-                    val thumbX = if (barWidthPx > thumbWidthPx) x.coerceIn(thumbHalf, barWidthPx - thumbHalf) else barWidthPx / 2f
-                    Image(
-                        bitmap = image,
-                        contentDescription = null,
-                        contentScale = ContentScale.Crop,
-                        modifier = Modifier
-                            .wrapContentSize(unbounded = true)
-                            .offset {
-                                IntOffset(
-                                    x = (thumbX - thumbHalf).roundToInt(),
-                                    // Both sit centred on the bar before their
-                                    // offsets: clear the bubble's top by 6dp.
-                                    y = -(with(density) { 58.dp.toPx() } + (bubbleHeightPx + thumbHeightPx) / 2f).roundToInt(),
-                                )
-                            }
-                            .size(ScrubThumbnailWidth, with(density) { thumbHeightPx.toDp() })
-                            .clip(RoundedCornerShape(10.dp))
-                            .border(1.dp, Color.White.copy(alpha = 0.18f), RoundedCornerShape(10.dp)),
-                    )
-                }
             }
         }
     }
 }
 
-/** The seek-bar preview's width; its height follows the server's thumbnails. */
-private val ScrubThumbnailWidth = 168.dp
+/** The scrub bubble's preview, 16:9 as on iOS; other shapes are cropped to it. */
+private val ScrubThumbnailWidth = 176.dp
+private val ScrubThumbnailHeight = 99.dp
+private val ScrubThumbnailGap = 6.dp
+/** The bubble's padding while it shows a preview. */
+private val ScrubThumbnailInset = 7.dp
+/** How much taller a preview makes the bubble: the picture and its gap, less the narrower padding. */
+private val ScrubThumbnailBlockHeight = ScrubThumbnailHeight + ScrubThumbnailGap - (9.dp - ScrubThumbnailInset) * 2
 
 private fun DrawScope.drawSeekBar(
     barHeightPx: Float,

@@ -59,6 +59,7 @@ import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.tv.material3.Icon
 import androidx.tv.material3.MaterialTheme
@@ -451,32 +452,47 @@ fun TvPlayerScrubber(
             // show where the preview is, so the full [TvHoldSeekIndicator]
             // overlay stays reserved for the hidden-controls session where
             // nothing else is on screen.
-            // The server's preview of the target, above the puck (and the
-            // auto-seek chip). It overlays the overlay's text rather than
-            // taking layout space, so it comes and goes without moving it.
+            // The server's preview of the target in a card with its time,
+            // above the puck (and the auto-seek chip), after tvOS
+            // `TVScrubPreviewLayer`. It overlays the overlay's text rather
+            // than taking layout space, so it comes and goes without moving it.
             if (isScrubbing && previewThumbnail != null) {
-                val thumbWidthPx = with(density) { TvScrubThumbnailWidth.toPx() }
-                val thumbHeightPx = thumbWidthPx * previewThumbnail.height / previewThumbnail.width.coerceAtLeast(1)
+                var cardSize by remember { mutableStateOf(IntSize.Zero) }
                 val liftPx = with(density) { (if (autoSeekRate != 0) 52.dp else 22.dp).toPx() }
-                Image(
-                    bitmap = previewThumbnail,
-                    contentDescription = null,
-                    contentScale = ContentScale.Crop,
+                val cardShape = RoundedCornerShape(10.dp)
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
                     modifier = Modifier
                         .align(Alignment.CenterStart)
                         .wrapContentSize(unbounded = true)
+                        .onSizeChanged { cardSize = it }
                         .offset {
-                            val maxX = (barWidthPx - thumbWidthPx).roundToInt().coerceAtLeast(0)
-                            val x = (barWidthPx * totalProgress - thumbWidthPx / 2f).roundToInt().coerceIn(0, maxX)
+                            val maxX = (barWidthPx - cardSize.width).roundToInt().coerceAtLeast(0)
+                            val x = (barWidthPx * totalProgress - cardSize.width / 2f).roundToInt().coerceIn(0, maxX)
                             // Centred on the bar before the offset: lift the
                             // bottom edge [liftPx] above the bar's middle.
-                            IntOffset(x, -(liftPx + thumbHeightPx / 2f).roundToInt())
+                            IntOffset(x, -(liftPx + cardSize.height / 2f).roundToInt())
                         }
-                        .size(TvScrubThumbnailWidth, with(density) { thumbHeightPx.toDp() })
-                        .shadow(12.dp, RoundedCornerShape(10.dp), clip = false)
-                        .clip(RoundedCornerShape(10.dp))
-                        .border(1.dp, Color.White.copy(alpha = 0.22f), RoundedCornerShape(10.dp)),
-                )
+                        .shadow(9.dp, cardShape, clip = false)
+                        .clip(cardShape)
+                        .background(Color.Black.copy(alpha = 0.55f))
+                        .border(1.dp, Color.White.copy(alpha = 0.18f), cardShape)
+                        .padding(5.dp),
+                ) {
+                    Image(
+                        bitmap = previewThumbnail,
+                        contentDescription = null,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier
+                            .size(160.dp, 90.dp)
+                            .clip(RoundedCornerShape(7.dp)),
+                    )
+                    Text(
+                        text = formatScrubberTime(scrubPreviewSec),
+                        style = TvPlayerType.Time,
+                        modifier = Modifier.padding(top = 4.dp),
+                    )
+                }
             }
 
             if (autoSeekRate != 0) {
@@ -595,9 +611,6 @@ private fun TvScrubberAutoSeekChip(rate: Int, modifier: Modifier = Modifier) {
         )
     }
 }
-
-/** The scrubber's preview width; its height follows the server's thumbnails. */
-private val TvScrubThumbnailWidth = 256.dp
 
 private fun formatScrubberTime(seconds: Double): String = formatTimelineClock(seconds)
 
