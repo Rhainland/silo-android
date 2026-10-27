@@ -118,6 +118,8 @@ fun TvAudiobookPlayerScreen(
     var exitRequested by remember { mutableStateOf(false) }
     val playPauseFocus = remember { FocusRequester() }
     val speedChipFocus = remember { FocusRequester() }
+    val errorFocus = remember { FocusRequester() }
+    var errorHasFocus by remember { mutableStateOf(false) }
 
     // MediaController binds async to the shared service — the same one the video
     // player uses, so a single MediaSession owns foreground audio.
@@ -308,12 +310,19 @@ fun TvAudiobookPlayerScreen(
     }
 
     // A runtime failure can set `error` after playback is already up. That swaps
-    // the whole content branch for TvErrorScreen, which has no actions in it —
-    // so an open panel would be left floating over a screen with nothing to
-    // return focus to once it closes. Close the panel with the content it
-    // belonged to.
+    // the whole content branch for TvErrorScreen, so an open panel would be left
+    // floating over content it no longer belongs to. Close the panel with that
+    // content and move focus to the error screen's actions.
     LaunchedEffect(state.error != null) {
-        if (state.error != null) activePanel = AudiobookPanel.None
+        if (state.error != null) {
+            activePanel = AudiobookPanel.None
+            requestFocusUntilObserved(
+                maxAttempts = TvAudiobookTransportFocusMaxAttempts,
+                awaitAttempt = { delay(TvAudiobookTransportFocusRetryDelayMillis) },
+                requestFocus = errorFocus::requestFocus,
+                isFocused = { errorHasFocus },
+            )
+        }
     }
 
     // A skip-interval save message belongs to the open skip panel.
@@ -338,7 +347,22 @@ fun TvAudiobookPlayerScreen(
                 state.isLoading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     CircularProgressIndicator(color = Color.White)
                 }
-                state.error != null -> TvErrorScreen(message = state.error!!)
+                state.error != null -> TvErrorScreen(
+                    message = state.error!!,
+                    onRetry = if (state.canRetryPlayback) viewModel::retryPlayback else null,
+                    secondaryActionLabel = "Back",
+                    onSecondaryAction = {
+                        exitRequested = true
+                        viewModel.flushPosition()
+                        viewModel.stopPlaybackSession()
+                        onExit()
+                    },
+                    // Requesting focus here lands on the screen's first button,
+                    // so the remote has somewhere to start.
+                    modifier = Modifier
+                        .focusRequester(errorFocus)
+                        .onFocusChanged { errorHasFocus = it.hasFocus },
+                )
                 else -> {
                     val hasChapters = state.chapters.size > 1
                     val currentChapterLabel = tvAudiobookCurrentChapterLabel(
