@@ -265,10 +265,6 @@ class AudiobookPlayerViewModel(
                 ) {
                     return@collect
                 }
-                // A seek that hit the same expiry is already renewing at the
-                // viewer's target; a second renewal here would replace it with
-                // the last reported position.
-                if (renewingSessionId == renewal.staleSessionId) return@collect
                 renewExpiredSession(
                     staleSessionId = renewal.staleSessionId,
                     fileId = renewal.startParams.fileId,
@@ -301,32 +297,6 @@ class AudiobookPlayerViewModel(
         fun isCurrent() = generation == loadGeneration &&
             !isClosing &&
             _uiState.value.sessionId == staleSessionId
-        renewingSessionId = staleSessionId
-        try {
-            renewExpiredSessionAttempt(
-                staleSessionId, fileId, localPosition, globalPosition,
-                capabilities, clientPlaybackContext, profileId, generation, trackIndex, ::isCurrent,
-            )
-        } finally {
-            if (renewingSessionId == staleSessionId) renewingSessionId = null
-        }
-    }
-
-    /** The session currently being replaced by [renewExpiredSession], if any. */
-    private var renewingSessionId: String? = null
-
-    private suspend fun renewExpiredSessionAttempt(
-        staleSessionId: String,
-        fileId: Int,
-        localPosition: Double,
-        globalPosition: Double,
-        capabilities: ClientCodecCapabilities?,
-        clientPlaybackContext: ClientPlaybackContext?,
-        profileId: String,
-        generation: Int,
-        trackIndex: Int?,
-        isCurrent: () -> Boolean,
-    ) {
         when (
             val playback = startPartSession(
                 fileId = fileId,
@@ -351,7 +321,7 @@ class AudiobookPlayerViewModel(
                         globalPosition = globalPosition,
                         trackIndex = trackIndex,
                         fileId = fileId,
-                        isCurrent = isCurrent,
+                        isCurrent = ::isCurrent,
                     )
                 } else {
                     applyFailedSessionStart(
@@ -1096,15 +1066,11 @@ class AudiobookPlayerViewModel(
         // be near the new file-local start. The time tolerance stays as a
         // secondary condition once the identity matches (absorbs the fresh
         // prepare's initial seek).
-        // Only the published stream's time is ours. After a failure clears it,
-        // or before Media3 has swapped to a newly published one, the engine
-        // still reports the outgoing item, whose player-relative time would
-        // overwrite the position playback must resume from.
-        if (streamUri == null || streamUri != _uiState.value.streamUrl) return
-
         val awaiting = pendingTrackLoadLocalStart
         if (awaiting != null) {
-            val settled = abs(seconds - awaiting) <= TRACK_LOAD_SETTLE_TOLERANCE
+            val settled = streamUri != null &&
+                streamUri == _uiState.value.streamUrl &&
+                abs(seconds - awaiting) <= TRACK_LOAD_SETTLE_TOLERANCE
             if (settled) {
                 pendingTrackLoadLocalStart = null
             } else {
@@ -1410,13 +1376,8 @@ class AudiobookPlayerViewModel(
                                     localPosition = decision.targetSourcePositionSeconds,
                                     globalPosition = globalSeconds,
                                 )
-                                // The mounted item cannot reach the target and the
-                                // server would not move it there, so end this stream:
-                                // Play / Retry then starts again at the target.
-                                AudiobookReplanRecovery.Fail -> applyFailedSessionStart(
-                                    result.message.ifBlank { "Seek failed" },
-                                    expectedSessionId = sessionId,
-                                )
+                                AudiobookReplanRecovery.Fail ->
+                                    _uiState.update { it.copy(error = result.message.ifBlank { "Seek failed" }) }
                             }
                         }
                         is ApiResult.NetworkError -> if (
@@ -1424,10 +1385,7 @@ class AudiobookPlayerViewModel(
                             !isClosing &&
                             _uiState.value.sessionId == sessionId
                         ) {
-                            applyFailedSessionStart(
-                                result.exception.message ?: "Seek failed",
-                                expectedSessionId = sessionId,
-                            )
+                            _uiState.update { it.copy(error = result.exception.message ?: "Seek failed") }
                         }
                     }
                 }
