@@ -298,14 +298,19 @@ fun TvAudiobookPlayerScreen(
         }
     }
 
+    // Back, Stop and the error screen's Back all leave the same way.
+    val exitPlayer: () -> Unit = {
+        exitRequested = true
+        viewModel.flushPosition()
+        viewModel.stopPlaybackSession()
+        onExit()
+    }
+
     BackHandler(enabled = true) {
         if (activePanel != AudiobookPanel.None) {
             activePanel = AudiobookPanel.None
         } else {
-            exitRequested = true
-            viewModel.flushPosition()
-            viewModel.stopPlaybackSession()
-            onExit()
+            exitPlayer()
         }
     }
 
@@ -351,12 +356,7 @@ fun TvAudiobookPlayerScreen(
                     message = state.error!!,
                     onRetry = if (state.canRetryPlayback) viewModel::retryPlayback else null,
                     secondaryActionLabel = "Back",
-                    onSecondaryAction = {
-                        exitRequested = true
-                        viewModel.flushPosition()
-                        viewModel.stopPlaybackSession()
-                        onExit()
-                    },
+                    onSecondaryAction = exitPlayer,
                     // Requesting focus here lands on the screen's first button,
                     // so the remote has somewhere to start.
                     modifier = Modifier
@@ -484,12 +484,7 @@ fun TvAudiobookPlayerScreen(
                                 onSleep = { activePanel = AudiobookPanel.Sleep },
                                 onChapters = { activePanel = AudiobookPanel.Chapters },
                                 onMore = { activePanel = AudiobookPanel.More },
-                                onStop = {
-                                    exitRequested = true
-                                    viewModel.flushPosition()
-                                    viewModel.stopPlaybackSession()
-                                    onExit()
-                                },
+                                onStop = exitPlayer,
                             )
                         }
                     }
