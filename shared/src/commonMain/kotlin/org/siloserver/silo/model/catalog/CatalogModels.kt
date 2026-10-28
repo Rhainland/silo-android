@@ -7,6 +7,7 @@ import org.siloserver.silo.network.apiv2.CatalogSearchDiagnosticsV2
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonPrimitive
 
 // --- Browse / Catalog ---
 
@@ -125,11 +126,19 @@ data class CatalogEffectiveSort(
 data class CatalogQueryRule(
     val field: String,
     val op: String,
-    val value: String,
+    /** Sent as-is, so its JSON type is the wire type: boolean fields (watched,
+     *  in_progress, favorited, in_watchlist, hdr, dolby_vision) need a JSON
+     *  boolean; the server rejects the string "true". */
+    val value: JsonPrimitive,
     /** Range ops ("between") carry indexed values instead of [value] —
      *  encoded as value[0], value[1] on the wire (iOS CatalogQueryBuilder). */
     val values: List<String> = emptyList(),
-)
+) {
+    constructor(field: String, op: String, value: String, values: List<String> = emptyList()) :
+        this(field, op, JsonPrimitive(value), values)
+
+    constructor(field: String, op: String, value: Boolean) : this(field, op, JsonPrimitive(value))
+}
 
 data class CatalogQueryGroup(
     val match: String = "all",
