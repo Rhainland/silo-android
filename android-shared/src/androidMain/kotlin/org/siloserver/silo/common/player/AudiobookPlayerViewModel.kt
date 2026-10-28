@@ -291,7 +291,18 @@ class AudiobookPlayerViewModel(
         capabilities: ClientCodecCapabilities? = null,
         clientPlaybackContext: ClientPlaybackContext? = null,
     ) {
+        // A seek, track load or close can land while the profile lookup
+        // suspends. Claiming the generation after it would make this renewal
+        // current again and replace that newer request with the old position.
+        val observedGeneration = loadGeneration
         val profileId = profileRepository.getActiveProfileId() ?: return
+        if (
+            observedGeneration != loadGeneration ||
+            isClosing ||
+            _uiState.value.sessionId != staleSessionId
+        ) {
+            return
+        }
         val generation = ++loadGeneration
         val trackIndex = activeTrackIndex
         fun isCurrent() = generation == loadGeneration &&
@@ -689,6 +700,9 @@ class AudiobookPlayerViewModel(
         startGlobal: Double,
         generation: Int,
     ) {
+        // Publish the start position now, as [loadTrack] does, so a failed
+        // start leaves Retry resuming here rather than at 0:00.
+        _uiState.update { it.copy(positionSeconds = startGlobal) }
         when (val playback = startPartSession(fileId, profileId, startGlobal)) {
             is ApiResult.Success -> {
                 val start = playback.data
@@ -1054,6 +1068,10 @@ class AudiobookPlayerViewModel(
      * whole-book and this is the pre-timeline behaviour.
      */
     fun onPositionChanged(seconds: Double, streamUri: String?) {
+        // No stream published (before the first start, or after a failure
+        // cleared it): the engine is empty or still holds the outgoing item, so
+        // its time would overwrite the position Retry resumes from.
+        if (_uiState.value.streamUrl == null) return
         val tl = timeline
         val active = activeTrackIndex?.let { idx -> tl?.tracks?.firstOrNull { it.index == idx } }
 
@@ -1287,6 +1305,9 @@ class AudiobookPlayerViewModel(
                     fileId = _uiState.value.selectedFileId ?: return,
                 )
             } else {
+                // Polls are ignored while no stream is published, so record a
+                // seek made in the error state here for Retry to resume from.
+                _uiState.update { it.copy(positionSeconds = target) }
                 _pendingSeek.value = target
             }
             return
