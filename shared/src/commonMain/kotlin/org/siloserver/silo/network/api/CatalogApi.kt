@@ -111,8 +111,8 @@ internal fun List<CatalogQueryGroup>.toV2Groups() = map { group ->
         val value = when {
             rule.values.isNotEmpty() -> JsonArray(rule.values.map(::JsonPrimitive))
             // The server rejects flag rules whose value is not a JSON boolean (iOS CatalogQueryBuilder).
-            rule.field in BOOLEAN_RULE_FIELDS -> JsonPrimitive(rule.value == "true")
-            else -> JsonPrimitive(rule.value)
+            rule.field in BOOLEAN_RULE_FIELDS -> JsonPrimitive(rule.value.content == "true")
+            else -> rule.value
         }
         CatalogRuleV2(rule.field, rule.op, value)
     })
