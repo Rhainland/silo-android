@@ -19,19 +19,17 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import org.siloserver.silo.android.ui.components.MediaCard
-import org.siloserver.silo.android.ui.theme.SiloSecondaryText
 import org.siloserver.silo.common.ui.components.DeferImagePresentationWhileScrolling
 import org.siloserver.silo.model.catalog.BrowseItem
 import org.siloserver.silo.model.catalog.CatalogBoxSet
 import org.siloserver.silo.model.catalog.CatalogBoxSetDetail
 import org.siloserver.silo.model.catalog.boxSetResumePosition
-import org.siloserver.silo.model.catalog.rowCaption
 import org.siloserver.silo.overlays.OverlayDataExtractor
 
 /**
- * The box set row on a movie's page: the box set's title and watched count,
- * a link to the box set page, and its movies in release order with the movie
- * being viewed outlined and tagged. Starts scrolled to that movie.
+ * The box set row on a movie's page: the box set's title, a link to the box
+ * set page, and its movies in release order with the movie being viewed
+ * outlined and tagged. Starts scrolled to that movie.
  */
 @Composable
 fun BoxSetRail(
@@ -52,27 +50,16 @@ fun BoxSetRail(
                 .padding(start = SafePadding, end = SafePadding - 12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Column(
+            Text(
+                text = boxSet.boxSet.title,
+                fontSize = 22.sp,
+                lineHeight = 28.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = DetailPrimaryText,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(2.dp),
-            ) {
-                Text(
-                    text = boxSet.boxSet.title,
-                    fontSize = 22.sp,
-                    lineHeight = 28.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = DetailPrimaryText,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Text(
-                    text = boxSet.boxSet.rowCaption(),
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.Medium,
-                    color = SiloSecondaryText,
-                    maxLines = 1,
-                )
-            }
+            )
             TextButton(onClick = { onOpenBoxSet(boxSet.boxSet) }) {
                 Text("View box set", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = DetailPrimaryText)
             }
