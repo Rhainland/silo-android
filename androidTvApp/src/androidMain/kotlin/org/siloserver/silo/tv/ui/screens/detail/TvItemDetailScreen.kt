@@ -656,10 +656,10 @@ private fun TvDetailContent(
     // reserves its footprint from the first Series frame, before seasons arrive.
     val showsEpisodesSection = isEpisodicType && (isSeriesDetail || state.seasons.isNotEmpty() || state.episodes.isNotEmpty())
     // Whether a focusable episode-navigation element (the rail or the season
-    // chips) or a movie's box set row sits above the cast / similar rails —
-    // drives their Up-return-to-hero fallback.
+    // chips) sits above the cast / similar rails — drives their
+    // Up-return-to-hero fallback.
+    val hasEpisodeNavAbove = showsEpisodeRail || showsSeasonChips
     val showsBoxSetRow = !isAudiobook && detail.type == "movie" && state.boxSet != null && state.boxSetItems.isNotEmpty()
-    val hasEpisodeNavAbove = showsEpisodeRail || showsSeasonChips || showsBoxSetRow
     val showsCastSection = !isAudiobook && detail.cast.isNotEmpty()
     val showsTrailersSection = !isAudiobook && trailerEntries.isNotEmpty()
     val showsSimilarRail = !isAudiobook && detail.type != "episode" && state.moreLikeThis.isNotEmpty()
@@ -1239,52 +1239,6 @@ private fun TvDetailContent(
                             }
                         }
 
-                        if (showsBoxSetRow) {
-                            val boxSet = state.boxSet!!
-                            val boxSetCurrentIndex = state.boxSetItems.indexOfFirst { it.contentId == detail.contentId }
-                            TvBoxSetRowSection(
-                                boxSet = boxSet,
-                                items = state.boxSetItems,
-                                currentContentId = detail.contentId,
-                                viewBoxSetFocus = viewBoxSetFocus,
-                                onViewBoxSet = {
-                                    pendingSimilarContentId = null
-                                    onOpenBoxSet(boxSet.id, boxSet.libraryId)
-                                },
-                                onReturnToHero = returnToHero,
-                                onMovieClick = { clickedContentId ->
-                                    // The movie on screen opens nothing new.
-                                    if (clickedContentId != detail.contentId) {
-                                        pendingCastFocusIndex = -1
-                                        pendingSimilarGeneration += 1
-                                        pendingReturnFromBoxSet = true
-                                        pendingSimilarContentId = clickedContentId
-                                        similarRestoreFocused.value = false
-                                        onBoxSetMovie(clickedContentId, boxSet.libraryId)
-                                    }
-                                },
-                                // A pending return targets the card that opened a
-                                // movie; otherwise entering lands on this movie.
-                                restoreFocusIndex = if (boxSetRestoreIndex >= 0) boxSetRestoreIndex else boxSetCurrentIndex,
-                                restoreFocusRequester = when {
-                                    boxSetRestoreIndex >= 0 -> similarReturnFocus
-                                    boxSetCurrentIndex >= 0 -> boxSetCurrentFocus
-                                    else -> null
-                                },
-                                restoreFocusRequest = similarRestoreRequest.takeIf { boxSetRestoreIndex >= 0 } ?: 0,
-                                onItemFocused = if (boxSetRestoreIndex >= 0) {
-                                    { focusedItem ->
-                                        if (focusedItem.contentId == pendingSimilarContentId) {
-                                            similarRestoreFocused.value = true
-                                        }
-                                    }
-                                } else {
-                                    null
-                                },
-                                modifier = Modifier.detailBodySectionAnchor(listState, coroutineScope),
-                            )
-                        }
-
                         if (showsCastSection) {
                             Box(
                                 modifier = Modifier
@@ -1360,6 +1314,58 @@ private fun TvDetailContent(
                             )
                         }
 
+                        if (showsBoxSetRow) {
+                            val boxSet = state.boxSet!!
+                            val boxSetCurrentIndex = state.boxSetItems.indexOfFirst { it.contentId == detail.contentId }
+                            TvBoxSetRowSection(
+                                boxSet = boxSet,
+                                items = state.boxSetItems,
+                                currentContentId = detail.contentId,
+                                viewBoxSetFocus = viewBoxSetFocus,
+                                onViewBoxSet = {
+                                    pendingSimilarContentId = null
+                                    onOpenBoxSet(boxSet.id, boxSet.libraryId)
+                                },
+                                // Up from View box set returns to the hero only
+                                // when no cast or trailers rail sits above.
+                                onReturnToHero = if (!hasEpisodeNavAbove && !showsCastSection && !showsTrailersSection) {
+                                    returnToHero
+                                } else {
+                                    null
+                                },
+                                onMovieClick = { clickedContentId ->
+                                    // The movie on screen opens nothing new.
+                                    if (clickedContentId != detail.contentId) {
+                                        pendingCastFocusIndex = -1
+                                        pendingSimilarGeneration += 1
+                                        pendingReturnFromBoxSet = true
+                                        pendingSimilarContentId = clickedContentId
+                                        similarRestoreFocused.value = false
+                                        onBoxSetMovie(clickedContentId, boxSet.libraryId)
+                                    }
+                                },
+                                // A pending return targets the card that opened a
+                                // movie; otherwise entering lands on this movie.
+                                restoreFocusIndex = if (boxSetRestoreIndex >= 0) boxSetRestoreIndex else boxSetCurrentIndex,
+                                restoreFocusRequester = when {
+                                    boxSetRestoreIndex >= 0 -> similarReturnFocus
+                                    boxSetCurrentIndex >= 0 -> boxSetCurrentFocus
+                                    else -> null
+                                },
+                                restoreFocusRequest = similarRestoreRequest.takeIf { boxSetRestoreIndex >= 0 } ?: 0,
+                                onItemFocused = if (boxSetRestoreIndex >= 0) {
+                                    { focusedItem ->
+                                        if (focusedItem.contentId == pendingSimilarContentId) {
+                                            similarRestoreFocused.value = true
+                                        }
+                                    }
+                                } else {
+                                    null
+                                },
+                                modifier = Modifier.detailBodySectionAnchor(listState, coroutineScope),
+                            )
+                        }
+
                         if (showsSimilarRail) {
                             // tvOS `TVSimilarRail`: an editorial detail section
                             // header (Recommended / More Like This) over a bare
@@ -1427,15 +1433,15 @@ private fun TvDetailContent(
                                     horizontalPadding = TvDetailHorizontalInset,
                                     rowTopPadding = 0.dp,
                                     firstItemFocusRequester = firstSimilarFocus,
-                                    onDirectionUp = if (!hasEpisodeNavAbove && !showsCastSection && !showsTrailersSection) {
+                                    onDirectionUp = if (!hasEpisodeNavAbove && !showsCastSection && !showsTrailersSection && !showsBoxSetRow) {
                                         returnToHero
                                     } else {
                                         null
                                     },
                                     // When Similar is the first body rail (movie with no
-                                    // episode rail and no cast), Up returns to the hero
+                                    // episode rail, cast, trailers or box set), Up returns to the hero
                                     // Play button instead of relying on geometry.
-                                    upFocusRequester = if (!hasEpisodeNavAbove && !showsCastSection && !showsTrailersSection) {
+                                    upFocusRequester = if (!hasEpisodeNavAbove && !showsCastSection && !showsTrailersSection && !showsBoxSetRow) {
                                         playFocus
                                     } else {
                                         null

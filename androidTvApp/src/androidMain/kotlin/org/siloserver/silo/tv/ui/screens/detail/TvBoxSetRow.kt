@@ -28,9 +28,10 @@ import org.siloserver.silo.tv.ui.components.TvSecondaryPillButton
  * set button, over its movies in release order. The movie on screen is
  * outlined and tagged, and the row starts scrolled to it.
  *
- * Focus: Down from the hero enters the row, landing on the movie on screen
- * the first time ([restoreFocusRequester] at [restoreFocusIndex]); Up from a
- * card reaches View box set, and Up again returns to the hero.
+ * The row sits between the trailers and More Like This. Focus: entering the
+ * row lands on the movie on screen the first time ([restoreFocusRequester]
+ * at [restoreFocusIndex]); Up from a card reaches View box set, and Up again
+ * moves to the rail above, or calls [onReturnToHero] when it is set.
  */
 @Composable
 internal fun TvBoxSetRowSection(
@@ -39,7 +40,7 @@ internal fun TvBoxSetRowSection(
     currentContentId: String,
     viewBoxSetFocus: FocusRequester,
     onViewBoxSet: () -> Unit,
-    onReturnToHero: () -> Boolean,
+    onReturnToHero: (() -> Boolean)?,
     onMovieClick: (contentId: String) -> Unit,
     restoreFocusIndex: Int,
     restoreFocusRequester: FocusRequester?,
@@ -64,7 +65,7 @@ internal fun TvBoxSetRowSection(
                 onClick = onViewBoxSet,
                 focusRequester = viewBoxSetFocus,
                 modifier = Modifier.onPreviewKeyEvent { event ->
-                    if (event.type == KeyEventType.KeyDown && event.key == Key.DirectionUp) onReturnToHero() else false
+                    if (event.type == KeyEventType.KeyDown && event.key == Key.DirectionUp) onReturnToHero?.invoke() ?: false else false
                 },
             )
         }

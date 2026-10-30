@@ -276,18 +276,6 @@ fun MovieDetailContent(
             }
         }
 
-        // A movie in a box set: its sibling films, first below the hero.
-        if (boxSet != null && detail.type == "movie") {
-            item(contentType = "detail-box-set") {
-                BoxSetRail(
-                    boxSet = boxSet,
-                    currentContentId = detail.contentId,
-                    onOpenBoxSet = onOpenBoxSet,
-                    onMovieClick = onBoxSetMovieClick,
-                )
-            }
-        }
-
         // Episode pages: season chips + this season's episodes as the first
         // below-fold section, mirroring iOS's episode detail. Tapping a
         // sibling navigates to its own detail page.
@@ -354,20 +342,34 @@ fun MovieDetailContent(
             }
         }
 
-        item(contentType = "detail-facts") {
-            // Header renders inside DetailFactsList, gated on having facts.
-            DetailFactsList(detail = detail, runtimeMinutes = selectedRuntimeMinutes)
+        // A movie in a box set: its sibling films, between the trailers and
+        // More Like This.
+        if (boxSet != null && detail.type == "movie") {
+            item(contentType = "detail-box-set") {
+                BoxSetRail(
+                    boxSet = boxSet,
+                    currentContentId = detail.contentId,
+                    onOpenBoxSet = onOpenBoxSet,
+                    onMovieClick = onBoxSetMovieClick,
+                )
+            }
         }
 
         // Hide the similar rail on episode pages — viewers usually want
-        // the next episode, not a tangentially related title.
-        if (detail.type != "episode") {
+        // the next episode, not a tangentially related title. Skip it when
+        // empty so it leaves no extra gap above Details.
+        if (detail.type != "episode" && similarItems.isNotEmpty()) {
             item(contentType = "detail-similar") {
                 SimilarRail(
                     items = similarItems,
                     onSelect = onItemDetailClick,
                 )
             }
+        }
+
+        item(contentType = "detail-facts") {
+            // Header renders inside DetailFactsList, gated on having facts.
+            DetailFactsList(detail = detail, runtimeMinutes = selectedRuntimeMinutes)
         }
 
         item(contentType = "detail-spacer") {
