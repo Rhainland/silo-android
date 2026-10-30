@@ -87,6 +87,26 @@ class BoxSetsV2Test {
         } finally { c.close() }
     }
 
+    @Test fun itemBoxSetDecodesTheBoxSetOrNone() = runTest {
+        val seen = mutableListOf<HttpRequestDataView>()
+        var body = """{"box_set":{$boxSet,"items":[{"content_id":"hp1","type":"movie","title":"Philosopher's Stone","user_state":{"played":true}},""" +
+            """{"content_id":"hp3","type":"movie","title":"Prisoner of Azkaban"}]}}"""
+        val c = client { seen += it; body }
+        try {
+            val repository = CatalogRepository(CatalogApi(c))
+            val detail = assertNotNull(assertIs<ApiResult.Success<CatalogBoxSetDetail?>>(repository.getItemBoxSet("hp3", 3)).data)
+            assertEquals("/api/v2/catalog/items/hp3/box-set", seen.single().path)
+            assertEquals("3", seen.single().parameters["library_id"])
+            assertEquals("1241", detail.boxSet.id)
+            assertEquals(5, detail.boxSet.playedCount)
+            assertEquals(listOf("hp1", "hp3"), detail.items.map { it.contentId })
+            // A movie in no box set the viewer sees answers {}: no row.
+            body = "{}"
+            assertNull(assertIs<ApiResult.Success<CatalogBoxSetDetail?>>(repository.getItemBoxSet("dune")).data)
+            assertNull(seen.last().parameters["library_id"])
+        } finally { c.close() }
+    }
+
     @Test fun searchSendsTheQueryAndAFailedReadAnswersNone() = runTest {
         val seen = mutableListOf<HttpRequestDataView>()
         var fail = false

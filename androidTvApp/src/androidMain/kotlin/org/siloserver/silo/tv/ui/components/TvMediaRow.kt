@@ -144,6 +144,12 @@ fun TvMediaRow(
     onExploreAllClick: (() -> Unit)? = null,
     /** Fired when the "Explore all" card gains focus. */
     onExploreAllFocused: (() -> Unit)? = null,
+    /**
+     * Poster rows: outlines this card and labels its bottom corner with [markedBadge], such as
+     * the movie on screen in its box set row. The row starts scrolled to it.
+     */
+    markedContentId: String? = null,
+    markedBadge: String? = null,
 ) {
     val diagnosticsKeySnapshot = remember(items) {
         DiagnosticsListSnapshot.fromKeys(items.map { it.contentId })
@@ -155,7 +161,6 @@ fun TvMediaRow(
         )
     }
     if (items.isEmpty()) return
-    val rowState = rememberLazyListState()
     val spoilerPrefs = LocalEpisodeSpoilerPrefs.current
     val rowItems = remember(items, showProgress, style, cardLayout, spoilerPrefs, unwatchedById) {
         // Deduplicate before keying. A repeated contentId inside one row makes
@@ -182,6 +187,9 @@ fun TvMediaRow(
             )
         }
     }
+    val rowState = rememberLazyListState(
+        initialFirstVisibleItemIndex = rowItems.indexOfFirst { it.item.contentId == markedContentId }.coerceAtLeast(0),
+    )
     // The caller counts positions in the list it handed us; we render a
     // deduplicated one, which can be shorter. Translate through contentId so a
     // duplicate earlier in the row cannot shift the restored card.
@@ -436,6 +444,9 @@ fun TvMediaRow(
                             overlay = rowItem.overlay,
                             actions = itemActions,
                             onLongClick = itemLongClick,
+                            // Bottom corner: the top corners hold the quality overlays and watched check.
+                            cornerLabel = markedBadge.takeIf { item.contentId == markedContentId },
+                            highlighted = markedContentId != null && item.contentId == markedContentId,
                         )
                     }
                 }

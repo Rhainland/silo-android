@@ -197,6 +197,19 @@ class CatalogV2Api(
             }
         }) { it.toDomain() }
 
+    /**
+     * The box set a movie belongs to, as [boxSet] reads it, or null when the
+     * movie is in no box set the viewer sees (the server answers `{}`).
+     */
+    suspend fun itemBoxSet(id: String, libraryId: Int? = null, widths: ArtworkWidths? = null): ApiResult<CatalogBoxSetDetail?> =
+        read<CatalogItemBoxSetWireV2, CatalogBoxSetDetail?>({ scope ->
+            client.get("/api/v2/catalog/items/${id.encodeURLPathPart()}/box-set") {
+                scope?.let { authScope(it) }
+                libraryId?.let { parameter("library_id", it) }
+                artworkWidths(widths, scope)
+            }
+        }) { it.boxSet?.toDomain() }
+
     /** Box sets whose name, or two or more of whose movies' titles, match [query]; best match first. */
     suspend fun searchBoxSets(query: String, limit: Int = 5): ApiResult<List<CatalogBoxSet>> {
         val q = query.trim()

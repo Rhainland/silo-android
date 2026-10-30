@@ -67,6 +67,10 @@ fun MovieDetailContent(
         thumbhash = detail.posterThumbhash,
     ),
     similarItems: List<org.siloserver.silo.model.catalog.BrowseItem> = emptyList(),
+    /** The box set this movie belongs to; null shows no box set row. */
+    boxSet: org.siloserver.silo.model.catalog.CatalogBoxSetDetail? = null,
+    onOpenBoxSet: (org.siloserver.silo.model.catalog.CatalogBoxSet) -> Unit = {},
+    onBoxSetMovieClick: (contentId: String, libraryId: String) -> Unit = { contentId, _ -> },
     isFavorite: Boolean,
     isInWatchlist: Boolean,
     selectedVersionIndex: Int,
@@ -268,6 +272,18 @@ fun MovieDetailContent(
                     } else {
                         null
                     },
+                )
+            }
+        }
+
+        // A movie in a box set: its sibling films, first below the hero.
+        if (boxSet != null && detail.type == "movie") {
+            item(contentType = "detail-box-set") {
+                BoxSetRail(
+                    boxSet = boxSet,
+                    currentContentId = detail.contentId,
+                    onOpenBoxSet = onOpenBoxSet,
+                    onMovieClick = onBoxSetMovieClick,
                 )
             }
         }

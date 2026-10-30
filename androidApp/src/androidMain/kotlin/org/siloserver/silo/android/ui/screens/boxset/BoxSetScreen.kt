@@ -44,6 +44,7 @@ import org.siloserver.silo.android.ui.screens.detail.DetailTopChrome
 import org.siloserver.silo.android.ui.screens.detail.HeaderSettledDp
 import org.siloserver.silo.android.ui.screens.detail.PrimaryPillButton
 import org.siloserver.silo.android.ui.screens.detail.SectionHeader
+import org.siloserver.silo.android.ui.screens.detail.boxSetMovieProgress
 import org.siloserver.silo.android.ui.screens.watchparty.WatchPartySoloGuardDialog
 import org.siloserver.silo.android.ui.screens.watchparty.rememberWatchPartySoloGuard
 import org.siloserver.silo.android.ui.theme.SiloBackground
@@ -257,7 +258,7 @@ private fun MemberRow(
                 year = item.year,
                 type = item.type,
                 userState = userState,
-                progress = movieProgress(item),
+                progress = boxSetMovieProgress(item),
                 onClick = { onMovieClick(item.contentId) },
                 width = cellWidth,
                 overlay = OverlayDataExtractor.fromBrowseItem(item),
@@ -282,10 +283,4 @@ private const val BoxSetArtworkHeightFactor = 0.62f
 private fun memberGridColumns(width: Dp, minCell: Dp): Int {
     val available = width - GridGutter * 2 + MediaGridDefaults.PosterGridHorizontalSpacing
     return (available / (minCell + MediaGridDefaults.PosterGridHorizontalSpacing)).toInt().coerceAtLeast(1)
-}
-
-private fun movieProgress(item: BrowseItem): Float? {
-    val position = item.boxSetResumePosition() ?: return null
-    val duration = item.durationSeconds?.takeIf { it > 0 } ?: return null
-    return (position / duration).toFloat()
 }

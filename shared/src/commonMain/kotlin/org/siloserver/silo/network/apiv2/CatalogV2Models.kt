@@ -99,6 +99,10 @@ internal data class CatalogBoxSetDetailWireV2(
     )
 }
 
+/** getCatalogItemBoxSet: `{"box_set": ...}`, or `{}` for a movie in no box set. */
+@Serializable
+internal data class CatalogItemBoxSetWireV2(@SerialName("box_set") val boxSet: CatalogBoxSetDetailWireV2? = null)
+
 /**
  * Not persisted: a cursor belongs to the query, operation, viewer and artwork
  * widths that read it.

@@ -234,6 +234,10 @@ fun TvItemDetailScreen(
     onWatchParty: (WatchPartyDestination?) -> Unit,
     onOpenPerson: (personId: Long) -> Unit,
     onBack: () -> Unit,
+    /** Opens a box set's page from a movie's box set row. */
+    onOpenBoxSet: (boxSetId: String, libraryId: String) -> Unit = { _, _ -> },
+    /** Opens a movie from a box set row, scoped to the box set's library. */
+    onBoxSetMovie: (contentId: String, libraryId: String) -> Unit = { contentId, _ -> onItemDetail(contentId) },
     // Plays the first pick of a shuffle started from the More menu.
     onShuffleStarted: (org.siloserver.silo.model.shuffle.Shuffle) -> Unit = {},
     viewModel: TvItemDetailViewModel = koinViewModel(
@@ -381,6 +385,8 @@ fun TvItemDetailScreen(
             onSeasonClick = onSeasonClick,
             onWatchParty = onWatchParty,
             onOpenPerson = onOpenPerson,
+            onOpenBoxSet = onOpenBoxSet,
+            onBoxSetMovie = onBoxSetMovie,
             shuffleLauncher = shuffleLauncher,
         )
     }
@@ -402,6 +408,8 @@ private fun TvDetailContent(
     onSeasonClick: (seriesId: String, seasonNumber: Int) -> Unit,
     onWatchParty: (WatchPartyDestination?) -> Unit,
     onOpenPerson: (personId: Long) -> Unit,
+    onOpenBoxSet: (boxSetId: String, libraryId: String) -> Unit,
+    onBoxSetMovie: (contentId: String, libraryId: String) -> Unit,
     shuffleLauncher: org.siloserver.silo.common.ui.ShuffleLauncher,
 ) {
     val playFocus = remember { FocusRequester() }
@@ -436,6 +444,9 @@ private fun TvDetailContent(
     // for the SAME content passes every ownership check the old coroutine
     // makes, letting it clear or override the new one.
     var pendingSimilarGeneration by rememberSaveable(detail.contentId) { mutableStateOf(0) }
+    // The same return, from a movie opened in the box set row: the pending id
+    // then names a card in that row instead.
+    var pendingReturnFromBoxSet by rememberSaveable(detail.contentId) { mutableStateOf(false) }
     val similarReturnFocus = remember { FocusRequester() }
     val similarRestoreFocused = remember { mutableStateOf(false) }
     // Bumped once the target resolves, so the row scrolls its own LazyRow to
@@ -445,8 +456,14 @@ private fun TvDetailContent(
     // Resolved against the CURRENT list, so it simply stays -1 until the rail
     // has loaded and becomes correct if the order changed.
     val pendingSimilarIndex = pendingSimilarContentId?.let { pendingId ->
-        state.moreLikeThis.indexOfFirst { it.contentId == pendingId }
+        (if (pendingReturnFromBoxSet) state.boxSetItems else state.moreLikeThis).indexOfFirst { it.contentId == pendingId }
     } ?: -1
+    val similarRestoreIndex = if (pendingReturnFromBoxSet) -1 else pendingSimilarIndex
+    val boxSetRestoreIndex = if (pendingReturnFromBoxSet) pendingSimilarIndex else -1
+    // Entering the box set row lands on the movie on screen until the row
+    // remembers a card of its own.
+    val boxSetCurrentFocus = remember { FocusRequester() }
+    val viewBoxSetFocus = remember { FocusRequester() }
     val pendingSimilarIndexNow = rememberUpdatedState(pendingSimilarIndex)
     val firstSimilarFocus = remember { FocusRequester() }
     val listState = rememberLazyListState()
@@ -639,9 +656,10 @@ private fun TvDetailContent(
     // reserves its footprint from the first Series frame, before seasons arrive.
     val showsEpisodesSection = isEpisodicType && (isSeriesDetail || state.seasons.isNotEmpty() || state.episodes.isNotEmpty())
     // Whether a focusable episode-navigation element (the rail or the season
-    // chips) sits above the cast / similar rails — drives their
-    // Up-return-to-hero fallback.
-    val hasEpisodeNavAbove = showsEpisodeRail || showsSeasonChips
+    // chips) or a movie's box set row sits above the cast / similar rails —
+    // drives their Up-return-to-hero fallback.
+    val showsBoxSetRow = !isAudiobook && detail.type == "movie" && state.boxSet != null && state.boxSetItems.isNotEmpty()
+    val hasEpisodeNavAbove = showsEpisodeRail || showsSeasonChips || showsBoxSetRow
     val showsCastSection = !isAudiobook && detail.cast.isNotEmpty()
     val showsTrailersSection = !isAudiobook && trailerEntries.isNotEmpty()
     val showsSimilarRail = !isAudiobook && detail.type != "episode" && state.moreLikeThis.isNotEmpty()
@@ -1221,6 +1239,52 @@ private fun TvDetailContent(
                             }
                         }
 
+                        if (showsBoxSetRow) {
+                            val boxSet = state.boxSet!!
+                            val boxSetCurrentIndex = state.boxSetItems.indexOfFirst { it.contentId == detail.contentId }
+                            TvBoxSetRowSection(
+                                boxSet = boxSet,
+                                items = state.boxSetItems,
+                                currentContentId = detail.contentId,
+                                viewBoxSetFocus = viewBoxSetFocus,
+                                onViewBoxSet = {
+                                    pendingSimilarContentId = null
+                                    onOpenBoxSet(boxSet.id, boxSet.libraryId)
+                                },
+                                onReturnToHero = returnToHero,
+                                onMovieClick = { clickedContentId ->
+                                    // The movie on screen opens nothing new.
+                                    if (clickedContentId != detail.contentId) {
+                                        pendingCastFocusIndex = -1
+                                        pendingSimilarGeneration += 1
+                                        pendingReturnFromBoxSet = true
+                                        pendingSimilarContentId = clickedContentId
+                                        similarRestoreFocused.value = false
+                                        onBoxSetMovie(clickedContentId, boxSet.libraryId)
+                                    }
+                                },
+                                // A pending return targets the card that opened a
+                                // movie; otherwise entering lands on this movie.
+                                restoreFocusIndex = if (boxSetRestoreIndex >= 0) boxSetRestoreIndex else boxSetCurrentIndex,
+                                restoreFocusRequester = when {
+                                    boxSetRestoreIndex >= 0 -> similarReturnFocus
+                                    boxSetCurrentIndex >= 0 -> boxSetCurrentFocus
+                                    else -> null
+                                },
+                                restoreFocusRequest = similarRestoreRequest.takeIf { boxSetRestoreIndex >= 0 } ?: 0,
+                                onItemFocused = if (boxSetRestoreIndex >= 0) {
+                                    { focusedItem ->
+                                        if (focusedItem.contentId == pendingSimilarContentId) {
+                                            similarRestoreFocused.value = true
+                                        }
+                                    }
+                                } else {
+                                    null
+                                },
+                                modifier = Modifier.detailBodySectionAnchor(listState, coroutineScope),
+                            )
+                        }
+
                         if (showsCastSection) {
                             Box(
                                 modifier = Modifier
@@ -1323,20 +1387,21 @@ private fun TvDetailContent(
                                     onItemClick = { clickedContentId ->
                                         pendingCastFocusIndex = -1
                                         pendingSimilarGeneration += 1
+                                        pendingReturnFromBoxSet = false
                                         pendingSimilarContentId = clickedContentId
                                         similarRestoreFocused.value = false
                                         onItemDetail(clickedContentId)
                                     },
-                                    restoreFocusIndex = pendingSimilarIndex,
+                                    restoreFocusIndex = similarRestoreIndex,
                                     // Only while a return is pending, so ordinary
                                     // re-entry stops being forced at the return
                                     // target and goes back to the row restorer's
                                     // own remembered card.
                                     restoreFocusRequester = similarReturnFocus
-                                        .takeIf { pendingSimilarIndex >= 0 },
+                                        .takeIf { similarRestoreIndex >= 0 },
                                     restoreFocusRequest = similarRestoreRequest
-                                        .takeIf { pendingSimilarIndex >= 0 } ?: 0,
-                                    onItemFocusedAtIndex = if (pendingSimilarIndex >= 0) {
+                                        .takeIf { similarRestoreIndex >= 0 } ?: 0,
+                                    onItemFocusedAtIndex = if (similarRestoreIndex >= 0) {
                                         { focusedItem, _ ->
                                             // ONLY the target counts. Revoking
                                             // when some other card gains focus

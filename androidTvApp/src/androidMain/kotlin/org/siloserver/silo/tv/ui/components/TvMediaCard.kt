@@ -104,6 +104,8 @@ fun TvMediaCard(
     caption: String? = null,
     /** Draws a box set's sleeves above the artwork; see [boxSetSleeves]. */
     sleeves: BoxSetSleeveColors? = null,
+    /** Outlines the artwork at rest, such as the movie being viewed in its box set row. */
+    highlighted: Boolean = false,
 ) {
     val overlayState = LocalCardOverlayUiState.current
     val effectiveAspectRatio = artworkAspectRatio
@@ -120,6 +122,22 @@ fun TvMediaCard(
 
     val cardShape = TvMediaCardShape
     val cardFocus = siloCardDefaults(shape = cardShape)
+    // Focus keeps the standard lavender border; at rest a highlighted card
+    // keeps a white outline.
+    val cardBorder = if (highlighted) {
+        CardDefaults.border(
+            border = androidx.tv.material3.Border(
+                border = androidx.compose.foundation.BorderStroke(2.dp, Color.White.copy(alpha = 0.70f)),
+                shape = cardShape,
+            ),
+            focusedBorder = androidx.tv.material3.Border(
+                border = androidx.compose.foundation.BorderStroke(2.dp, org.siloserver.silo.tv.ui.theme.AccentLavender),
+                shape = cardShape,
+            ),
+        )
+    } else {
+        cardFocus.border
+    }
 
     var menuExpanded by remember { mutableStateOf(false) }
 
@@ -174,7 +192,7 @@ fun TvMediaCard(
                 interactionSource = interactionSource,
                 shape = CardDefaults.shape(shape = cardShape),
                 scale = cardFocus.scale,
-                border = cardFocus.border,
+                border = cardBorder,
                 glow = cardFocus.glow,
                 modifier = if (fillWidth) {
                     cardModifier

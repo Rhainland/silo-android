@@ -1695,6 +1695,12 @@ fun AppNavigation(
                 onOpenCastRemote = {
                     navController.navigate(Route.SiloCastRemote.route) { launchSingleTop = true }
                 },
+                onBoxSetClick = { boxSetId, boxSetLibraryId ->
+                    navController.navigate(Route.BoxSet(boxSetId, boxSetLibraryId).route)
+                },
+                onBoxSetMovieClick = { contentId, boxSetLibraryId ->
+                    navController.navigate(Route.ItemDetail(contentId, libraryId = boxSetLibraryId.toIntOrNull()).route)
+                },
                 viewModel = detailViewModel,
             )
             }

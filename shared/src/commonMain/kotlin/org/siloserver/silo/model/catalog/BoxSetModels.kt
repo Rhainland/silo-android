@@ -68,6 +68,10 @@ fun CatalogBoxSet.heroFacts(): List<String> = listOfNotNull(
     "$playedCount of $movieCount watched".takeIf { playedCount > 0 },
 )
 
+/** The muted line under a movie page's box set row: "Box set", then "· 2 of 8 watched" once started. */
+fun CatalogBoxSet.rowCaption(): String =
+    if (playedCount > 0) "Box set · $playedCount of $movieCount watched" else "Box set"
+
 /** Share of the box set's movies the profile has played, or null before the first. */
 val CatalogBoxSet.watchedFraction: Float?
     get() = if (playedCount > 0 && movieCount > 0) (playedCount.toFloat() / movieCount).coerceAtMost(1f) else null

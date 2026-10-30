@@ -174,6 +174,14 @@ class CatalogRepository(
     }
 
     /**
+     * The box set [contentId] belongs to, for the box set row on a movie's
+     * page, or null when it is in none. Live only, like [getBoxSet]; the
+     * member cards are sized as a poster rail.
+     */
+    suspend fun getItemBoxSet(contentId: String, libraryId: Int? = null): ApiResult<CatalogBoxSetDetail?> =
+        catalogApi.getItemBoxSet(contentId, libraryId, artwork.request(ArtworkSurface.SIMILAR))
+
+    /**
      * Box sets matching a search, best match first. Box sets only come from
      * libraries with box sets in search, and a failed read answers none, so it
      * never fails the search it sits beside.

@@ -109,6 +109,8 @@ fun MediaCard(
     cornerLabel: String? = null,
     /** Draws a box set's sleeves above the artwork; see [boxSetSleeves]. */
     sleeves: BoxSetSleeveColors? = null,
+    /** Outlines the artwork, such as the movie being viewed in its box set row. */
+    highlighted: Boolean = false,
 ) {
     val overlayState = LocalCardOverlayUiState.current
     var menuExpanded by remember { mutableStateOf(false) }
@@ -152,7 +154,14 @@ fun MediaCard(
                 // Hero morph source. Must precede .clip() — sharedBounds renders
                 // into the transition overlay and clipping is applied to its child.
                 .heroSource(heroKey)
-                .clip(MaterialTheme.shapes.small),
+                .clip(MaterialTheme.shapes.small)
+                .then(
+                    if (highlighted) {
+                        Modifier.border(2.dp, Color.White.copy(alpha = 0.70f), MaterialTheme.shapes.small)
+                    } else {
+                        Modifier
+                    },
+                ),
         ) {
             SpoilerImage(
                 hidden = hideArtwork,

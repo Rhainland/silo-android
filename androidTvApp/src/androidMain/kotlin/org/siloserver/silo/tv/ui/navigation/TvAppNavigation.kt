@@ -1373,6 +1373,12 @@ fun TvAppNavigation(
                     }
                 },
                 onBack = { navController.popBackStack() },
+                onOpenBoxSet = { boxSetId, boxSetLibraryId ->
+                    navController.navigate(TvRoute.BoxSet(boxSetId, boxSetLibraryId).route) { launchSingleTop = true }
+                },
+                onBoxSetMovie = { movieContentId, boxSetLibraryId ->
+                    navController.navigateToTvItemDetail(movieContentId, libraryId = boxSetLibraryId.toIntOrNull())
+                },
             )
         }
 
