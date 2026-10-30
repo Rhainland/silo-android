@@ -107,3 +107,16 @@ fun CatalogBoxSet.toSearchCard(): BrowseItem = BrowseItem(
     backdropThumbhash = backdropThumbhash,
     boxSet = this,
 )
+
+/**
+ * The films a movie page's box set row shows when [filmSlots] of its [count]
+ * films fit across the screen. The row starts at the first film; when the
+ * film being viewed ([currentIndex]) falls past the slots, the window slides
+ * so the film before it leads, and stops at the end of the set. A film that
+ * is not in the set leaves the window at the start.
+ */
+fun boxSetRowWindow(count: Int, currentIndex: Int, filmSlots: Int): IntRange {
+    val shown = filmSlots.coerceIn(0, count)
+    val start = if (currentIndex >= shown) (currentIndex - 1).coerceIn(0, count - shown) else 0
+    return start until start + shown
+}

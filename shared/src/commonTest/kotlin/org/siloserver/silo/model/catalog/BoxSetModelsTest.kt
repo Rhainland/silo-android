@@ -58,4 +58,18 @@ class BoxSetModelsTest {
         // A box_set object on another type is not a box set card.
         assertNull(movie("m1").copy(boxSet = boxSet).boxSetCard)
     }
+
+    @Test fun theMoviePageRowShowsAWindowThatHoldsTheCurrentFilm() {
+        // Eight films, four film slots: the film fits from the start, so the row starts there.
+        assertEquals(0 until 4, boxSetRowWindow(count = 8, currentIndex = 2, filmSlots = 4))
+        // Mid-set, past the first slots: the film before it leads.
+        assertEquals(4 until 8, boxSetRowWindow(count = 8, currentIndex = 5, filmSlots = 4))
+        assertEquals(3 until 7, boxSetRowWindow(count = 8, currentIndex = 4, filmSlots = 4))
+        // The last film: the window ends at the end of the set.
+        assertEquals(4 until 8, boxSetRowWindow(count = 8, currentIndex = 7, filmSlots = 4))
+        // Every film fits.
+        assertEquals(0 until 3, boxSetRowWindow(count = 3, currentIndex = 2, filmSlots = 5))
+        // The current film is not in the list.
+        assertEquals(0 until 4, boxSetRowWindow(count = 8, currentIndex = -1, filmSlots = 4))
+    }
 }
