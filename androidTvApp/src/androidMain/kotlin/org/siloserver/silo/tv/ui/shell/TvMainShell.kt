@@ -398,7 +398,10 @@ fun TvMainShell(
     val forYouFirstRowContainerFocusRequester = remember { FocusRequester() }
     val searchInputFocusRequester = remember { FocusRequester() }
     var searchInputHasFocus by remember { mutableStateOf(false) }
-    var searchBackToInputRequest by remember { mutableIntStateOf(0) }
+    // Saveable to match the Search screen's record of the last request it
+    // handled: a counter that reset on recreation while that record survived
+    // would read as a new request and replay the scroll and field focus.
+    var searchBackToInputRequest by rememberSaveable { mutableIntStateOf(0) }
     // Same failure as the bar handoff: Back asks the search field to take
     // focus and consumes the press. If the field never reports focus, every
     // Back repeats that forever and Search cannot be left. Records the attempt
@@ -761,8 +764,20 @@ fun TvMainShell(
     // to be guarded — and that guard is what used to swallow the failure whole.
     val claimContentFocus: (String) -> Boolean = { route ->
         when {
+            // The field is the header of the results grid, so once the results
+            // are scrolled it is no longer composed and cannot take focus.
+            // Fall back to the content group, which restores the last focused
+            // card, rather than failing and parking the viewer on the bar.
+            //
+            // Only when Search was already on screen as this claim began
+            // (currentRoute is this composition's value). Entering Search from
+            // another tab, the content group still holds the outgoing screen:
+            // the fallback would focus that and end the retries that wait for
+            // the field to compose.
             route == TvMainRoute.Search.route ->
-                runCatching { searchInputFocusRequester.requestFocus() }.getOrDefault(false)
+                runCatching { searchInputFocusRequester.requestFocus() }.getOrDefault(false) ||
+                    (currentRoute == TvMainRoute.Search.route &&
+                        runCatching { contentFocusRequester.requestFocus() }.getOrDefault(false))
 
             route == TvMainRoute.Home.route || route == TvMainRoute.Video.route -> {
                 val content =
@@ -942,8 +957,14 @@ fun TvMainShell(
     val onSearchPressed: () -> Unit = {
         if (TvMainRoute.Search.route != currentRoute) {
             navigateToRoute(TvMainRoute.Search.route)
+            moveFocusToContent(TvMainRoute.Search.route)
+        } else {
+            // Already on Search, perhaps scrolled far down the results, where
+            // the field is not composed. Ask the screen to scroll back to the
+            // top and focus the field, the same as Back does.
+            focusState.closeProfileMenuForContent()
+            searchBackToInputRequest += 1
         }
-        moveFocusToContent(TvMainRoute.Search.route)
     }
 
     fun closeMenuAnd(action: () -> Unit): () -> Unit = {
