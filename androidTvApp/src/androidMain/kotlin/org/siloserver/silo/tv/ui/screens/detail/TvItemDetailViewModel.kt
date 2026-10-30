@@ -125,7 +125,7 @@ data class TvItemDetailUiState(
     // browse query until the server exposes an item-specific related endpoint.
     val moreLikeThis: List<SectionItem> = emptyList(),
     val moreLikeThisLoading: Boolean = false,
-    /** The box set this movie belongs to, for the row under the hero; null for none. */
+    /** The box set this movie belongs to, for the box set row after the extras; null for none. */
     val boxSet: org.siloserver.silo.model.catalog.CatalogBoxSet? = null,
     /** [boxSet]'s movies in release order, as row cards. */
     val boxSetItems: List<SectionItem> = emptyList(),
@@ -1095,7 +1095,7 @@ class TvItemDetailViewModel(
                 is ApiResult.NetworkError -> Unit
             }
         }
-        // Watched counts and badges in the box set row follow the player and
+        // Watched badges in the box set row follow the player and
         // a watched change too.
         loadBoxSet(current)
         val seriesId = when (current.type.lowercase()) {

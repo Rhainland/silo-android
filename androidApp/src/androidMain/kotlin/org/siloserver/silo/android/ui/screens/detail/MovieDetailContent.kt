@@ -70,7 +70,7 @@ fun MovieDetailContent(
     /** The box set this movie belongs to; null shows no box set row. */
     boxSet: org.siloserver.silo.model.catalog.CatalogBoxSetDetail? = null,
     onOpenBoxSet: (org.siloserver.silo.model.catalog.CatalogBoxSet) -> Unit = {},
-    onBoxSetMovieClick: (contentId: String, libraryId: String) -> Unit = { contentId, _ -> },
+    onBoxSetMovieClick: (contentId: String, libraryId: String) -> Unit = { _, _ -> },
     isFavorite: Boolean,
     isInWatchlist: Boolean,
     selectedVersionIndex: Int,

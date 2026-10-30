@@ -63,7 +63,7 @@ data class ItemDetailUiState(
     val isLoading: Boolean = true,
     val detail: ItemDetail? = null,
     val similarItems: List<org.siloserver.silo.model.catalog.BrowseItem> = emptyList(),
-    /** The box set this movie belongs to, for the row under the hero; null for none. */
+    /** The box set this movie belongs to, for the box set row after the extras; null for none. */
     val boxSet: org.siloserver.silo.model.catalog.CatalogBoxSetDetail? = null,
     val seasons: List<Season> = emptyList(),
     val selectedSeasonNumber: Int = 1,
@@ -661,7 +661,7 @@ class ItemDetailViewModel(
                 is ApiResult.NetworkError -> Unit
             }
         }
-        // Watched counts and badges in the box set row follow the player too.
+        // Watched badges in the box set row follow the player too.
         loadBoxSet(current)
         if (current.type == "series") {
             refreshSeasonsQuietly(current.contentId, fresh = afterWatchedChange)
@@ -1672,7 +1672,7 @@ class ItemDetailViewModel(
                     updateOwnUserData { it.withoutPlayed(target, previous) }
                 }
             }
-            // The box set row's count and this movie's badge follow the write.
+            // The box set row's watched badges follow the write.
             if (writeResult is ApiResult.Success && !isSeries) loadBoxSet(currentDetail)
         }
     }
