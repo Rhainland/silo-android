@@ -467,8 +467,8 @@ val androidTvModule = module {
             externalSignIn = get(),
             deviceName = { TvDeviceName.current(androidContext()) },
             // st=login rollout gate (silo-apple PairingProtocol.advertisesSignInTVs):
-            // debug builds only until both phone apps that accept login TVs ship.
-            advertisesSignIn = BuildConfig.DEBUG,
+            // on in every build, since both phone apps that accept login TVs shipped.
+            advertisesSignIn = true,
         )
     }
     viewModel {
