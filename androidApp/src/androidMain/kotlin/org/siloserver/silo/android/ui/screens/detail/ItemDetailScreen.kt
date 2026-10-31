@@ -1,5 +1,6 @@
 package org.siloserver.silo.android.ui.screens.detail
 
+import org.siloserver.silo.model.catalog.parentPoster
 import org.siloserver.silo.android.ui.components.SiloDropdownMenuItem
 import org.siloserver.silo.android.ui.components.SiloDropdownMenu
 import org.siloserver.silo.android.ui.components.SiloConfirmDialog
@@ -153,8 +154,9 @@ fun ItemDetailScreen(
     onBackClick: () -> Unit,
     /** Content, file, whether the viewer picked that file's version, audio, subtitle, resume position. */
     onPlayClick: (String, Int?, Boolean, Int?, Int?, Double?) -> Unit,
-    onItemDetailClick: (String) -> Unit,
-    onEpisodeDetailClick: (String) -> Unit = onItemDetailClick,
+    /** A title picked from the "More like this" rail. */
+    onSimilarItemClick: (String) -> Unit,
+    onEpisodeDetailClick: (String) -> Unit,
     onPersonClick: (String) -> Unit,
     onSeriesClick: (String) -> Unit,
     onSeriesDetailReplace: (String, Int, String?) -> Unit,
@@ -852,7 +854,7 @@ fun ItemDetailScreen(
                             onWatchlistClick = { viewModel.toggleWatchlist() },
                             onToggleWatched = { viewModel.toggleWatched() },
                             onPersonClick = onPersonClick,
-                            onItemDetailClick = onItemDetailClick,
+                            onSimilarItemClick = onSimilarItemClick,
                             onPlayExtra = { extra ->
                                 guardedPlay(extra.contentId, extra.fileId, false, null, null, 0.0)
                             },
@@ -933,16 +935,19 @@ fun ItemDetailScreen(
                             null
                         }
                         val seasonPosterUrl = episodeSeason?.posterUrl?.takeIf { it.isNotBlank() }
+                        // The episode's own season/series poster, when the server sends it.
+                        val parentPoster = detail.parentPoster()
                         val portraitArtwork = if (detail.type == "episode") {
                             DetailPortraitArtwork(
-                                url = seasonPosterUrl ?: state.episodeSeriesPosterUrl,
-                                thumbhash = if (seasonPosterUrl != null) {
-                                    episodeSeason?.posterThumbhash
-                                } else {
-                                    state.episodeSeriesPosterThumbhash
+                                url = seasonPosterUrl ?: parentPoster?.url ?: state.episodeSeriesPosterUrl,
+                                thumbhash = when {
+                                    seasonPosterUrl != null -> episodeSeason?.posterThumbhash
+                                    parentPoster != null -> parentPoster.thumbhash
+                                    else -> state.episodeSeriesPosterThumbhash
                                 },
                                 reserveSpace = true,
-                                isResolved = seasonPosterUrl != null || state.episodeSeriesPosterResolved,
+                                isResolved = seasonPosterUrl != null || parentPoster != null ||
+                                    state.episodeSeriesPosterResolved,
                             )
                         } else {
                             DetailPortraitArtwork(
@@ -1034,7 +1039,7 @@ fun ItemDetailScreen(
                                 }
                             },
                             onPersonClick = onPersonClick,
-                            onItemDetailClick = onItemDetailClick,
+                            onSimilarItemClick = onSimilarItemClick,
                             onPlayExtra = { extra ->
                                 guardedPlay(extra.contentId, extra.fileId, false, null, null, 0.0)
                             },

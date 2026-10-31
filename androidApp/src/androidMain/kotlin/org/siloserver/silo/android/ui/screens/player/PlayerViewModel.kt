@@ -352,6 +352,8 @@ class PlayerViewModel(
     private val throughputMeter: org.siloserver.silo.common.player.PlaybackThroughputMeter? = null,
     /** Remembers a manual audio or subtitle choice for the whole series on the server. */
     private val seriesTrackChoiceWriter: org.siloserver.silo.common.settings.SeriesTrackChoiceWriter? = null,
+    /** The server's seek-bar previews. Optional for the same reason as the others. */
+    trickplayManifests: org.siloserver.silo.playback.trickplay.TrickplayManifestSource? = null,
 ) : ViewModel() {
 
     // Last load request, replayed by the "Can't reach server" Retry / Try Anyway.
@@ -595,7 +597,16 @@ class PlayerViewModel(
         // as PlaybackAnalyticsListener emits decoder, format, bandwidth, and
         // dropped-frame events.
         val stats: PlayerStatsSnapshot = PlayerStatsSnapshot(),
+        // The item whose first frame (or, for audio, first play) has shown.
+        // Until it matches [contentId] the item is on its first load: no
+        // controls, only the spinner. A retry, renewal, reconnect or replan
+        // keeps the content id, so only a new item brings that state back.
+        val startedContentId: String? = null,
     ) {
+        /** The current item has not shown its first frame yet; see [startedContentId]. */
+        val awaitingFirstFrame: Boolean
+            get() = startedContentId != contentId
+
         /** The marker occurrences the skip controls and Up Next read. */
         val markerTimeline: MarkerTimeline by lazy {
             MarkerTimeline.resolve(markerSegments, intro = intro, credits = credits, recap = recap, preview = preview)
@@ -1143,6 +1154,19 @@ class PlayerViewModel(
 
     fun requestSubtitleSync(key: String) = subtitleSync.requestSync(key)
 
+    // Seek-bar thumbnails for the streamed file; the scrub bubble stays
+    // text-only while this is null.
+    private val trickplay = trickplayManifests?.let {
+        org.siloserver.silo.common.player.trickplay.trickplayPreviews(it, viewModelScope)
+    }
+    val trickplayThumbnail: StateFlow<androidx.compose.ui.graphics.ImageBitmap?> =
+        trickplay?.thumbnail ?: MutableStateFlow(null)
+
+    /** The time the seek bar is being dragged to, or null when the drag ends. */
+    fun showTrickplay(seconds: Double?) {
+        trickplay?.show(seconds)
+    }
+
     fun resetSubtitleTiming(key: String) = subtitleSync.resetTiming(key)
 
     fun dismissSubtitleSyncNotice() = subtitleSyncFeedback.dismiss()
@@ -1287,6 +1311,23 @@ class PlayerViewModel(
                 }
                 .distinctUntilChanged()
                 .collect { (mediaFileId, syncKeys) -> subtitleSync.bind(mediaFileId, syncKeys) }
+        }
+        // Seek previews follow the streamed file; offline and local files
+        // have none.
+        trickplay?.let { previews ->
+            viewModelScope.launch {
+                _uiState
+                    .map { state ->
+                        org.siloserver.silo.common.player.trickplay.trickplayTarget(
+                            contentId = state.contentId,
+                            fileId = state.mediaFileId,
+                            versions = state.versions,
+                            streaming = !state.sessionId.isNullOrEmpty() && !state.isLocalFilePlayback(),
+                        )
+                    }
+                    .distinctUntilChanged()
+                    .collect(previews::bind)
+            }
         }
         viewModelScope.launch {
             val screen = _uiState
@@ -3193,9 +3234,20 @@ class PlayerViewModel(
         }
     }
 
+    /**
+     * A mount with audio and no video started playing. It renders no frame, so
+     * playing ends its first load instead; a callback from an earlier mount is
+     * ignored, as for [onFirstVideoFrameRendered].
+     */
+    fun onAudioOnlyPlaybackStarted(mediaMountGeneration: Long) {
+        if (mediaMountGeneration != _uiState.value.mediaMountGeneration) return
+        _uiState.update { it.copy(startedContentId = it.contentId) }
+    }
+
     fun onFirstVideoFrameRendered(mediaMountGeneration: Long?) {
         if (mediaMountGeneration != _uiState.value.mediaMountGeneration) return
         hasRenderedFirstFrame = true
+        _uiState.update { it.copy(startedContentId = it.contentId) }
         playbackSessionManager.reportFirstVideoFrame(_uiState.value.stats)
         if (nextUpTransitionGate.completeOnFirstFrame(mediaMountGeneration)) {
             _uiState.update {
@@ -5660,9 +5712,9 @@ class PlayerViewModel(
 
     /**
      * Start an AI job and poll it to a terminal state. Android passes the
-     * current playhead as start_position and does NOT pass session_id — we
-     * poll for completion instead of streaming live cues
-     * (SubtitleTranslateRequest doc).
+     * current playhead as start_position and the playback session as
+     * session_id, so the server can run it as a foreground job; we still poll
+     * for completion instead of showing live cues (SubtitleTranslateRequest doc).
      */
     private var aiPlaybackGeneration = 0L
     private var aiCreationInFlight = false
@@ -5695,6 +5747,7 @@ class PlayerViewModel(
                     sourceLanguage = sourceLanguage.ifBlank { null },
                     targetLanguage = targetLanguage.ifBlank { null },
                     startPosition = state.position,
+                    sessionId = state.sessionId,
                 ),
                 owner,
             )

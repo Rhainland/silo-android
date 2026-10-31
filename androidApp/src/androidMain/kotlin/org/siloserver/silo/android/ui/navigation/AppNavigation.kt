@@ -85,6 +85,8 @@ import org.siloserver.silo.android.ui.screens.auth.SignupScreen
 import org.siloserver.silo.android.ui.screens.onboarding.OnboardingTourScreen
 import org.siloserver.silo.android.ui.screens.browse.BrowseScreen
 import org.siloserver.silo.android.ui.screens.browse.BrowseViewModel
+import org.siloserver.silo.android.ui.screens.browse.SectionBrowseScreen
+import org.siloserver.silo.viewmodel.SectionBrowseArgs
 import org.siloserver.silo.android.ui.screens.calendar.CalendarScreen
 import org.siloserver.silo.android.ui.screens.collections.CollectionDetailScreen
 import org.siloserver.silo.android.ui.screens.collections.CollectionsScreen
@@ -112,6 +114,7 @@ import org.siloserver.silo.android.ui.screens.profiles.CreateProfileScreen
 import org.siloserver.silo.android.ui.screens.profiles.EditProfileScreen
 import org.siloserver.silo.android.ui.screens.profiles.ProfileSelectionScreen
 import org.siloserver.silo.android.ui.screens.requests.MyRequestsScreen
+import org.siloserver.silo.android.ui.screens.requests.RequestDiscoverRowScreen
 import org.siloserver.silo.android.ui.screens.requests.RequestDetailScreen
 import org.siloserver.silo.android.ui.screens.requests.RequestsScreen
 import org.siloserver.silo.android.ui.screens.search.MobileSearchMediaType
@@ -151,6 +154,12 @@ import org.koin.compose.viewmodel.koinViewModel
  * from the route's own `contentId` argument.
  */
 private const val DisplayedDetailContentIdKey = "displayedDetailContentId"
+
+private fun NavBackStackEntry.displayedDetailContentId(): String? =
+    savedStateHandle.get<String>(DisplayedDetailContentIdKey) ?: arguments?.getString("contentId")
+
+/** Set on a detail entry that a title's "More like this" rail opened. */
+private const val OpenedFromRelatedRailKey = "openedFromRelatedRail"
 
 /** The profile picker and its screens, where a prompt has nothing to add. */
 private val ProfilePromptPickerRoutes: Set<String> = setOf(
@@ -526,9 +535,7 @@ fun AppNavigation(
                 shouldLaunchExternalRouteSingleTop(
                     currentDestinationRoute = navController.currentBackStackEntry
                         ?.destination?.route,
-                    currentContentId = navController.currentBackStackEntry
-                        ?.savedStateHandle?.get<String>(DisplayedDetailContentIdKey)
-                        ?: navController.currentBackStackEntry?.arguments?.getString("contentId"),
+                    currentContentId = navController.currentBackStackEntry?.displayedDetailContentId(),
                     targetRoute = route,
                 )
             navController.navigate(route) {
@@ -1354,6 +1361,22 @@ fun AppNavigation(
                 onMyRequestsClick = { navController.navigate(Route.MyRequests.route) },
                 onRequestDetailClick = openRequestDetail,
                 onLibraryItemClick = openRequestLibraryItem,
+                onDiscoverRowClick = { key, title -> navController.navigate(Route.RequestDiscoverRow(key, title).route) },
+            )
+        }
+        composable(
+            route = Route.RequestDiscoverRow.ROUTE,
+            arguments = listOf(
+                navArgument("key") { type = NavType.StringType },
+                navArgument("title") { type = NavType.StringType; defaultValue = "" },
+            ),
+        ) { backStackEntry ->
+            RequestDiscoverRowScreen(
+                rowKey = backStackEntry.arguments?.getString("key").orEmpty(),
+                title = backStackEntry.arguments?.getString("title").orEmpty(),
+                onBackClick = { navController.popBackStack() },
+                onRequestDetailClick = openRequestDetail,
+                onLibraryItemClick = openRequestLibraryItem,
             )
         }
         composable(Route.MyRequests.route) {
@@ -1442,6 +1465,40 @@ fun AppNavigation(
                 onItemClick = { contentId ->
                     navController.navigate(Route.ItemDetail(contentId).route)
                 },
+            )
+        }
+
+        composable(
+            route = Route.SectionBrowse.ROUTE,
+            arguments = listOf(
+                navArgument("sectionId") { type = NavType.StringType },
+                navArgument("title") {
+                    type = NavType.StringType
+                    defaultValue = ""
+                },
+                navArgument("libraryId") {
+                    type = NavType.StringType
+                    nullable = true
+                    defaultValue = null
+                },
+                navArgument("mediaScope") {
+                    type = NavType.StringType
+                    nullable = true
+                    defaultValue = null
+                },
+            ),
+        ) { backStackEntry ->
+            val libraryId = backStackEntry.arguments?.getString("libraryId")?.toIntOrNull()
+            SectionBrowseScreen(
+                args = SectionBrowseArgs(
+                    sectionId = backStackEntry.arguments?.getString("sectionId").orEmpty(),
+                    title = backStackEntry.arguments?.getString("title").orEmpty(),
+                    libraryId = libraryId,
+                    mediaScope = backStackEntry.arguments?.getString("mediaScope")
+                        ?.takeIf { it in setOf("movie", "series") },
+                ),
+                onBackClick = { navController.popBackStack() },
+                onItemClick = { item -> navController.navigate(sectionBrowseDetailRoute(item, libraryId)) },
             )
         }
 
@@ -1548,8 +1605,14 @@ fun AppNavigation(
                         )
                     }
                 },
-                onItemDetailClick = { contentId ->
-                    navController.navigate(Route.ItemDetail(contentId).route)
+                onSimilarItemClick = { contentId ->
+                    if (!navController.navigateToRelatedItemDetail(contentId)) {
+                        // The tapped card handed off its artwork, but no new page
+                        // opened to take it, so clear it for the next detail.
+                        heroSourceHandoff.pendingKey = null
+                        heroSourceHandoff.pendingArtworkUrl = null
+                        heroSourceHandoff.pendingArtworkThumbhash = null
+                    }
                 },
                 onEpisodeDetailClick = { contentId ->
                     navController.navigate(Route.ItemDetail(contentId, libraryId = libraryId).route)
@@ -2030,6 +2093,40 @@ private fun NavHostController.isDisplayingExactPlayerRoute(
     if (arguments.getString("libraryId") != null) return false
     val requestedTarget = playerRouteIntentOrNull(route) ?: return false
     return currentPlayerTarget?.let(requestedTarget::matches) == true
+}
+
+/**
+ * Opens a title picked from another title's "More like this" rail. The first
+ * hop from a title pushes, so Back returns to that title. A hop from a page
+ * such a rail opened replaces that page, so however many recommendations
+ * someone follows, two Backs leave the chain: one to the title it started
+ * from, one to wherever that title was opened. Picking the starting title
+ * again goes back to it instead of opening a second copy.
+ *
+ * Returns whether a new page opened, so the caller can drop what the tapped
+ * card handed to it otherwise.
+ */
+private fun NavHostController.navigateToRelatedItemDetail(contentId: String): Boolean {
+    val current = currentBackStackEntry
+    // A second tap on the same card, or on the title just returned to, can
+    // arrive while the page is still changing; it opens nothing.
+    if (current?.destination?.route == Route.ItemDetail.ROUTE && current.displayedDetailContentId() == contentId) {
+        return false
+    }
+    if (current?.savedStateHandle?.get<Boolean>(OpenedFromRelatedRailKey) == true) {
+        val start = previousBackStackEntry?.takeIf { it.destination.route == Route.ItemDetail.ROUTE }
+        if (start?.displayedDetailContentId() == contentId) {
+            popBackStack()
+            return false
+        }
+        navigate(Route.ItemDetail(contentId).route) {
+            popUpTo(Route.ItemDetail.ROUTE) { inclusive = true }
+        }
+    } else {
+        navigate(Route.ItemDetail(contentId).route)
+    }
+    currentBackStackEntry?.takeIf { it !== current }?.savedStateHandle?.set(OpenedFromRelatedRailKey, true)
+    return true
 }
 
 /**

@@ -68,6 +68,7 @@ import org.siloserver.silo.model.settings.SeekMedia
 import org.siloserver.silo.tv.ui.components.TvDialog
 import org.siloserver.silo.tv.ui.components.TvDialogAction
 import org.siloserver.silo.tv.ui.components.TvDialogActionStyle
+import org.siloserver.silo.tv.ui.components.TvSignOutDialog
 import org.siloserver.silo.tv.ui.components.tvDialogSurface
 import org.siloserver.silo.tv.ui.focus.claimFocusOrReport
 import org.siloserver.silo.tv.ui.focus.requestFocusUntilObserved
@@ -111,10 +112,8 @@ import org.siloserver.silo.common.settings.bufferingQualityModeLabel
 import org.siloserver.silo.common.settings.learnedLimitLabel
 import org.siloserver.silo.common.settings.shownIn
 import org.siloserver.silo.model.settings.PlaybackSettingsKeys
-import org.siloserver.silo.model.settings.CardCaption
 import org.siloserver.silo.model.settings.CardPosterSize
 import org.siloserver.silo.model.settings.CardPresentation
-import org.siloserver.silo.model.settings.CardPresentationPreset
 import org.siloserver.silo.model.settings.LanguageOptions
 import org.siloserver.silo.domain.player.BufferingQualityMode
 import org.siloserver.silo.domain.player.IntroSkipMode
@@ -162,7 +161,7 @@ import kotlinx.coroutines.launch
 @Composable
 fun TvSettingsScreen(
     onManageServers: () -> Unit = {},
-    onSignedOut: () -> Unit = {},
+    onSignOut: (removeServer: Boolean) -> Unit = {},
     onSwitchProfile: () -> Unit = {},
     onNavigateHome: () -> Unit = {},
     onOpenDiagnosticsReport: (reportId: String) -> Unit = {},
@@ -272,10 +271,6 @@ fun TvSettingsScreen(
 
     LaunchedEffect(state.navAction) {
         when (state.navAction) {
-            TvSettingsViewModel.NavAction.SIGNED_OUT -> {
-                viewModel.onNavActionConsumed()
-                onSignedOut()
-            }
             TvSettingsViewModel.NavAction.SWITCH_PROFILE -> {
                 viewModel.onNavActionConsumed()
                 onSwitchProfile()
@@ -351,13 +346,10 @@ fun TvSettingsScreen(
     )
 
     if (showSignOutConfirm) {
-        TvSettingsConfirmDialog(
-            title = "Sign out?",
-            message = "This TV goes back to the sign-in screen. Your profiles and watch history stay on the server.",
-            confirmLabel = "Sign out",
-            onConfirm = {
+        TvSignOutDialog(
+            onSignOut = { removeServer ->
                 showSignOutConfirm = false
-                viewModel.onSignOut(context)
+                onSignOut(removeServer)
             },
             onDismiss = { showSignOutConfirm = false },
         )
@@ -1025,7 +1017,7 @@ private fun TvGeneralSettingsPane(
     onCardPresentationDeviceOnlyChanged: (Boolean) -> Unit,
     onUseProfileCardDefault: () -> Unit,
 ) {
-    var activeCardPicker by remember { mutableStateOf<CardPresentationPicker?>(null) }
+    var showPosterSizePicker by remember { mutableStateOf(false) }
     var showProfileLaunchPicker by remember { mutableStateOf(false) }
     var showHomeSectionsEditor by remember { mutableStateOf(false) }
     val titleArtStore: TitleArtStore = koinInject()
@@ -1078,19 +1070,9 @@ private fun TvGeneralSettingsPane(
                     )
                 } else {
                     SettingsValueRow(
-                        label = "Preset",
-                        value = state.cardPresentation.preset?.displayName ?: "Custom",
-                        onClick = { activeCardPicker = CardPresentationPicker.Preset },
-                    )
-                    SettingsValueRow(
                         label = "Poster Size",
                         value = state.cardPresentation.posterSize.displayName,
-                        onClick = { activeCardPicker = CardPresentationPicker.PosterSize },
-                    )
-                    SettingsValueRow(
-                        label = "Captions",
-                        value = state.cardPresentation.caption.displayName,
-                        onClick = { activeCardPicker = CardPresentationPicker.Captions },
+                        onClick = { showPosterSizePicker = true },
                     )
                     SettingsToggleRow(
                         label = "Only This Device",
@@ -1105,9 +1087,7 @@ private fun TvGeneralSettingsPane(
                         )
                     }
                     SettingsFooterText(
-                        text = "Start with Balanced, Compact, Cinema, or Artwork Only, then fine-tune size " +
-                            "and captions. These choices sync with other TVs on this profile unless Only " +
-                            "This Device is on.",
+                        text = "Poster size syncs with other TVs on this profile unless Only This Device is on.",
                     )
                 }
             }
@@ -1145,28 +1125,8 @@ private fun TvGeneralSettingsPane(
         // cascade (Collections). (QA 2026-07-08.)
     }
 
-    when (activeCardPicker) {
-        CardPresentationPicker.Preset -> TvSettingsPickerSheet(
-            title = "Preset",
-            // Synthetic "Custom" appears only while the current pair matches
-            // no preset; it is a label for the state, not a choice.
-            options = buildList {
-                CardPresentationPreset.entries.forEach {
-                    add(PickerOption(it.name, it.displayName))
-                }
-                if (state.cardPresentation.preset == null) {
-                    add(PickerOption(CustomCardPresetId, "Custom"))
-                }
-            },
-            selectedId = state.cardPresentation.preset?.name ?: CustomCardPresetId,
-            onSelect = { id ->
-                CardPresentationPreset.entries.firstOrNull { it.name == id }
-                    ?.let { onCardPresentationChanged(it.presentation) }
-                activeCardPicker = null
-            },
-            onDismiss = { activeCardPicker = null },
-        )
-        CardPresentationPicker.PosterSize -> TvSettingsPickerSheet(
+    if (showPosterSizePicker) {
+        TvSettingsPickerSheet(
             title = "Poster Size",
             options = CardPosterSize.entries.map { PickerOption(it.raw, it.displayName) },
             selectedId = state.cardPresentation.posterSize.raw,
@@ -1174,23 +1134,10 @@ private fun TvGeneralSettingsPane(
                 CardPosterSize.fromRaw(id)?.let {
                     onCardPresentationChanged(state.cardPresentation.copy(posterSize = it))
                 }
-                activeCardPicker = null
+                showPosterSizePicker = false
             },
-            onDismiss = { activeCardPicker = null },
+            onDismiss = { showPosterSizePicker = false },
         )
-        CardPresentationPicker.Captions -> TvSettingsPickerSheet(
-            title = "Captions",
-            options = CardCaption.entries.map { PickerOption(it.raw, it.displayName) },
-            selectedId = state.cardPresentation.caption.raw,
-            onSelect = { id ->
-                CardCaption.fromRaw(id)?.let {
-                    onCardPresentationChanged(state.cardPresentation.copy(caption = it))
-                }
-                activeCardPicker = null
-            },
-            onDismiss = { activeCardPicker = null },
-        )
-        null -> Unit
     }
 
     if (showProfileLaunchPicker) {
@@ -1215,15 +1162,6 @@ private fun TvGeneralSettingsPane(
         )
     }
 }
-
-private enum class CardPresentationPicker {
-    Preset,
-    PosterSize,
-    Captions,
-}
-
-/** Picker id for the synthetic "Custom" preset row (never on the wire). */
-private const val CustomCardPresetId = "custom"
 
 /** Picker id for the Maximum Bitrate sheet's "No limit" row (never on the wire). */
 private const val NoBitrateLimitId = "no_limit"

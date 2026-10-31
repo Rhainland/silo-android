@@ -128,6 +128,7 @@ import org.siloserver.silo.tv.ui.components.TvCascadeSelector
 import org.siloserver.silo.tv.ui.components.CascadeLibraryColumnWidth
 import org.siloserver.silo.tv.ui.components.TvCascadeSelectorMaxPanelWidth
 import org.siloserver.silo.tv.ui.components.TvForYouSelector
+import org.siloserver.silo.tv.ui.components.TvSignOutDialog
 import org.siloserver.silo.tv.ui.components.TvCatalogEmptyState
 import org.siloserver.silo.tv.ui.components.tvSkylinePanelChrome
 import org.siloserver.silo.tv.ui.navigation.TvMainRoute
@@ -202,7 +203,10 @@ fun TvMainShell(
         mediaScope: String?,
     ) -> Unit,
     onOpenCollectionDetail: (collectionId: String, title: String) -> Unit,
-    onSignedOut: () -> Unit,
+    /** Opens a row's full page: a Home row when libraryId is null. */
+    onOpenSectionBrowse: (sectionId: String, title: String, libraryId: Int?, mediaScope: String?) -> Unit,
+    /** Runs the sign-out the user chose in [TvSignOutDialog]. */
+    onSignOut: (removeServer: Boolean) -> Unit,
     onSwitchProfile: () -> Unit,
     onSwitchServer: () -> Unit,
     onPairDevice: () -> Unit,
@@ -396,7 +400,10 @@ fun TvMainShell(
     val forYouFirstRowContainerFocusRequester = remember { FocusRequester() }
     val searchInputFocusRequester = remember { FocusRequester() }
     var searchInputHasFocus by remember { mutableStateOf(false) }
-    var searchBackToInputRequest by remember { mutableIntStateOf(0) }
+    // Saveable to match the Search screen's record of the last request it
+    // handled: a counter that reset on recreation while that record survived
+    // would read as a new request and replay the scroll and field focus.
+    var searchBackToInputRequest by rememberSaveable { mutableIntStateOf(0) }
     // Same failure as the bar handoff: Back asks the search field to take
     // focus and consumes the press. If the field never reports focus, every
     // Back repeats that forever and Search cannot be left. Records the attempt
@@ -542,6 +549,21 @@ fun TvMainShell(
         detailReturnRoot = null
         onOpenCollectionDetail(collectionId, title)
     }
+    // A row's full page is an outer route like a detail page, so it takes the
+    // same hand-back: Home's feed restores focus to the row's "Explore all"
+    // card, and a library's feed does the same through its own return target.
+    val openHomeSection: (org.siloserver.silo.model.section.ResolvedSection) -> Unit = { section ->
+        restoreContentAfterDetail = true
+        detailReturnRoot = TvMainRoute.Home.route
+        suppressFeedRefreshAfterDetail = true
+        onOpenSectionBrowse(section.id, section.title, null, null)
+    }
+    val openLibrarySection: (org.siloserver.silo.model.section.ResolvedSection, Int, String?) -> Unit =
+        { section, libraryId, mediaScope ->
+            restoreContentAfterDetail = true
+            detailReturnRoot = null
+            onOpenSectionBrowse(section.id, section.title, libraryId, mediaScope)
+        }
     var contentUpFallback by remember { mutableStateOf<((Boolean) -> Boolean)?>(null) }
     // Feeds that registered the up-fallback slot, were superseded by a newer
     // feed, and are still awaiting their (now-stale) onDispose. Tracking them
@@ -744,8 +766,20 @@ fun TvMainShell(
     // to be guarded — and that guard is what used to swallow the failure whole.
     val claimContentFocus: (String) -> Boolean = { route ->
         when {
+            // The field is the header of the results grid, so once the results
+            // are scrolled it is no longer composed and cannot take focus.
+            // Fall back to the content group, which restores the last focused
+            // card, rather than failing and parking the viewer on the bar.
+            //
+            // Only when Search was already on screen as this claim began
+            // (currentRoute is this composition's value). Entering Search from
+            // another tab, the content group still holds the outgoing screen:
+            // the fallback would focus that and end the retries that wait for
+            // the field to compose.
             route == TvMainRoute.Search.route ->
-                runCatching { searchInputFocusRequester.requestFocus() }.getOrDefault(false)
+                runCatching { searchInputFocusRequester.requestFocus() }.getOrDefault(false) ||
+                    (currentRoute == TvMainRoute.Search.route &&
+                        runCatching { contentFocusRequester.requestFocus() }.getOrDefault(false))
 
             route == TvMainRoute.Home.route || route == TvMainRoute.Video.route -> {
                 val content =
@@ -925,13 +959,35 @@ fun TvMainShell(
     val onSearchPressed: () -> Unit = {
         if (TvMainRoute.Search.route != currentRoute) {
             navigateToRoute(TvMainRoute.Search.route)
+            moveFocusToContent(TvMainRoute.Search.route)
+        } else {
+            // Already on Search, perhaps scrolled far down the results, where
+            // the field is not composed. Ask the screen to scroll back to the
+            // top and focus the field, the same as Back does.
+            focusState.closeProfileMenuForContent()
+            searchBackToInputRequest += 1
         }
-        moveFocusToContent(TvMainRoute.Search.route)
     }
 
     fun closeMenuAnd(action: () -> Unit): () -> Unit = {
         focusState.closeProfileMenuForContent()
         action()
+    }
+
+    // The profile menu's Sign Out asks first, as Settings and Who's Watching do.
+    var showSignOutDialog by remember { mutableStateOf(false) }
+    if (showSignOutDialog) {
+        TvSignOutDialog(
+            onSignOut = { removeServer ->
+                showSignOutDialog = false
+                onSignOut(removeServer)
+            },
+            onDismiss = {
+                showSignOutDialog = false
+                // Back on the avatar the menu opened from.
+                focusState.dismissProfileMenu()
+            },
+        )
     }
 
     // Scroll-driven visibility for the top menu bar. Mirrors Apple's
@@ -1227,6 +1283,7 @@ fun TvMainShell(
                         onOpenForYou = {
                             openForYou(null)
                         },
+                        onExploreSection = openHomeSection,
                         onOpenSettings = {
                             navigateToRoute(TvMainRoute.Settings.route)
                             moveFocusToContent(TvMainRoute.Settings.route)
@@ -1254,6 +1311,7 @@ fun TvMainShell(
                         onOpenForYou = {
                             openForYou(null)
                         },
+                        onExploreSection = openHomeSection,
                         onOpenSettings = {
                             navigateToRoute(TvMainRoute.Settings.route)
                             moveFocusToContent(TvMainRoute.Settings.route)
@@ -1292,6 +1350,7 @@ fun TvMainShell(
                 shellComposable(TvMainRoute.Audio.route) {
                     TvLibrariesScreen(
                         onItemClick = openLibraryItemDetail,
+                        onExploreSection = { section, libraryId -> openLibrarySection(section, libraryId, null) },
                         onLibraryCollectionClick = openLibraryCollectionDetail,
                         onUserCollectionClick = openCollectionDetail,
                         onInitialContentFocus = { focusState.closeProfileMenuForContent() },
@@ -1301,6 +1360,7 @@ fun TvMainShell(
                 shellComposable(TvMainRoute.Libraries.route) {
                     TvLibrariesScreen(
                         onItemClick = openLibraryItemDetail,
+                        onExploreSection = { section, libraryId -> openLibrarySection(section, libraryId, null) },
                         onLibraryCollectionClick = openLibraryCollectionDetail,
                         onUserCollectionClick = openCollectionDetail,
                         onInitialContentFocus = { focusState.closeProfileMenuForContent() },
@@ -1325,6 +1385,7 @@ fun TvMainShell(
                         },
                         onLibraryCollectionClick = openLibraryCollectionDetail,
                         onUserCollectionClick = openCollectionDetail,
+                        onExploreSection = openLibrarySection,
                         onInitialContentFocus = { focusState.closeProfileMenuForContent() },
                         onContentUpFallbackChanged = onContentUpFallback,
                         onPlayShuffle = onPlayShuffle,
@@ -1343,6 +1404,7 @@ fun TvMainShell(
                         },
                         onLibraryCollectionClick = openLibraryCollectionDetail,
                         onUserCollectionClick = openCollectionDetail,
+                        onExploreSection = openLibrarySection,
                         onInitialContentFocus = { focusState.closeProfileMenuForContent() },
                         onContentUpFallbackChanged = onContentUpFallback,
                         onPlayShuffle = onPlayShuffle,
@@ -1361,6 +1423,7 @@ fun TvMainShell(
                         },
                         onLibraryCollectionClick = openLibraryCollectionDetail,
                         onUserCollectionClick = openCollectionDetail,
+                        onExploreSection = openLibrarySection,
                         onInitialContentFocus = { focusState.closeProfileMenuForContent() },
                         onContentUpFallbackChanged = onContentUpFallback,
                         onPlayShuffle = onPlayShuffle,
@@ -1379,6 +1442,7 @@ fun TvMainShell(
                         },
                         onLibraryCollectionClick = openLibraryCollectionDetail,
                         onUserCollectionClick = openCollectionDetail,
+                        onExploreSection = openLibrarySection,
                         onInitialContentFocus = { focusState.closeProfileMenuForContent() },
                         onContentUpFallbackChanged = onContentUpFallback,
                         onPlayShuffle = onPlayShuffle,
@@ -1467,7 +1531,7 @@ fun TvMainShell(
                         onOpenDiagnosticsReport = onOpenDiagnosticsReport,
                         initialManageServersFocus = returnToManageServers,
                         onManageServersReturnFocusConsumed = onManageServersReturnFocusConsumed,
-                        onSignedOut = onSignedOut,
+                        onSignOut = onSignOut,
                         onSwitchProfile = onSwitchProfile,
                         onNavigateHome = {
                             navigateToRoute(firstTvRoute())
@@ -1738,7 +1802,7 @@ fun TvMainShell(
                     navigateToRoute(TvMainRoute.Settings.route)
                 },
                 onSwitchServer = closeMenuAnd(onSwitchServer),
-                onSignOut = closeMenuAnd(onSignedOut),
+                onSignOut = closeMenuAnd { showSignOutDialog = true },
                 onDismiss = { focusState.dismissProfileMenu() },
                 modifier = Modifier
                     // The profile avatar now leads the *trailing* cluster, so the
@@ -1778,6 +1842,7 @@ private fun TvLibraryTypeContent(
         libraryType: String,
     ) -> Unit,
     onUserCollectionClick: (collectionId: String, title: String) -> Unit,
+    onExploreSection: (org.siloserver.silo.model.section.ResolvedSection, Int, String?) -> Unit,
     onInitialContentFocus: () -> Unit,
     onContentUpFallbackChanged: ((((Boolean) -> Boolean)?) -> Unit)? = null,
     onPlayShuffle: (shuffle: org.siloserver.silo.model.shuffle.Shuffle, libraryId: Int?) -> Unit = { _, _ -> },
@@ -1824,6 +1889,7 @@ private fun TvLibraryTypeContent(
                     onLibraryCollectionClick(library.id, collectionId, title, library.type)
                 }
             },
+            onExploreSection = { section -> onExploreSection(section, library.id, type.mediaScope(library)) },
             onInitialContentFocus = onInitialContentFocus,
             initialSection = selectedPill.toLibraryTab(),
             sectionRequestNonce = sectionRequestNonce,

@@ -486,8 +486,16 @@ fun TvSearchScreen(
     LaunchedEffect(scrollHeaderIntoView) {
         if (scrollHeaderIntoView > 0) searchGridState.animateScrollToItem(0)
     }
+    // The shell's counter stays raised after it is handled, and this effect
+    // relaunches whenever the screen re-enters composition — a Back out of a
+    // result included. Remember which request was handled so a return does not
+    // replay it, scroll to the top and pull focus off the card being restored.
+    var handledBackToSearchFieldRequest by rememberSaveable {
+        mutableIntStateOf(backToSearchFieldRequest)
+    }
     LaunchedEffect(backToSearchFieldRequest) {
-        if (backToSearchFieldRequest <= 0) return@LaunchedEffect
+        if (backToSearchFieldRequest == handledBackToSearchFieldRequest) return@LaunchedEffect
+        handledBackToSearchFieldRequest = backToSearchFieldRequest
         searchGridState.animateScrollToItem(0)
         requestFocusUntilObserved(
             maxAttempts = TvFrameRelocationMaxAttempts,
@@ -750,16 +758,18 @@ fun TvSearchScreen(
                             index,
                         )
                     },
-                    // Same precedence as the handoff: UP from the request row
-                    // goes to the results, else the error's "Try again", else
-                    // the chips. Spatial search alone skipped the button and
-                    // landed on the chips or the field.
+                    // With results above, spatial search takes UP to the card
+                    // just above. Pinning it to the first result failed once
+                    // the grid scrolled that card out of composition, and the
+                    // shell parked focus on the top bar. Otherwise the same
+                    // precedence as the handoff: spatial search alone skipped
+                    // "Try again" and landed on the chips or the field.
                     cardModifier = Modifier.focusProperties {
-                        up = when {
-                            state.items.isNotEmpty() -> firstResultFocusRequester
-                            state.error != null -> feedbackActionFocusRequester
-                            state.people.isNotEmpty() -> firstPersonFocusRequester
-                            else -> firstFilterChipFocusRequester
+                        when {
+                            state.items.isNotEmpty() -> Unit
+                            state.error != null -> up = feedbackActionFocusRequester
+                            state.people.isNotEmpty() -> up = firstPersonFocusRequester
+                            else -> up = firstFilterChipFocusRequester
                         }
                     },
                     onOpenRequestDetail = onOpenRequestDetail,

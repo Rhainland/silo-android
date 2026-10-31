@@ -86,6 +86,7 @@ class ApiV2ContractTest {
                     "getCatalogItem" -> ApiV2Fixtures.decode<ItemDetailReadV2>(body)
                     "getThemeSongsCapability" -> ApiV2Fixtures.decode<ThemeSongsCapabilityV2>(body)
                     "createThemeSongPlayback" -> ApiV2Fixtures.decode<ThemePlaybackGrantV2>(body)
+                    "getWatchTrickplay" -> ApiV2Fixtures.decode<WatchTrickplayV2>(body)
                     else -> error("unhandled success fixture ${entry.name} (${entry.operationId})")
                 }
             }

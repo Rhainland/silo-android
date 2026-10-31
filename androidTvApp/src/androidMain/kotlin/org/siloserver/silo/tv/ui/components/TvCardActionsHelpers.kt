@@ -1,5 +1,6 @@
 package org.siloserver.silo.tv.ui.components
 
+import android.widget.Toast
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -7,11 +8,13 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.platform.LocalContext
 import org.siloserver.silo.domain.MediaActionsCoordinator
 import org.siloserver.silo.model.catalog.BrowseItem
 import org.siloserver.silo.model.catalog.withWatched
 import org.siloserver.silo.model.catalog.MediaItemUserState
 import org.siloserver.silo.network.ApiResult
+import org.siloserver.silo.network.errorMessage
 import kotlinx.coroutines.launch
 import org.koin.compose.koinInject
 
@@ -20,7 +23,8 @@ import org.koin.compose.koinInject
  * [org.siloserver.silo.android.ui.components.rememberBrowseItemCardActions].
  * Builds a [TvMediaCardActions] backed by [MediaActionsCoordinator] for grids
  * (catalog, library detail, search) whose ViewModels don't manage these
- * actions directly. Optimistic state is held in Compose; failures roll back.
+ * actions directly. Optimistic state is held in Compose; a failed watched
+ * write rolls back and says so in a toast.
  */
 @Composable
 fun rememberTvBrowseItemCardActions(
@@ -28,6 +32,7 @@ fun rememberTvBrowseItemCardActions(
 ): Triple<TvMediaCardActions, MediaItemUserState, Double?> {
     val coordinator: MediaActionsCoordinator = koinInject()
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current.applicationContext
 
     // Key on userState too (phone parity): when refreshed data re-emits with a
     // changed userState, the card must reflect new watched/favorite/watchlist
@@ -43,8 +48,17 @@ fun rememberTvBrowseItemCardActions(
                 val previous = state
                 state = state.withWatched(watched)
                 scope.launch {
-                    if (coordinator.performPersonalWrite(writeIntent) !is ApiResult.Success) {
-                        if (coordinator.isCurrent(writeIntent)) state = previous
+                    val result = coordinator.performPersonalWrite(writeIntent)
+                    if (result !is ApiResult.Success && coordinator.isCurrent(writeIntent)) {
+                        state = previous
+                        // The menu has already closed, so without this the
+                        // rollback is the only sign that the write failed.
+                        val action = if (watched) "watched" else "unwatched"
+                        Toast.makeText(
+                            context,
+                            "Couldn't mark as $action. ${result.errorMessage("Try again.")}",
+                            Toast.LENGTH_LONG,
+                        ).show()
                     }
                 }
             },

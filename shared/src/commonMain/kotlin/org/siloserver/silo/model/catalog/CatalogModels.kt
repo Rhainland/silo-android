@@ -7,6 +7,7 @@ import org.siloserver.silo.network.apiv2.CatalogSearchDiagnosticsV2
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonPrimitive
 
 // --- Browse / Catalog ---
 
@@ -70,6 +71,13 @@ data class BrowseItem(
     @SerialName("poster_thumbhash") val posterThumbhash: String? = null,
     @SerialName("backdrop_url") val backdropUrl: String? = null,
     @SerialName("backdrop_thumbhash") val backdropThumbhash: String? = null,
+    /** Episode cards: the parent series' and season's artwork, never an episode still. Absent on older servers. */
+    @SerialName("series_poster_url") val seriesPosterUrl: String? = null,
+    @SerialName("series_poster_thumbhash") val seriesPosterThumbhash: String? = null,
+    @SerialName("series_backdrop_url") val seriesBackdropUrl: String? = null,
+    @SerialName("series_backdrop_thumbhash") val seriesBackdropThumbhash: String? = null,
+    @SerialName("season_poster_url") val seasonPosterUrl: String? = null,
+    @SerialName("season_poster_thumbhash") val seasonPosterThumbhash: String? = null,
     @SerialName("added_at") val addedAt: String? = null,
     @SerialName("release_date") val releaseDate: String? = null,
     @SerialName("last_air_date") val lastAirDate: String? = null,
@@ -118,11 +126,19 @@ data class CatalogEffectiveSort(
 data class CatalogQueryRule(
     val field: String,
     val op: String,
-    val value: String,
+    /** Sent as-is, so its JSON type is the wire type: boolean fields (watched,
+     *  in_progress, favorited, in_watchlist, hdr, dolby_vision) need a JSON
+     *  boolean; the server rejects the string "true". */
+    val value: JsonPrimitive,
     /** Range ops ("between") carry indexed values instead of [value] —
      *  encoded as value[0], value[1] on the wire (iOS CatalogQueryBuilder). */
     val values: List<String> = emptyList(),
-)
+) {
+    constructor(field: String, op: String, value: String, values: List<String> = emptyList()) :
+        this(field, op, JsonPrimitive(value), values)
+
+    constructor(field: String, op: String, value: Boolean) : this(field, op, JsonPrimitive(value))
+}
 
 data class CatalogQueryGroup(
     val match: String = "all",
@@ -216,6 +232,13 @@ data class ItemDetail(
     @SerialName("poster_thumbhash") val posterThumbhash: String? = null,
     @SerialName("backdrop_url") val backdropUrl: String? = null,
     @SerialName("backdrop_thumbhash") val backdropThumbhash: String? = null,
+    /** Episode cards: the parent series' and season's artwork, never an episode still. Absent on older servers. */
+    @SerialName("series_poster_url") val seriesPosterUrl: String? = null,
+    @SerialName("series_poster_thumbhash") val seriesPosterThumbhash: String? = null,
+    @SerialName("series_backdrop_url") val seriesBackdropUrl: String? = null,
+    @SerialName("series_backdrop_thumbhash") val seriesBackdropThumbhash: String? = null,
+    @SerialName("season_poster_url") val seasonPosterUrl: String? = null,
+    @SerialName("season_poster_thumbhash") val seasonPosterThumbhash: String? = null,
     @SerialName("logo_url") val logoUrl: String? = null,
     @SerialName("season_count") val seasonCount: Int? = null,
     @SerialName("series_id") val seriesId: String? = null,
@@ -373,6 +396,8 @@ data class FileVersion(
     val preview: TimeRange? = null,
     /** Every marker occurrence in source-time order (v2 watch detail); null from older servers. */
     @SerialName("marker_segments") val markerSegments: List<MarkerSegment>? = null,
+    /** The server publishes seek-bar previews for this file (`TrickplayV2Api`). */
+    @SerialName("trickplay_available") val trickplayAvailable: Boolean = false,
 )
 
 @Serializable

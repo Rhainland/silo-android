@@ -7,7 +7,7 @@
 # Only the fixtures the Android client consumes are copied (the four pilot
 # operations, the probe's system-info body, the device sign-in and server
 # identity bodies, the external sign-in bodies, the image capability body, the
-# item detail and theme music bodies, and the generic problem bodies) plus fixtures.schema.json and an index.json
+# item detail, theme music and seek-preview bodies, and the generic problem bodies) plus fixtures.schema.json and an index.json
 # filtered to the vendored entries. The full OpenAPI document is never
 # vendored. SOURCE records the exact server commit in the repository's
 # key=value convention.
@@ -62,6 +62,8 @@ SELECTED=(
   theme_songs_playback
   theme_songs_playback_converted
   theme_songs_playback_not_acceptable
+  get_watch_trickplay_ok
+  get_watch_trickplay_not_found
 )
 
 [ -d "$SRC" ] || { echo "no fixtures at $SRC" >&2; exit 1; }

@@ -42,13 +42,17 @@ val networkModule = module {
     single { org.siloserver.silo.network.apiv2.ThemeMusicV2Api(get(), get(), get()) }
     single { PersonRefreshV2Api(get(), get(), get()) }
     single { WatchDetailV2Api(get(), get(), get()) }
+    single<org.siloserver.silo.playback.trickplay.TrickplayManifestSource> {
+        org.siloserver.silo.network.apiv2.TrickplayV2Api(get(), get(), get())
+    }
     single { CatalogApi(get(), get(), get(), get()) }
     single { PersonalDataApi(get(), get(), get()) }
     single { CollectionApi(get(), get(), get()) }
     single { ProfileApi(get(), get(), get()) }
     single { LibrarySectionItemsV2Api(get(), get(), get()) }
     single { HomeSectionsV2Api(get(), get(), get()) }
-    single { SectionApi(get(), get(), get(), get()) }
+    single { org.siloserver.silo.network.api.SectionRowItemLimit(get<HomeSectionsV2Api>()) }
+    single { SectionApi(get(), get(), get(), get(), get()) }
     single { SimilarCardsV2Api(get(), get(), get()) }
     single { TasteProfileV2Api(get(), get(), get()) }
     single { DiscoverV2Api(get(), get(), get()) }

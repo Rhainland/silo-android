@@ -1,6 +1,18 @@
 package org.siloserver.silo.android.ui.components
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.semantics.Role
+import org.siloserver.silo.common.cards.LocalCardPresentation
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -14,6 +26,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.MenuBook
 import androidx.compose.material.icons.filled.PlayArrow
+import org.siloserver.silo.model.catalog.seriesHeroBackdrop
 import org.siloserver.silo.model.catalog.isBookLikeItemType
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -89,7 +102,9 @@ fun MediaRow(
     /** Direct-resume action for the backdrop card's center play glyph;
      *  null keeps the glyph decorative. Never applied to book items. */
     onItemPlay: ((SectionItem) -> Unit)? = null,
-    onSeeAllClick: (() -> Unit)? = null,
+    /** Opens the row's full page: the title gains a chevron and the row ends
+     *  with an "Explore all" card. Null shows neither. */
+    onExploreAllClick: (() -> Unit)? = null,
     showProgress: Boolean = false,
     cardStyle: CardStyle = CardStyle.Poster,
     icon: ImageVector? = null,
@@ -146,9 +161,9 @@ fun MediaRow(
 
     Column(modifier = modifier) {
         // iOS MediaRow header: optional leading icon (16pt semibold onSurface,
-        // 6pt to the title), siloHeadline (16sp) title, plain caption
-        // "See All" at onSurface 0.6 — no chevron. rowVerticalSpacing =
-        // smallPadding (8dp) below the header.
+        // 6pt to the title), siloHeadline (16sp) title. rowVerticalSpacing =
+        // smallPadding (8dp) below the header. A row with a full page makes
+        // the title a link to it, marked with a trailing chevron.
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -158,6 +173,13 @@ fun MediaRow(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Row(
+                modifier = if (onExploreAllClick != null) {
+                    Modifier
+                        .clip(MaterialTheme.shapes.small)
+                        .clickable(onClickLabel = "Explore all", role = Role.Button, onClick = onExploreAllClick)
+                } else {
+                    Modifier
+                },
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
@@ -184,14 +206,14 @@ fun MediaRow(
                     ),
                     color = MaterialTheme.colorScheme.onSurface,
                 )
-            }
-            if (onSeeAllClick != null) {
-                Text(
-                    text = "See All",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
-                    modifier = Modifier.clickable(onClick = onSeeAllClick),
-                )
+                if (onExploreAllClick != null) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                        modifier = Modifier.size(24.dp),
+                    )
+                }
             }
         }
 
@@ -223,6 +245,14 @@ fun MediaRow(
         // vertical fling (the helper ORs in any deferral already in scope).
         val rowState = rememberLazyListState()
         fun openDetail(item: SectionItem) {
+            // An episode opens on its series page, so hand off the series
+            // backdrop its card carries. It is never a still.
+            item.seriesHeroBackdrop()?.let { series ->
+                heroHandoff?.pendingArtworkUrl = series.url
+                heroHandoff?.pendingArtworkThumbhash = series.thumbhash
+                onItemClick(item.contentId)
+                return
+            }
             // A blurred episode still must not reappear sharp as the detail
             // page's loading artwork, so it is neither warmed nor handed off.
             // (Home swaps in the parent series artwork when it knows it.)
@@ -267,7 +297,8 @@ fun MediaRow(
                 } else {
                     val info = rowState.layoutInfo
                     val viewportCenter = (info.viewportStartOffset + info.viewportEndOffset) / 2
-                    info.visibleItemsInfo.minByOrNull { visible ->
+                    // The "Explore all" card is not an item to publish.
+                    info.visibleItemsInfo.filter { it.key != EXPLORE_ALL_KEY }.minByOrNull { visible ->
                         kotlin.math.abs((visible.offset + visible.size / 2) - viewportCenter)
                     }?.key as? String
                 }
@@ -341,8 +372,65 @@ fun MediaRow(
                 }
                 }
             }
+            if (onExploreAllClick != null) {
+                item(key = EXPLORE_ALL_KEY, contentType = "explore-all:${cardStyle.name}") {
+                    CompositionLocalProvider(LocalViewConfiguration provides baseViewConfiguration) {
+                        ExploreAllCard(cardStyle = cardStyle, onClick = onExploreAllClick)
+                    }
+                }
+            }
         }
         }
+        }
+    }
+}
+
+private const val EXPLORE_ALL_KEY = "\u0000explore-all"
+
+/**
+ * The row's last card: opens the row's full page. Same size and shape as the
+ * row's cards (a poster or a 16:9 thumbnail), with an icon and the label.
+ */
+@Composable
+private fun ExploreAllCard(cardStyle: CardStyle, onClick: () -> Unit) {
+    val scale = LocalCardPresentation.current.posterSize.posterScale
+    val (width, aspectRatio, shape) = when (cardStyle) {
+        CardStyle.Poster -> Triple(120.dp * scale, 2f / 3.3f, MaterialTheme.shapes.small)
+        CardStyle.Backdrop -> Triple(280.dp * scale, 16f / 9f, RoundedCornerShape(10.dp))
+    }
+    Box(
+        modifier = Modifier
+            .width(width)
+            .aspectRatio(aspectRatio)
+            .clip(shape)
+            .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
+            .border(1.dp, MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f), shape)
+            .clickable(role = Role.Button, onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(40.dp)
+                    .clip(CircleShape)
+                    .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    imageVector = Icons.AutoMirrored.Filled.ArrowForward,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.size(22.dp),
+                )
+            }
+            Text(
+                text = "Explore all",
+                style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
         }
     }
 }
